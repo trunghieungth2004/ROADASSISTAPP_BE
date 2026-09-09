@@ -65,5 +65,9 @@ node_modules/
 # dotenv environment variables file
 .env
 
+# Jest report artifacts
+junit.xml
+test-report/
+
 # dataconnect generated files
 .dataconnect
