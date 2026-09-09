@@ -5,6 +5,7 @@ import {
   confirmFlag,
   getNear,
   moderateFlag,
+  unflagFlag,
   expireFlags,
 } from "../../../service/flagService";
 
@@ -37,6 +38,19 @@ describe("flagService.createFlag", () => {
     await createFlag({userId: "u1", type, lat: 1, lng: 2});
     expect(flagRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({ttlMs, trustScore: 10, reporterUid: "u1"}),
+    );
+  });
+
+  it("passes radiusMeters through to the repository", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(flagRepository.create).mockResolvedValue({id: "f1"} as never);
+    await createFlag({userId: "u1", type: "FLOOD", lat: 1, lng: 2,
+      radiusMeters: 500});
+    expect(flagRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({radiusMeters: 500}),
     );
   });
 });
@@ -118,6 +132,71 @@ describe("flagService.moderateFlag", () => {
       moderateFlag({flagId: "f1", status: "3"}),
     ).resolves.toEqual({updated: 1});
   });
+});
+
+describe("flagService.unflagFlag", () => {
+  it("returns null for an unknown flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue(null);
+    await expect(
+      unflagFlag({flagId: "ghost", userId: "u1"}),
+    ).resolves.toBeNull();
+    expect(flagRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it.each([["4"], ["5"]])(
+    "returns null for status %s without deleting",
+    async (status) => {
+      jest.mocked(flagRepository.findById).mockResolvedValue({
+        id: "f1",
+        status,
+        reporterUid: "u1",
+      } as never);
+      await expect(
+        unflagFlag({flagId: "f1", userId: "u1"}),
+      ).resolves.toBeNull();
+      expect(flagRepository.deleteById).not.toHaveBeenCalled();
+    },
+  );
+
+  it("throws 400 for a locked flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      status: "3",
+      reporterUid: "u1",
+    } as never);
+    await expect(
+      unflagFlag({flagId: "f1", userId: "u1"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(flagRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 for a non-reporter", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      status: "1",
+      reporterUid: "u1",
+    } as never);
+    await expect(
+      unflagFlag({flagId: "f1", userId: "u2"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(flagRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it.each([["1"], ["2"]])(
+    "deletes the reporter's own flag with status %s",
+    async (status) => {
+      jest.mocked(flagRepository.findById).mockResolvedValue({
+        id: "f1",
+        status,
+        reporterUid: "u1",
+      } as never);
+      jest.mocked(flagRepository.deleteById).mockResolvedValue(undefined);
+      await expect(
+        unflagFlag({flagId: "f1", userId: "u1"}),
+      ).resolves.toEqual({unflagged: 1});
+      expect(flagRepository.deleteById).toHaveBeenCalledWith("f1");
+    },
+  );
 });
 
 describe("flagService.expireFlags", () => {

@@ -95,3 +95,61 @@ describe("flag endpoints", () => {
     expect(res.body.data.expired).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("flag unflag", () => {
+  it("POST /flags accepts an optional radiusMeters", async () => {
+    const res = await request(app)
+      .post("/flags")
+      .set("Authorization", bearer(USER))
+      .send({type: "FLOOD", lat: BASE_LAT, lng: BASE_LNG, radiusMeters: 500});
+    expect(res.status).toBe(201);
+    expect(res.body.data.radiusMeters).toBe(500);
+  });
+
+  it("POST /flags/unflag returns 404 for unknown flags", async () => {
+    const res = await request(app)
+      .post("/flags/unflag")
+      .set("Authorization", bearer(USER))
+      .send({flagId: "nope"});
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /flags/unflag enforces reporter-only removal", async () => {
+    const created = await request(app)
+      .post("/flags")
+      .set("Authorization", bearer(USER))
+      .send({type: "ACCIDENT", lat: BASE_LAT, lng: BASE_LNG});
+    const id = created.body.data.id as string;
+    const forbidden = await request(app)
+      .post("/flags/unflag")
+      .set("Authorization", bearer(ADMIN))
+      .send({flagId: id});
+    expect(forbidden.status).toBe(403);
+    const removed = await request(app)
+      .post("/flags/unflag")
+      .set("Authorization", bearer(USER))
+      .send({flagId: id});
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toMatchObject({unflagged: 1});
+    const near = await request(app)
+      .post("/flags/near")
+      .set("Authorization", bearer(USER))
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    const ids = (near.body.data as {id: string}[]).map((f) => f.id);
+    expect(ids).not.toContain(id);
+  });
+
+  it("POST /flags/unflag refuses locked flags with 400", async () => {
+    const locked = await seedFlag({
+      type: "FLOOD",
+      status: "3",
+      lat: BASE_LAT,
+      lng: BASE_LNG,
+    });
+    const res = await request(app)
+      .post("/flags/unflag")
+      .set("Authorization", bearer(USER))
+      .send({flagId: locked});
+    expect(res.status).toBe(400);
+  });
+});

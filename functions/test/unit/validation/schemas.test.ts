@@ -21,6 +21,7 @@ const valid: Record<string, unknown> = {
   moderateFlag: {flagId: "f1", status: "3"},
   getFlagsNear: {lat: 10.7626, lng: 106.6602},
   confirmFlag: {flagId: "f1"},
+  unflagFlag: {flagId: "f1"},
   nearLandmarks: {lat: 10.7626, lng: 106.6602},
   createLandmark: {lat: 10.7626, lng: 106.6602, displayLabel: "Gate"},
   matchLandmark: {lat: 10.7626, lng: 106.6602, embedding: [0.1, 0.2]},
@@ -130,6 +131,26 @@ describe("schemas reject invalid input", () => {
       lng: 106.6,
     });
     expect(error).toBeDefined();
+  });
+
+  it("createFlag accepts an optional radiusMeters within bounds", () => {
+    const base = {type: "FLOOD", lat: 10.7, lng: 106.6};
+    expect(
+      table.createFlag.validate({...base, radiusMeters: 500}).error,
+    ).toBeUndefined();
+    expect(
+      table.createFlag.validate({...base, radiusMeters: 10}).error,
+    ).toBeDefined();
+    expect(
+      table.createFlag.validate({...base, radiusMeters: 5000}).error,
+    ).toBeDefined();
+    expect(
+      table.createFlag.validate({...base, radiusMeters: "far"}).error,
+    ).toBeDefined();
+  });
+
+  it("unflagFlag requires flagId", () => {
+    expect(table.unflagFlag.validate({}).error).toBeDefined();
   });
 
   it("moderateFlag rejects bad status", () => {

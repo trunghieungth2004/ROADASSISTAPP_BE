@@ -17,7 +17,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > ```
 > - `status` is `"SUCCESS"` or `"ERROR"`. `statusCode` mirrors the HTTP status. `data` is present on read/query/created responses; `message` is present on action responses. `errors` (an array of strings) appears on `400` validation failures.
 > - Success status codes: `200` (OK), `201` (created).
-> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions), `404` (not found), `500` (unexpected, e.g. Auth create failure, OSRM outage).
+> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by floods), `500` (unexpected, e.g. Auth create failure, OSRM outage).
 
 > **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
@@ -445,6 +445,7 @@ Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-ty
 | `type` | string | yes | One of `ACCIDENT`, `FLOOD`, `OBSTRUCTION` |
 | `lat` / `lng` | number | yes | Coordinates |
 | `note` | string | no | May be `""`/`null` |
+| `radiusMeters` | number | no | Impact radius 25–3000 m (routing block zone for `FLOOD`); defaults to 200 when omitted |
 
 **Response `201`:**
 ```json
@@ -468,6 +469,22 @@ Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count �
 ```
 
 Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
+
+---
+
+### `POST /flags/unflag` **(Auth)**
+
+Retract your own report (hard delete). Only the reporter may unflag; `"3"` (Locked) flags return `400` (admin must moderate them away); unknown, `"4"` (Expired), or `"5"` (Rejected) flags return `404`.
+
+**Request:**
+```json
+{ "flagId": "flag1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Flag removed", "data": { "unflagged": 1 } }
+```
 
 ---
 
@@ -612,6 +629,22 @@ Route between two points for the caller's vehicle width. Served from the `routin
   }
 }
 ```
+
+Every request (cache hit or fresh) is re-validated against active `FLOOD` flags (`"2"` Confirmed / `"3"` Locked). If the geometry crosses a flood's impact circle (`radiusMeters`, default 200), the route is refused:
+
+**Response `409` (blocked):**
+```json
+{
+  "statusCode": 409,
+  "status": "ERROR",
+  "message": "Route is blocked by active road hazards",
+  "errors": [
+    { "flagId": "flag1", "type": "FLOOD", "lat": 10.76, "lng": 106.66, "radiusMeters": 300, "note": null, "distanceMeters": 0 }
+  ]
+}
+```
+
+Removing the blocking flag (`POST /flags/unflag` by its reporter, or expiry) unblocks the next request automatically — no cache invalidation needed.
 
 ---
 
@@ -769,8 +802,9 @@ Validation failures include an `errors` array:
 
 | Status Code | Meaning |
 |-------------|---------|
-| `400` | Validation error / business-rule violation (e.g. self role change, invalid dispatch status) |
+| `400` | Validation error / business-rule violation (e.g. self role change, invalid dispatch status, unflag of a locked flag) |
 | `401` | Missing or invalid ID token |
-| `403` | Inactive user / insufficient permissions |
+| `403` | Inactive user / insufficient permissions (e.g. unflag by a non-reporter) |
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
+| `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`) |
 | `500` | Internal server error (e.g. Auth create failure, OSRM outage) |

@@ -1,5 +1,6 @@
 import * as routingCacheRepository from
   "../repository/routingCacheRepository";
+import * as closureService from "../service/closureService";
 import * as userRepository from "../repository/userRepository";
 
 class NotFoundError extends Error {
@@ -14,6 +15,15 @@ class ServiceError extends Error {
   constructor(message: string, statusCode = 500) {
     super(message);
     this.statusCode = statusCode;
+  }
+}
+class RouteBlockedError extends Error {
+  statusCode: number;
+  errors: unknown;
+  constructor(zones: unknown) {
+    super("Route is blocked by active road hazards");
+    this.statusCode = 409;
+    this.errors = zones;
   }
 }
 
@@ -77,53 +87,70 @@ const getRoute = async ({
   const key = buildKey(originLat, originLng, destLat, destLng, widthBucket);
 
   const existing = await routingCacheRepository.findExisting(key);
+  let geometry: unknown;
+  let distanceMeters: number | undefined;
+  let durationSeconds: number | undefined;
+  let cached: boolean;
+  let source: string;
   if (existing) {
-    return {
-      cached: true,
-      distanceMeters: existing.distanceMeters,
-      durationSeconds: existing.durationSeconds,
-      geometry: parseGeometry(existing.geometry),
-      source: "cache",
+    geometry = parseGeometry(existing.geometry);
+    distanceMeters = existing.distanceMeters;
+    durationSeconds = existing.durationSeconds;
+    cached = true;
+    source = "cache";
+  } else {
+    const coordinates = `${originLng},${originLat};${destLng},${destLat}`;
+    const url =
+      `${OSRM_URL}/route/v1/motorbike/${coordinates}` +
+      `?overview=full&geometries=geojson&width_bucket=${widthBucket}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new ServiceError(`Routing service returned ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      code?: string;
+      routes?: Array<{
+        distance?: number;
+        duration?: number;
+        geometry?: unknown;
+      }>;
     };
+    if (body.code !== "Ok" || !body.routes || body.routes.length === 0) {
+      throw new ServiceError("No route found", 404);
+    }
+    const route = body.routes[0];
+    geometry = route.geometry ?? null;
+    distanceMeters = route.distance;
+    durationSeconds = route.duration;
+    await routingCacheRepository.save(key, {
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      widthBucket,
+      geometry: route.geometry ?? null,
+      distanceMeters: route.distance,
+      durationSeconds: route.duration,
+    });
+    cached = false;
+    source = "osrm";
   }
 
-  const coordinates = `${originLng},${originLat};${destLng},${destLat}`;
-  const url =
-    `${OSRM_URL}/route/v1/motorbike/${coordinates}` +
-    `?overview=full&geometries=geojson&width_bucket=${widthBucket}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new ServiceError(`Routing service returned ${response.status}`);
-  }
-  const body = (await response.json()) as {
-    code?: string;
-    routes?: Array<{
-      distance?: number;
-      duration?: number;
-      geometry?: unknown;
-    }>;
-  };
-  if (body.code !== "Ok" || !body.routes || body.routes.length === 0) {
-    throw new ServiceError("No route found", 404);
-  }
-  const route = body.routes[0];
-  await routingCacheRepository.save(key, {
-    originLat,
-    originLng,
-    destLat,
-    destLng,
-    widthBucket,
-    geometry: route.geometry ?? null,
-    distanceMeters: route.distance,
-    durationSeconds: route.duration,
-  });
+  const zones = await closureService.findBlocking(geometry);
+  if (zones.length > 0) throw new RouteBlockedError(zones);
   return {
-    cached: false,
-    distanceMeters: route.distance,
-    durationSeconds: route.duration,
-    geometry: route.geometry,
-    source: "osrm",
+    cached,
+    distanceMeters,
+    durationSeconds,
+    geometry,
+    source,
   };
 };
 
-export {getRoute, widthToBucket, NotFoundError, ServiceError};
+export {
+  getRoute,
+  widthToBucket,
+  NotFoundError,
+  ServiceError,
+  RouteBlockedError,
+};

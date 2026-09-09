@@ -10,6 +10,7 @@ interface FlagRecord {
   lat: number;
   lng: number;
   voteCount: number;
+  radiusMeters?: number;
   ttlExpiresAt: Date;
   reporterUid: string;
   [key: string]: unknown;
@@ -48,6 +49,7 @@ const create = async (data: {
   reporterUid: string;
   ttlMs: number;
   trustScore: number;
+  radiusMeters?: number;
   note?: string;
 }): Promise<FlagRecord> => {
   const ref = db.collection("flags").doc();
@@ -62,6 +64,7 @@ const create = async (data: {
     lat: data.lat,
     lng: data.lng,
     voteCount: 0,
+    radiusMeters: data.radiusMeters ?? null,
     reporterUid: data.reporterUid,
     note: data.note ?? null,
     createdAt: new Date().toISOString(),
@@ -81,6 +84,10 @@ const incrementVote = async (flagId: string): Promise<void> => {
 
 const updateStatus = async (flagId: string, status: string): Promise<void> => {
   await db.collection("flags").doc(flagId).update({status});
+};
+
+const deleteById = async (flagId: string): Promise<void> => {
+  await db.collection("flags").doc(flagId).delete();
 };
 
 const ACTIVE_STATUSES = [
@@ -108,6 +115,7 @@ export {
   create,
   incrementVote,
   updateStatus,
+  deleteById,
   findExpired,
   RULE_OF_THREE,
 };

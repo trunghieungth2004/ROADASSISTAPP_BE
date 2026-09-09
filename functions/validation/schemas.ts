@@ -91,6 +91,7 @@ const schemas = {
     lat: latAttr(),
     lng: langAttr(),
     note: Joi.string().allow("", null).optional(),
+    radiusMeters: Joi.number().min(25).max(3000).optional(),
   }),
   moderateFlag: Joi.object({
     flagId: strReq(),
@@ -100,6 +101,9 @@ const schemas = {
   }),
   getFlagsNear: locationBody().append({radiusMeters: numOpt()}),
   confirmFlag: Joi.object({
+    flagId: strReq(),
+  }),
+  unflagFlag: Joi.object({
     flagId: strReq(),
   }),
   nearLandmarks: locationBody().append({radiusMeters: numOpt()}),

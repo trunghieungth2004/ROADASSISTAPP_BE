@@ -154,6 +154,7 @@ Same as `createAlleySegment` plus `segmentId` (string, req) instead of `lat`/`ln
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `note` | string (allows `""`/`null`) | opt |
+| `radiusMeters` | number 25–3000 | opt (impact radius for routing blocks; default 200) |
 
 The reporter is the authenticated caller (trust score is snapshotted from their user doc).
 
@@ -161,6 +162,13 @@ The reporter is the authenticated caller (trust score is snapshotted from their 
 | Field | Type | |
 |-------|------|---|
 | `flagId` | string | req |
+
+### `POST /flags/unflag` — `unflagFlag`
+| Field | Type | |
+|-------|------|---|
+| `flagId` | string | req |
+
+Creator-only retraction (hard delete); `"3"` Locked → 400, unknown/`"4"`/`"5"` → 404, non-reporter → 403.
 
 ### `POST /flags/near` — `getFlagsNear`
 | Field | Type | |

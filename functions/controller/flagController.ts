@@ -6,13 +6,14 @@ import {AuthedRequest} from "../middleware/auth";
 const createFlag = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {type, lat, lng, note} = req.body;
+    const {type, lat, lng, note, radiusMeters} = req.body;
     const result = await flagService.createFlag({
       userId,
       type,
       lat,
       lng,
       note,
+      radiusMeters,
     });
     sendSuccess(res, result, {message: "Flag submitted", statusCode: 201});
   } catch (error) {
@@ -55,6 +56,21 @@ const moderateFlag = async (req: Request, res: Response) => {
   }
 };
 
+const unflagFlag = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {flagId} = req.body;
+    const result = await flagService.unflagFlag({flagId, userId});
+    if (!result) {
+      sendSuccess(res, null, {message: "Flag not found", statusCode: 404});
+      return;
+    }
+    sendSuccess(res, result, {message: "Flag removed"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const expireFlags = async (_req: Request, res: Response) => {
   try {
     const count = await flagService.expireFlags();
@@ -68,4 +84,11 @@ const expireFlags = async (_req: Request, res: Response) => {
   }
 };
 
-export {createFlag, confirmFlag, getNear, moderateFlag, expireFlags};
+export {
+  createFlag,
+  confirmFlag,
+  getNear,
+  moderateFlag,
+  unflagFlag,
+  expireFlags,
+};

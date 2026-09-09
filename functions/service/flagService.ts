@@ -1,7 +1,7 @@
 import * as flagRepository from "../repository/flagRepository";
 import * as userRepository from "../repository/userRepository";
 import {STATUS_FLAGS} from "../constants/status";
-import {boundsForRadiusMeters, encodeGeohash} from "../utils/geo";
+import {boundsForRadiusMeters, cellsForBounds} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 
 class ValidationError extends Error {
@@ -13,9 +13,16 @@ class ValidationError extends Error {
 }
 class NotFoundError extends Error {
   statusCode: number;
-  constructor(message: string) {
+  constructor(message: string, statusCode = 404) {
     super(message);
-    this.statusCode = 404;
+    this.statusCode = statusCode;
+  }
+}
+class ForbiddenError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode = 403) {
+    super(message);
+    this.statusCode = statusCode;
   }
 }
 
@@ -44,12 +51,14 @@ const createFlag = async ({
   lat,
   lng,
   note,
+  radiusMeters,
 }: {
   userId: string;
   type: string;
   lat: number;
   lng: number;
   note?: string;
+  radiusMeters?: number;
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
@@ -62,6 +71,7 @@ const createFlag = async ({
     reporterUid: userId,
     ttlMs,
     trustScore,
+    radiusMeters,
     note,
   });
   cacheManager.del(NS);
@@ -99,18 +109,7 @@ const getNear = cacheManager.wrap(
     radiusMeters?: number;
   }) => {
     const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
-    const prefixes = Array.from({length: 9}, (_, i) => {
-      const r = (i % 3) - 1;
-      const c = Math.floor(i / 3) - 1;
-      const dLat = (bounds.maxLat - bounds.minLat) / 3;
-      const dLng = (bounds.maxLng - bounds.minLng) / 3;
-      return encodeGeohash(
-        bounds.minLat + (r + 0.5) * dLat,
-        bounds.minLng + (c + 0.5) * dLng,
-        5,
-      ).slice(0, 5);
-    });
-    const unique = Array.from(new Set([...prefixes]));
+    const unique = cellsForBounds(bounds);
     const active = await flagRepository.findByGeohashPrefixes(unique);
     return active.filter(
       (f) =>
@@ -150,6 +149,35 @@ const moderateFlag = async ({
   return {updated: 1};
 };
 
+const unflagFlag = async ({
+  flagId,
+  userId,
+}: {
+  flagId: string;
+  userId: string;
+}) => {
+  const flag = await flagRepository.findById(flagId);
+  if (!flag) return null;
+  if (
+    flag.status === STATUS_FLAGS.EXPIRED ||
+    flag.status === STATUS_FLAGS.REJECTED
+  ) {
+    return null;
+  }
+  if (flag.status === STATUS_FLAGS.LOCKED) {
+    throw new ValidationError(
+      "Locked flags can only be removed by an administrator",
+    );
+  }
+  if ((flag.reporterUid as string) !== userId) {
+    throw new ForbiddenError("Only the reporter can unflag this report");
+  }
+  await flagRepository.deleteById(flagId);
+  cacheManager.del(NS, flagId);
+  cacheManager.del(NS);
+  return {unflagged: 1};
+};
+
 const expireFlags = async (): Promise<number> => {
   const expired = await flagRepository.findExpired();
   for (const flag of expired) {
@@ -164,7 +192,9 @@ export {
   confirmFlag,
   getNear,
   moderateFlag,
+  unflagFlag,
   expireFlags,
   ValidationError,
+  ForbiddenError,
   NotFoundError,
 };

@@ -32,6 +32,12 @@ export default (
     flagController.moderateFlag,
   );
   app.post(
+    "/flags/unflag",
+    requireAuth,
+    validate({body: schemas.unflagFlag}),
+    flagController.unflagFlag,
+  );
+  app.post(
     "/flags/expire",
     requireAuth,
     requireRole("1"),

@@ -1,9 +1,11 @@
 import * as routingCacheRepository from
   "../../../repository/routingCacheRepository";
+import * as closureService from "../../../service/closureService";
 import * as userRepository from "../../../repository/userRepository";
 import {getRoute, widthToBucket} from "../../../service/routingService";
 
 jest.mock("../../../repository/routingCacheRepository");
+jest.mock("../../../service/closureService");
 jest.mock("../../../repository/userRepository");
 
 const base = {
@@ -47,6 +49,7 @@ describe("routingService.getRoute", () => {
       distanceMeters: 2450,
       durationSeconds: 512,
     } as never);
+    jest.mocked(closureService.findBlocking).mockResolvedValue([]);
     const fetchSpy = jest.spyOn(global, "fetch");
     await expect(getRoute(base)).resolves.toEqual({
       cached: true,
@@ -72,6 +75,7 @@ describe("routingService.getRoute", () => {
       }),
     } as unknown as Response);
     jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.findBlocking).mockResolvedValue([]);
     await expect(getRoute(base)).resolves.toEqual({
       cached: false,
       distanceMeters: 100,
@@ -88,6 +92,47 @@ describe("routingService.getRoute", () => {
         durationSeconds: 50,
       }),
     );
+  });
+
+  it("throws 409 with zones when a fresh route crosses a flood", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry = {type: "LineString", coordinates: [[1, 2]]};
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        code: "Ok",
+        routes: [{distance: 100, duration: 50, geometry}],
+      }),
+    } as unknown as Response);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const zones = [{flagId: "flood-1", distanceMeters: 0}];
+    jest.mocked(closureService.findBlocking).mockResolvedValue(zones as never);
+    await expect(getRoute(base)).rejects.toMatchObject({
+      statusCode: 409,
+      errors: zones,
+    });
+    expect(routingCacheRepository.save).toHaveBeenCalled();
+  });
+
+  it("throws 409 with zones on a cache hit crossing a flood", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    const geometry = {type: "LineString", coordinates: [[1, 2]]};
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
+      geometry: JSON.stringify(geometry),
+    } as never);
+    const zones = [{flagId: "flood-1", distanceMeters: 10}];
+    jest.mocked(closureService.findBlocking).mockResolvedValue(zones as never);
+    const fetchSpy = jest.spyOn(global, "fetch");
+    await expect(getRoute(base)).rejects.toMatchObject({
+      statusCode: 409,
+      errors: zones,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("throws 500 when OSRM is down", async () => {

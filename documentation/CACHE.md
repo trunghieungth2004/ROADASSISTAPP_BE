@@ -57,6 +57,12 @@ Notable behaviors:
 - Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
 - TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
 
+### Flood feedback loop
+
+`POST /routes` never serves a route that crosses an active flood, on cache hit *or* miss: after resolving the geometry, `service/closureService.findBlocking` checks it against `FLOOD` flags in `"2"` (Confirmed) / `"3"` (Locked) status near the route's bounding box (same 9-cell `geoCell` near-search as flags; polyline-vs-circle hit test in `utils/geo`). A hit returns `409` with the blocking zones instead of the route.
+
+Because the check runs live on every request, **no cache invalidation is needed**: confirming a flood blocks the next request, and removing it — `POST /flags/unflag` by the reporter, admin moderation, or the 6h flood TTL sweep — unblocks the next request automatically. Default impact radius is 200 m per flag (overridable via `radiusMeters` at creation).
+
 ### Decision record: why Firestore, not Redis (option A)
 
 Evaluated 2026-09: move the route cache to Redis (Memorystore) vs. keep Firestore and fix the two gaps (no expiry, dropped ETA on hits).

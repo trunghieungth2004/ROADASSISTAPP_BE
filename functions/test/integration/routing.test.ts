@@ -3,6 +3,8 @@ import {buildIntegrationApp} from "../utils/app";
 import {
   cleanAll,
   seedUser,
+  seedFlag,
+  db,
   PREFIX,
   BASE_LAT,
   BASE_LNG,
@@ -70,6 +72,35 @@ describe("routing endpoints", () => {
       durationSeconds: 512,
     });
     expect(hit.body.data.geometry).toEqual(geometry);
+  });
+
+  it("POST /routes 409s on a flooded cached route", async () => {
+    const floodId = await seedFlag({
+      type: "FLOOD",
+      status: "2",
+      lat: 10.76,
+      lng: 106.66,
+      radiusMeters: 300,
+    });
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send(body);
+    expect(res.status).toBe(409);
+    expect(res.body.errors[0]).toMatchObject({
+      flagId: floodId,
+      type: "FLOOD",
+    });
+    await db.collection("flags").doc(floodId).delete();
+  });
+
+  it("POST /routes unblocks after the flood is gone", async () => {
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({cached: true, source: "cache"});
   });
 
   it("POST /routes returns 500 when OSRM is down", async () => {
