@@ -49,12 +49,23 @@ Notable behaviors:
 
 ## Persistent route cache (Firestore)
 
-`POST /routes` does not use the in-process LRU. It uses the `routing_cache` collection as a durable cache:
+`POST /routes` does not use the in-process LRU. It uses the `routing_cache` collection as a durable cache (`repository/routingCacheRepository.ts`, consumed by `service/routingService.ts`):
 
 - Key: origin/dest rounded to 5 decimals plus width bucket, e.g. `10.76262,106.66017:10.77584,106.70194:MEDIUM`.
-- Hit returns `{cached: true, geometry, source: "cache"}` without touching OSRM.
-- Miss calls OSRM, persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, cachedAt}`, and returns `{cached: false, distanceMeters, durationSeconds, geometry, source: "osrm"}`.
-- Entries have **no TTL** — they persist until overwritten by an identical key. Treat the collection as append-mostly reference data, not live state.
+- Hit returns the full payload `{cached: true, distanceMeters, durationSeconds, geometry, source: "cache"}` without touching OSRM.
+- Miss calls OSRM, persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, distanceMeters, durationSeconds, cachedAt, expiresAt}`, and returns `{cached: false, ..., source: "osrm"}`.
+- Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
+- TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
+
+### Decision record: why Firestore, not Redis (option A)
+
+Evaluated 2026-09: move the route cache to Redis (Memorystore) vs. keep Firestore and fix the two gaps (no expiry, dropped ETA on hits).
+
+- Memorystore (`asia-southeast1`): Basic 1 GiB ≈ $36/mo, Standard (HA) ≈ $47/mo, **plus** a Serverless VPC Access connector (~$18–45/mo) required for gen2 functions — **≈ $55–90/mo fixed, at zero traffic**. Basic tier is also ephemeral: a node restart wipes the cache.
+- Firestore at current scale: route lookups fit the free tier (50k reads / 20k writes per day) → **≈ $0/mo**. Even 10M lookups/mo ≈ $3–6. Break-even with Memorystore needs ~100M+ ops/mo.
+- Cheaper Redis variants (Upstash free tier, Redis Enterprise from $5/mo) exist but add an external dependency for no gain at this scale.
+
+Decision: keep Firestore (option A) with TTL + full-response caching in place. Revisit Redis only if p99 route latency at volume becomes the constraint — never for cost.
 
 ## Memory budget
 

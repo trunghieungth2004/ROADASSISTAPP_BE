@@ -80,6 +80,8 @@ const getRoute = async ({
   if (existing) {
     return {
       cached: true,
+      distanceMeters: existing.distanceMeters,
+      durationSeconds: existing.durationSeconds,
       geometry: parseGeometry(existing.geometry),
       source: "cache",
     };
@@ -112,6 +114,8 @@ const getRoute = async ({
     destLng,
     widthBucket,
     geometry: route.geometry ?? null,
+    distanceMeters: route.distance,
+    durationSeconds: route.duration,
   });
   return {
     cached: false,

@@ -99,5 +99,6 @@ See [Architecture → Firestore Indexes](./documentation/ARCHITECTURE.md#firesto
 - [Architecture](./documentation/ARCHITECTURE.md) — Layered design, collections, key decisions
 - [API Reference](./documentation/API.md) — All endpoints with request/response schemas
 - [Request Schemas](./documentation/SCHEMA.md) — Per-endpoint validation rules
+- [Status Codes](./documentation/STATUS.md) — Numeric status codes, the statuses collection, POST /statuses
 - [Caching](./documentation/CACHE.md) — In-process LRU namespaces + Firestore route cache
 - [Testing](./documentation/TESTING.md) — Jest unit/integration harness

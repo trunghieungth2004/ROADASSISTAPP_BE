@@ -44,10 +44,14 @@ describe("routingService.getRoute", () => {
     const geometry = {type: "LineString", coordinates: []};
     jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
       geometry: JSON.stringify(geometry),
+      distanceMeters: 2450,
+      durationSeconds: 512,
     } as never);
     const fetchSpy = jest.spyOn(global, "fetch");
     await expect(getRoute(base)).resolves.toEqual({
       cached: true,
+      distanceMeters: 2450,
+      durationSeconds: 512,
       geometry,
       source: "cache",
     });
@@ -77,7 +81,12 @@ describe("routingService.getRoute", () => {
     });
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({widthBucket: "MEDIUM", geometry}),
+      expect.objectContaining({
+        widthBucket: "MEDIUM",
+        geometry,
+        distanceMeters: 100,
+        durationSeconds: 50,
+      }),
     );
   });
 

@@ -63,7 +63,12 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send(body);
     expect(hit.status).toBe(200);
-    expect(hit.body.data).toMatchObject({cached: true, source: "cache"});
+    expect(hit.body.data).toMatchObject({
+      cached: true,
+      source: "cache",
+      distanceMeters: 2450,
+      durationSeconds: 512,
+    });
     expect(hit.body.data.geometry).toEqual(geometry);
   });
 
