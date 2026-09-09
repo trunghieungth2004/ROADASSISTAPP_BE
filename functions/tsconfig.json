@@ -12,7 +12,7 @@
     "target": "es2020",
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node", "jest"]
   },
   "compileOnSave": true,
   "include": [

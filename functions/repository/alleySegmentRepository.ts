@@ -29,7 +29,7 @@ const findByGeohashPrefixes = async (
     const chunk = prefixes.slice(i, i + IN_CHUNK_SIZE);
     const snapshot = await db
       .collection("alley_segments")
-      .where("geoHash", "in", chunk)
+      .where("geoCell", "in", chunk)
       .get();
     snapshot.forEach((doc) =>
       results.push({id: doc.id, ...doc.data()} as AlleySegment),
@@ -54,6 +54,7 @@ const create = async (data: {
     lat: data.lat,
     lng: data.lng,
     geoHash,
+    geoCell: encodeGeohash(data.lat, data.lng, 4),
     baseWidth: data.baseWidth ?? null,
     wireHeight: data.wireHeight ?? null,
     inclinePct: data.inclinePct ?? null,

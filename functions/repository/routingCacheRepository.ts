@@ -34,6 +34,7 @@ const save = async (
     .doc(key)
     .set({
       ...entry,
+      geometry: JSON.stringify(entry.geometry ?? null),
       cachedAt: new Date().toISOString(),
     });
 };

@@ -31,7 +31,7 @@ const findByGeohashPrefixes = async (
     const chunk = prefixes.slice(i, i + IN_CHUNK_SIZE);
     const snapshot = await db
       .collection("flags")
-      .where("geoHash", "in", chunk)
+      .where("geoCell", "in", chunk)
       .get();
     snapshot.forEach((doc) =>
       results.push({id: doc.id, ...doc.data()} as FlagRecord),
@@ -57,6 +57,7 @@ const create = async (data: {
     type: data.type,
     status: "SUGGESTED",
     geoHash,
+    geoCell: encodeGeohash(data.lat, data.lng, 5),
     lat: data.lat,
     lng: data.lng,
     voteCount: 0,

@@ -76,6 +76,8 @@ const confirmFlag = async (flagId: string): Promise<FlagRecord | null> => {
   await flagRepository.incrementVote(flagId);
   if (newCount >= CONSENSUS_THRESHOLD) {
     await flagRepository.updateStatus(flagId, "CONFIRMED");
+    cacheManager.del(NS, flagId);
+    return {...flag, voteCount: newCount, status: "CONFIRMED"};
   }
   cacheManager.del(NS, flagId);
   return {...flag, voteCount: newCount};

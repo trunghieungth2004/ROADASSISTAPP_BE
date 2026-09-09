@@ -13,5 +13,8 @@
     "utils/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

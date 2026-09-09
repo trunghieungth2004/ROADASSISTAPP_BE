@@ -46,6 +46,15 @@ const buildKey = (
   return `${origin}:${dest}:${widthBucket}`;
 };
 
+const parseGeometry = (stored: unknown): unknown => {
+  if (typeof stored !== "string") return stored;
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return stored;
+  }
+};
+
 const getRoute = async ({
   userId,
   originLat,
@@ -69,7 +78,11 @@ const getRoute = async ({
 
   const existing = await routingCacheRepository.findExisting(key);
   if (existing) {
-    return {cached: true, geometry: existing.geometry, source: "cache"};
+    return {
+      cached: true,
+      geometry: parseGeometry(existing.geometry),
+      source: "cache",
+    };
   }
 
   const coordinates = `${originLng},${originLat};${destLng},${destLat}`;

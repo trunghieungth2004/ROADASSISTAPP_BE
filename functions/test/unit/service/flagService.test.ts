@@ -1,0 +1,140 @@
+import * as flagRepository from "../../../repository/flagRepository";
+import * as userRepository from "../../../repository/userRepository";
+import {
+  createFlag,
+  confirmFlag,
+  getNear,
+  moderateFlag,
+  expireFlags,
+} from "../../../service/flagService";
+
+jest.mock("../../../repository/flagRepository");
+jest.mock("../../../repository/userRepository");
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+describe("flagService.createFlag", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      createFlag({userId: "ghost", type: "FLOOD", lat: 1, lng: 2}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it.each([
+    ["ACCIDENT", 60 * 60 * 1000],
+    ["FLOOD", 6 * 60 * 60 * 1000],
+    ["OBSTRUCTION", 3 * 60 * 60 * 1000],
+    ["UNKNOWN", 3 * 60 * 60 * 1000],
+  ])("assigns the %s TTL", async (type, ttlMs) => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(flagRepository.create).mockResolvedValue({id: "f1"} as never);
+    await createFlag({userId: "u1", type, lat: 1, lng: 2});
+    expect(flagRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ttlMs, trustScore: 10, reporterUid: "u1"}),
+    );
+  });
+});
+
+describe("flagService.confirmFlag", () => {
+  it("returns null for an unknown flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue(null);
+    await expect(confirmFlag("ghost")).resolves.toBeNull();
+    expect(flagRepository.incrementVote).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits locked flags", async () => {
+    const flag = {id: "f1", status: "LOCKED", voteCount: 5};
+    jest.mocked(flagRepository.findById).mockResolvedValue(flag as never);
+    await expect(confirmFlag("f1")).resolves.toBe(flag);
+    expect(flagRepository.incrementVote).not.toHaveBeenCalled();
+  });
+
+  it("flips to CONFIRMED at the threshold", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      status: "SUGGESTED",
+      voteCount: 2,
+      reporterTrust: 0,
+    } as never);
+    await expect(confirmFlag("f1")).resolves.toMatchObject({
+      voteCount: 3,
+      status: "CONFIRMED",
+    });
+    expect(flagRepository.incrementVote).toHaveBeenCalledWith("f1");
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "CONFIRMED");
+  });
+
+  it("weights trusted reporters at 1.5", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      status: "SUGGESTED",
+      voteCount: 1,
+      reporterTrust: 60,
+    } as never);
+    await expect(confirmFlag("f1")).resolves.toMatchObject({
+      voteCount: 2.5,
+      status: "SUGGESTED",
+    });
+    expect(flagRepository.updateStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("flagService.getNear", () => {
+  it("excludes expired and rejected flags", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      {id: "a", status: "SUGGESTED"},
+      {id: "b", status: "EXPIRED"},
+      {id: "c", status: "REJECTED"},
+      {id: "d", status: "CONFIRMED"},
+    ] as never);
+    const result = await getNear({lat: 10.7, lng: 106.6});
+    expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
+      "a",
+      "d",
+    ]);
+  });
+});
+
+describe("flagService.moderateFlag", () => {
+  it("throws 404 for an unknown flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue(null);
+    await expect(
+      moderateFlag({flagId: "ghost", status: "LOCKED"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("writes the status", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+    } as never);
+    jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
+    await expect(
+      moderateFlag({flagId: "f1", status: "LOCKED"}),
+    ).resolves.toEqual({updated: 1});
+  });
+});
+
+describe("flagService.expireFlags", () => {
+  it("expires every lapsed flag and returns the count", async () => {
+    jest.mocked(flagRepository.findExpired).mockResolvedValue([
+      {id: "f1"},
+      {id: "f2"},
+    ] as never);
+    jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
+    await expect(expireFlags()).resolves.toBe(2);
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "EXPIRED");
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f2", "EXPIRED");
+  });
+
+  it("returns zero when nothing lapsed", async () => {
+    jest.mocked(flagRepository.findExpired).mockResolvedValue([]);
+    await expect(expireFlags()).resolves.toBe(0);
+    expect(flagRepository.updateStatus).not.toHaveBeenCalled();
+  });
+});

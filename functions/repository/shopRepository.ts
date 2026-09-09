@@ -22,6 +22,7 @@ const create = async (data: {
     id: ref.id,
     ...data,
     geoHash: encodeGeohash(data.lat, data.lng, 8),
+    geoCell: encodeGeohash(data.lat, data.lng, 6),
     createdAt: new Date().toISOString(),
   };
   await ref.set(doc);
@@ -35,7 +36,7 @@ const findByGeohashPrefixes = async (prefixes: string[]): Promise<Shop[]> => {
     const chunk = prefixes.slice(i, i + IN_CHUNK_SIZE);
     const snapshot = await db
       .collection("shops")
-      .where("geoHash", "in", chunk)
+      .where("geoCell", "in", chunk)
       .get();
     snapshot.forEach((doc) =>
       results.push({id: doc.id, ...doc.data()} as Shop),

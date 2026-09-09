@@ -19,11 +19,11 @@ const locationBody = (): Joi.ObjectSchema =>
     lng: langAttr(),
   });
 
-const rideConfig = Joi.object({
+const rideConfigFields = {
   configType: Joi.string().valid("SOLO", "PASSENGER", "CARGO").required(),
   estWidth: numOpt(),
   estHeight: numOpt(),
-});
+};
 
 const schemas = {
   register: Joi.object({
@@ -58,7 +58,7 @@ const schemas = {
   addRideConfig: Joi.object({
     userId: strReq(),
     profileId: strReq(),
-    ...rideConfig,
+    ...rideConfigFields,
   }),
   getAllVehicleProfiles: Joi.object({
     userId: strReq(),

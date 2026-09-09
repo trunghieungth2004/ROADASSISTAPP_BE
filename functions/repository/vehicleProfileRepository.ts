@@ -11,8 +11,8 @@ interface VehicleProfile {
 interface RideConfig {
   id: string;
   configType: string;
-  estWidth?: number;
-  estHeight?: number;
+  estWidth?: number | null;
+  estHeight?: number | null;
   [key: string]: unknown;
 }
 
@@ -73,7 +73,13 @@ const addRideConfig = async (
     .doc(profileId)
     .collection("ride_configs")
     .doc();
-  const doc = {id: ref.id, ...data, createdAt: new Date().toISOString()};
+  const doc = {
+    id: ref.id,
+    configType: data.configType,
+    estWidth: data.estWidth ?? null,
+    estHeight: data.estHeight ?? null,
+    createdAt: new Date().toISOString(),
+  };
   await ref.set(doc);
   return doc;
 };

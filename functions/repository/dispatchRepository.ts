@@ -7,7 +7,7 @@ interface DispatchTicket {
   status: string;
   lat: number;
   lng: number;
-  diagnosticId?: string;
+  diagnosticId?: string | null;
   [key: string]: unknown;
 }
 
@@ -21,7 +21,11 @@ const create = async (data: {
   const ref = db.collection("dispatch_tickets").doc();
   const doc = {
     id: ref.id,
-    ...data,
+    userId: data.userId,
+    ticketType: data.ticketType,
+    lat: data.lat,
+    lng: data.lng,
+    diagnosticId: data.diagnosticId ?? null,
     status: "PENDING",
     createdAt: new Date().toISOString(),
   };

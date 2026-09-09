@@ -11,12 +11,13 @@ export const encodeGeohash = (
   let lngMax = 180;
   let bit = 0;
   let ch = 0;
+  let even = true;
   const geohash: string[] = [];
   while (geohash.length < precision) {
-    if (bit < 4) {
+    if (even) {
       const mid = (lngMin + lngMax) / 2;
       if (lng >= mid) {
-        ch |= 1 << (3 - bit);
+        ch |= 1 << (4 - bit);
         lngMin = mid;
       } else {
         lngMax = mid;
@@ -24,14 +25,16 @@ export const encodeGeohash = (
     } else {
       const mid = (latMin + latMax) / 2;
       if (lat >= mid) {
-        ch |= 1 << (3 - bit);
+        ch |= 1 << (4 - bit);
         latMin = mid;
       } else {
         latMax = mid;
       }
     }
-    bit++;
-    if (bit === 5) {
+    even = !even;
+    if (bit < 4) {
+      bit++;
+    } else {
       geohash.push(BASE32[ch]);
       bit = 0;
       ch = 0;

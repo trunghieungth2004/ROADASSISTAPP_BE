@@ -143,12 +143,11 @@ const setPassability = async ({
   if (!user) throw new NotFoundError("User not found");
   const segment = await alleySegmentRepository.findById(segmentId);
   if (!segment) throw new NotFoundError("Alley segment not found");
-  await alleySegmentRepository.update(segmentId, {
-    baseWidth,
-    wireHeight,
-    inclinePct,
-    tier,
-  });
+  const patch: Record<string, unknown> = {tier};
+  if (baseWidth !== undefined) patch.baseWidth = baseWidth;
+  if (wireHeight !== undefined) patch.wireHeight = wireHeight;
+  if (inclinePct !== undefined) patch.inclinePct = inclinePct;
+  await alleySegmentRepository.update(segmentId, patch);
   cacheManager.del(NS, segmentId);
   return {updated: 1};
 };
