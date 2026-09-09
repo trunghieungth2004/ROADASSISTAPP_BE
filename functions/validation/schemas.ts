@@ -47,6 +47,8 @@ const schemas = {
     targetUserId: strReq(),
     status: boolReq(),
   }),
+  getRoles: Joi.object({}).unknown(true),
+  getRoleByUser: userIdBody(),
   createVehicleProfile: Joi.object({
     userId: strReq(),
     type: Joi.string().valid("SCOOTER", "CUB", "MANUAL").required(),

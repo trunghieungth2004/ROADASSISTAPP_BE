@@ -14,6 +14,8 @@
     "test:all": "npm test && npm run test:integration",
     "test:report": "JEST_JUNIT_OUTPUT_DIR=test-report JEST_JUNIT_OUTPUT_NAME=junit.xml jest --reporters=default --reporters=jest-junit --reporters=./test/reporters/markdownReporter.js",
     "deploy": "firebase deploy --only functions",
+    "db:init": "npm run build && node lib/scripts/db.init.js",
+    "db:init:emulator": "FUNCTIONS_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=demo npm run db:init",
     "logs": "firebase functions:log"
   },
   "engines": {

@@ -24,7 +24,9 @@
     "middleware/**/*.ts",
     "validation/**/*.ts",
     "routes/**/*.ts",
-    "utils/**/*.ts"
+    "utils/**/*.ts",
+    "constants/**/*.ts",
+    "scripts/**/*.ts"
   ],
   "exclude": [
     "node_modules",

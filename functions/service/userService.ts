@@ -1,5 +1,6 @@
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
+import {ROLE_ADMIN, ROLE_RIDER} from "../constants/roles";
 import {auth} from "../config/firebase";
 
 class ValidationError extends Error {
@@ -25,8 +26,6 @@ class ForbiddenError extends Error {
 }
 
 const USER_NS = "user";
-const ROLE_ADMIN = "1";
-const ROLE_RIDER = "2";
 
 const getOneUser = cacheManager.wrap(
   async (userId: string) => {
