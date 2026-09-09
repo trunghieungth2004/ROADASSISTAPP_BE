@@ -1,54 +1,58 @@
 # Testing
 
-> Status: the harness described below is the target design, matching the `package.json` scripts. `test/`, `jest.integration.config.js`, and `firebase.json` do not exist yet — `npm test` currently finds no tests.
-
-Backend tested with **Jest** across two tiers:
+Backend tested with **Jest** across two tiers — 15 unit suites (151 tests) and 11 integration suites (47 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
-- **Integration tests** — real Firestore emulator, exercise the full request lifecycle.
+- **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
 
 ## How to run
 
 ```bash
 cd functions
 npm test                    # unit tests only (mocked db)
-npm run test:integration    # integration tests (starts/stops the Firestore emulator automatically)
+npm run test:integration    # integration tests (starts/stops the emulators automatically)
 npm run test:all            # both tiers sequentially
 npm test -- <file>          # single unit test file
 npm run test:integration -- <file>  # single integration test file
 npm test -- --watch         # re-run on change
 ```
 
-The `firebase.json` predeploy hook will run `test:all` before every deploy, so `firebase deploy --only functions` **will fail and abort** if any test is red.
+The `firebase.json` predeploy hook runs `lint` + `build` + `test:all` before every deploy, so `firebase deploy --only functions` **will fail and abort** if any test is red.
 
-## Planned structure
+## Structure
 
 ```
 functions/
-├── jest config (in package.json "jest")     ← unit test config
+├── jest config (in package.json "jest")     ← unit test config (test/unit only)
 ├── jest.integration.config.js               ← integration test config
 └── test/
     ├── setup/
     │   ├── unit.ts              ← jest.mock('config/firebase'), CACHE_ENABLED=false
-    │   └── integration.ts       ← FIRESTORE_EMULATOR_HOST / GCLOUD_PROJECT env vars
+    │   └── integration.ts       ← emulator host env vars, CACHE_ENABLED=false
     ├── utils/
-    │   ├── stubs.ts             ← stubRequireAuth, stubRequireRole (unit vs integration variants)
-    │   ├── app.ts               ← buildUnitApp(), buildIntegrationApp() — Express apps with all routes wired
-    │   └── seed.ts              ← cleanAll, seedUser, seedSegment, seedFlag, seedLandmark
+    │   ├── stubs.ts             ← stubRequireAuth/Role (unit) + integration variants
+    │   ├── app.ts               ← buildUnitApp(), buildIntegrationApp() — all 10 routes wired
+    │   └── seed.ts              ← cleanAll + per-collection seed helpers
     ├── unit/
     │   ├── utils/geo.test.ts
+    │   ├── utils/cache.test.ts
+    │   ├── utils/cacheManager.test.ts
     │   ├── utils/sanitize.test.ts
     │   ├── validation/schemas.test.ts
     │   └── service/
     │       ├── userService.test.ts
+    │       ├── roleService.test.ts
     │       ├── vehicleProfileService.test.ts
     │       ├── alleySegmentService.test.ts
     │       ├── flagService.test.ts
     │       ├── landmarkService.test.ts
     │       ├── routingService.test.ts
+    │       ├── shopService.test.ts
+    │       ├── diagnosticService.test.ts
     │       └── dispatchService.test.ts
     ├── integration/
     │   ├── user.test.ts
+    │   ├── role.test.ts
     │   ├── vehicleProfile.test.ts
     │   ├── alleySegment.test.ts
     │   ├── flag.test.ts
@@ -60,23 +64,23 @@ functions/
     │   └── validation.test.ts
     ├── reporters/
     │   └── markdownReporter.js
-    └── report/                     ← gitignored output: junit.xml, latest-result.md
+    └── ../test-report/            ← gitignored output: junit.xml, latest-result.md
 ```
 
 ### test/setup/
 
 | File | Purpose |
 |------|---------|
-| `unit.ts` | `jest.mock('../../config/firebase')` — chainable Firestore stub. Sets `GCLOUD_PROJECT`, `ALLOWED_ORIGINS`, `OSRM_URL`, and `CACHE_ENABLED=false` (disables the in-memory cache so mock-call assertions stay deterministic). Loaded as `setupFiles` by the unit Jest config. |
-| `integration.ts` | Sets `FIRESTORE_EMULATOR_HOST=localhost:8080`, `GCLOUD_PROJECT=test-project`, and `CACHE_ENABLED=false` (fresh seeded data must never be served from cache) so `firebase-admin` connects to the local emulator instead of production. Loaded as `setupFiles` by the integration Jest config. |
+| `unit.ts` | `jest.mock('../../config/firebase')` — chainable Firestore stub (`db` proxy, `auth` with `createUser`/`updateUser`/`verifyIdToken`, `Timestamp`, `FieldValue`). Sets `GCLOUD_PROJECT`, `ALLOWED_ORIGINS`, `OSRM_URL`, and `CACHE_ENABLED=false` (disables the in-memory cache so mock-call assertions stay deterministic). Loaded as `setupFiles` by the unit Jest config. |
+| `integration.ts` | Sets `FIRESTORE_EMULATOR_HOST=localhost:8080`, `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099` (**bare host, no scheme** — the Admin SDK misparses a full URL), `STORAGE_EMULATOR_HOST`, `GCLOUD_PROJECT=test-project`, and `CACHE_ENABLED=false` (fresh seeded data must never be served from cache) so `firebase-admin` connects to the local emulators instead of production. Loaded as `setupFiles` by the integration Jest config. |
 
 ### test/utils/
 
 | File | Purpose |
 |------|---------|
-| `stubs.ts` | Four auth stubs: `stubRequireAuth`/`stubRequireRole` (unit — ignore body, set defaults) and `integrationRequireAuth`/`integrationRequireRole` (read `userId`/`userRole` from `req.body`, mirroring production). |
-| `app.ts` | `buildUnitApp()` — Express app with all 9 route files wired with unit stubs + `validate` middleware + error handler. `buildIntegrationApp()` — same but with integration stubs. |
-| `seed.ts` | Firestore seed helpers: `cleanAll()`, `cleanCollection(name)`, `seedUser()`, `seedSegment()`, `seedFlag()`, `seedLandmark()`, `seedShop()`, `seedTicket()`. |
+| `stubs.ts` | Four auth stubs: `stubRequireAuth`/`stubRequireRole` (unit — ignore request, set admin defaults) and `integrationRequireAuth`/`integrationRequireRole` (token-shaped: read `Authorization: Bearer <uid>`, load that uid's `users` doc for `userRole`, 401/404/403 otherwise — mirroring the Phase E contract). |
+| `app.ts` | `buildUnitApp()` — Express app with all 10 route files wired with unit stubs + `validate` middleware + error handler. `buildIntegrationApp()` — same but with integration stubs. |
+| `seed.ts` | Firestore seed helpers: `cleanAll()` (top-level collections plus `vehicle_profiles`/`ride_configs` subcollections), `cleanCollection(name)`, `seedUser()`, `seedRole()`, `seedProfile()`, `seedRideConfig()`, `seedSegment()`, `seedFlag()`, `seedLandmark()`, `seedShop()`, `seedDiagnostic()`, `seedTicket()`, `seedRoute()`. |
 
 ### test/unit/
 
@@ -86,33 +90,39 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 |------|-----------------|
 | `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped. |
 | `utils/geo.test.ts` | Geohash round-trip, haversine sanity (known distances), bounds containment, radius predicate. |
+| `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
+| `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, active). |
-| `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths. |
-| `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404. |
-| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, LOCKED short-circuit, TTL selection per type. |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, active), cache invalidation, Auth disable sync. |
+| `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
+| `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
+| `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
+| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, LOCKED short-circuit, TTL selection per type, near-search status filter, expiry. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
 | `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), OSRM error → `ServiceError`, empty routes → 404. |
+| `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
+| `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
 
 ### test/integration/
 
 Each file is **self-contained** — owns its own `beforeAll`/`afterAll` that cleans Firestore and seeds exactly the data it needs. Tests within a file are sequential (create → read → update). Files run independently with no cross-file state dependencies.
 
-Run against the Firestore emulator (`FIRESTORE_EMULATOR_HOST`). Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no OSRM in CI).
+Run against the Firestore + Auth emulators. Requests carry `Authorization: Bearer <uid>` (the stub resolves identity/role from the seeded `users` doc) plus the `userId` body field the current schemas still require. Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no OSRM in CI).
 
 | File | Tests |
 |------|-------|
-| `user.test.ts` | POST register 201 + defaults, POST one, POST all (admin), PUT role/trust/status, self-change 400 |
+| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400 |
+| `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
-| `alleySegment.test.ts` | POST create 201, POST segment, POST near, PUT passability, PUT moderate (admin), unknown 404 |
+| `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
 | `flag.test.ts` | POST create 201 + SUGGESTED, POST confirm ×3 → CONFIRMED, POST near excludes EXPIRED, PUT moderate (admin), POST expire |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, OSRM down → 500 |
-| `shop.test.ts` | POST create 201, POST near + type filter |
+| `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
 | `dispatch.test.ts` | POST create 201 + PENDING, POST one, PUT status advance, illegal status 400 |
-| `validation.test.js` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
+| `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 
 ## How the mock works
 
@@ -120,13 +130,21 @@ Run against the Firestore emulator (`FIRESTORE_EMULATOR_HOST`). Each test file i
 
 ## How integration tests work
 
-`test/setup/integration.ts` sets `FIRESTORE_EMULATOR_HOST` so `firebase-admin` connects to the local Firestore emulator (port 8080). Each integration test file uses `buildIntegrationApp()` which creates a real Express app with stubbed auth middleware. The `npm run test:integration` script automatically starts the emulator before tests and kills it after.
+`test/setup/integration.ts` sets the emulator host env vars so `firebase-admin` connects to the local Firestore (8080) and Auth (9099) emulators. The Auth emulator makes `POST /users/register` (`auth.createUser`) and `PUT /users/status` (`auth.updateUser`) exercise the real code paths. Each integration test file uses `buildIntegrationApp()` which creates a real Express app with stubbed auth middleware. The `npm run test:integration` script automatically starts the emulators before tests and kills them after.
+
+## Emulator gotchas (learned building this)
+
+- `FIREBASE_AUTH_EMULATOR_HOST` must be a **bare `host:port`** (`localhost:9099`). With an `http://` scheme the Admin SDK resolves hostname `http` and fails with `ENOTFOUND`.
+- Firestore rejects **nested arrays** — GeoJSON `coordinates` are stored JSON-stringified in `routing_cache` and parsed back on read.
+- Firestore `in` queries are **exact matches**, not prefix matches — near-searches match on the truncated `geoCell` field, not the full-precision `geoHash`.
+- `set()`/`update()` reject **`undefined` values** — optional fields are normalized to `null` (repos) or stripped (patch builders) before writing.
+- Never leave a manually started emulator running: the `test:integration` script starts its own, and a stale instance on the same ports serves old Auth state (e.g. duplicate-email 500s on register).
 
 ## Test reports
 
 Every run writes its result to `functions/test-report/` (gitignored):
 
-- `junit.xml` — JUnit XML for CI/automation.
+- `junit.xml` / `integration-junit.xml` — JUnit XML for CI/automation.
 - `latest-result.md` — human-readable summary.
 
 ```bash

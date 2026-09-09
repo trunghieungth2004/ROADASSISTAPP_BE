@@ -51,13 +51,13 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 | `roles` | doc ID = role code; `name`, `description`; seeded by `npm run db:init` (`functions/scripts/db.init.ts` from `functions/constants/roles.ts`) |
 | `users/{uid}/vehicle_profiles` | auto ID; `type` (`SCOOTER`, `CUB`, `MANUAL`), `baseWidth`, `baseHeight`, `createdAt` |
 | `users/{uid}/vehicle_profiles/{pid}/ride_configs` | auto ID; `configType` (`SOLO`, `PASSENGER`, `CARGO`), `estWidth?`, `estHeight?`, `createdAt` |
-| `alley_segments` | auto ID; `lat`, `lng`, `geoHash` (precision 9), `baseWidth?`, `wireHeight?`, `inclinePct?`, `tier` (`TIER1`, `TIER2`, `TIER3`), `verifiedCount`, `createdAt` |
-| `flags` | auto ID; `type` (`ACCIDENT`, `FLOOD`, `OBSTRUCTION`), `status` (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTED`), `geoHash` (precision 7), `lat`, `lng`, `voteCount`, `reporterUid`, `reporterTrust`, `note?`, `createdAt` (ISO), `ttlExpiresAt` (Timestamp) |
-| `landmarks` | auto ID; `lat`, `lng`, `displayLabel`, `embedding?` (client-supplied vector), `geoHash` (precision 8), `createdAt` |
-| `shops` | auto ID; `name`, `lat`, `lng`, `type` (`SHOP`, `PUMP`), `geoHash` (precision 8), `createdAt` |
+| `alley_segments` | auto ID; `lat`, `lng`, `geoHash` (precision 9), `geoCell` (precision 4, exact-match search key), `baseWidth?`, `wireHeight?`, `inclinePct?`, `tier` (`TIER1`, `TIER2`, `TIER3`), `verifiedCount`, `createdAt` |
+| `flags` | auto ID; `type` (`ACCIDENT`, `FLOOD`, `OBSTRUCTION`), `status` (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTED`), `geoHash` (precision 7), `geoCell` (precision 5), `lat`, `lng`, `voteCount`, `reporterUid`, `reporterTrust`, `note?`, `createdAt` (ISO), `ttlExpiresAt` (Timestamp) |
+| `landmarks` | auto ID; `lat`, `lng`, `displayLabel`, `embedding?` (client-supplied vector), `geoHash` (precision 8), `geoCell` (precision 6), `createdAt` |
+| `shops` | auto ID; `name`, `lat`, `lng`, `type` (`SHOP`, `PUMP`), `geoHash` (precision 8), `geoCell` (precision 6), `createdAt` |
 | `diagnostics` | auto ID; `userId`, `category` (`FLAT_TIRE`, `FLUID_LEAK`, `CHAIN_SLACK`, `SPARK_CAP`), `imagePath`, `createdAt` |
 | `dispatch_tickets` | auto ID; `userId`, `ticketType` (`MECHANIC`, `TOW`, `SOS`), `status` (`PENDING`, `MATCHED`, `ARRIVED`, `RESOLVED`, `CANCELLED`), `lat`, `lng`, `diagnosticId?`, `createdAt` |
-| `routing_cache` | doc ID = deterministic route key; `originLat/Lng`, `destLat/Lng`, `widthBucket`, `geometry`, `cachedAt` |
+| `routing_cache` | doc ID = deterministic route key; `originLat/Lng`, `destLat/Lng`, `widthBucket`, `geometry` (JSON string — Firestore rejects nested arrays), `cachedAt` |
 
 ## Firestore Indexes
 
@@ -67,15 +67,15 @@ Spatial reads use single-field `geoHash in [...]` queries (no composite index ne
 |---|---|---|
 | `flags` | `status` ASC + `ttlExpiresAt` ASC | `findExpired` (`status in [...]` + `ttlExpiresAt <= now`) |
 
-The index file (`firestore.indexes.json`, deployed via `firebase deploy --only firestore:indexes`) is not created yet — create it with the entry above before relying on flag expiry.
+The index file (`firestore.indexes.json`, deployed via `firebase deploy --only firestore:indexes`) carries the entry above — deploy it before relying on flag expiry.
 
 ## Key Design Decisions
 
 - **Numeric roles**: `"1"` = admin, `"2"` = rider (default on register). Single source of truth in `functions/constants/roles.ts` (`ROLE_ADMIN`/`ROLE_RIDER`, `ROLES` map). The `roles` collection mirrors that map for clients (`npm run db:init` upserts it; `npm run db:init:emulator` targets the local emulator); `POST /roles/all` lists the mapping, `POST /roles/user` resolves one user to `{id, role, name, description}`. Admin-only routes: user management, `/alleys/moderate`, `/flags/moderate`, `/flags/expire`.
-- **Geohash spatial search**: every near-query builds a 3×3 cell grid over the radius bounds, encodes each cell center, and fans out `geoHash in` queries chunked to ≤30 prefixes, then filters by exact haversine distance. Stored precisions: segments 9, flags 7, landmarks 8, shops 8; search prefix lengths: alleys 4, flags 5, landmarks/shops 6.
+- **Geohash spatial search**: every near-query builds a 3×3 cell grid over the radius bounds, encodes each cell center, and fans out exact-match `geoCell in` queries chunked to ≤30 prefixes (Firestore `in` is exact-match, not prefix-match, hence the truncated `geoCell` field alongside the full-precision `geoHash`); landmark/shop results are then filtered by exact haversine distance. Stored precisions: segments 9, flags 7, landmarks 8, shops 8; search cell precisions: alleys 4, flags 5, landmarks/shops 6.
 - **Flag consensus (Rule-of-3)**: each confirm adds weight 1 (+0.5 when the reporter's trust ≥ 50); at count ≥ 3 the flag flips to `CONFIRMED`. `LOCKED` flags ignore further votes. Per-type TTLs (ACCIDENT 1h, FLOOD 6h, OBSTRUCTION 3h, default 3h) drive `ttlExpiresAt`; the expire endpoint flips lapsed `SUGGESTED`/`CONFIRMED`/`LOCKED` flags to `EXPIRED`.
 - **Passability model** (`computePassability`): unknown width → neutral 50; vehicle wider than segment → incompatible 10; otherwise margin-based scores 90 (`WIDE`) / 70 (`TIGHT`) / 50 (`VERY_TIGHT`).
-- **Routing**: width maps to buckets (`<0.8` NARROW, `≤1.0` MEDIUM, else WIDE, default MEDIUM); the cache key is origin/dest rounded to 5 decimals plus bucket. Misses call self-hosted OSRM on Cloud Run (`OSRM_URL`, default `http://localhost:5000`, `motorbike` profile with `width_bucket`) and persist the GeoJSON geometry in `routing_cache`. No TTL — entries are overwritten, never auto-expired.
+- **Routing**: width maps to buckets (`<0.8` NARROW, `≤1.0` MEDIUM, else WIDE, default MEDIUM); the cache key is origin/dest rounded to 5 decimals plus bucket. Misses call self-hosted OSRM on Cloud Run (`OSRM_URL`, default `http://localhost:5000`, `motorbike` profile with `width_bucket`) and persist the GeoJSON geometry in `routing_cache` as a JSON string (Firestore rejects nested arrays; parsed back to an object on cache hits). No TTL — entries are overwritten, never auto-expired.
 - **Landmark matching**: candidates come from the cached near-search; best cosine similarity wins with a 0.7 acceptance threshold, otherwise `{landmark: null, confidence}`.
 - **XeAssist stubs**: shop, diagnostic, and dispatch modules are minimal CRUD + one state machine (dispatch statuses `PENDING` → `MATCHED` → `ARRIVED` → `RESOLVED`, plus `CANCELLED`); HẻmNav (user, vehicleProfile, alleySegment, flag, landmark, routingCache) is the real surface.
 - **Express hardening**: 100 req/min rate limit, `ALLOWED_ORIGINS` CORS allowlist, 20 MB JSON body limit, `sanitizeObject` on every body, `morgan('short')` logging, centralized error middleware.
@@ -113,6 +113,13 @@ functions/
 │   └── roles.ts                # ROLE_ADMIN/ROLE_RIDER + ROLES seed definitions
 ├── scripts/
 │   └── db.init.ts              # Seeds roles collection (npm run db:init)
+├── test/                       # Jest harness (see TESTING.md)
+│   ├── setup/                  # unit.ts (firebase mock), integration.ts (emulator env)
+│   ├── utils/                  # stubs.ts, app.ts (route builders), seed.ts
+│   ├── unit/                   # 15 suites: validation, utils, services
+│   ├── integration/            # 11 suites: one per domain + validation
+│   └── reporters/
+│       └── markdownReporter.js # writes test-report/latest-result.md
 └── utils/
     ├── response.ts
     ├── geo.ts

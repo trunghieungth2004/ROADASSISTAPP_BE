@@ -9,6 +9,21 @@ cd functions && npm install
 firebase emulators:start
 ```
 
+## Development & Testing
+
+```bash
+cd functions
+npm test                    # unit tests (offline, mocked db)
+npm run test:integration    # integration tests (auto-starts Firestore/Auth/Storage emulators)
+npm run test:all            # both tiers sequentially
+npm run lint                # eslint, must report 0 errors
+npm run build               # tsc
+```
+
+`firebase.json` predeploy runs `lint` + `build` + `test:all`, so `firebase deploy --only functions` aborts if any test is red. See [Testing](./documentation/TESTING.md) for the harness layout.
+
+Local emulators: Firestore `localhost:8080`, Auth `localhost:9099`, Storage `localhost:9199` (see `firebase.json`).
+
 ## Base URL
 
 ```
@@ -23,6 +38,8 @@ Most endpoints require `userId` in the request body. The middleware validates th
 
 - **`requireAuth`** — body must include `userId`; user must exist and be active
 - **`requireRole("1")`** — admin-only; checks `req.userRole === "1"`
+
+> Token-based authentication (verifying `Authorization: Bearer <idToken>`) is planned and will replace body-`userId` identity. Until then, treat the gating as unverified.
 
 ## Roles
 
@@ -69,7 +86,7 @@ Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve a sin
 
 ## Deploying Indexes
 
-The `flags` expiry query needs a composite index on `(status, ttlExpiresAt)` — declare it in `firestore.indexes.json` (not created yet) and deploy:
+The `flags` expiry query needs a composite index on `(status, ttlExpiresAt)` — declared in `firestore.indexes.json`; deploy it with:
 
 ```bash
 firebase deploy --only firestore:indexes
@@ -83,4 +100,4 @@ See [Architecture → Firestore Indexes](./documentation/ARCHITECTURE.md#firesto
 - [API Reference](./documentation/API.md) — All endpoints with request/response schemas
 - [Request Schemas](./documentation/SCHEMA.md) — Per-endpoint validation rules
 - [Caching](./documentation/CACHE.md) — In-process LRU namespaces + Firestore route cache
-- [Testing](./documentation/TESTING.md) — Jest unit/integration plan
+- [Testing](./documentation/TESTING.md) — Jest unit/integration harness
