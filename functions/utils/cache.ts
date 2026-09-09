@@ -41,6 +41,13 @@ interface CacheOptions {
   updateAgeOnGet?: boolean;
 }
 
+type CacheValue =
+  | Record<string, unknown>
+  | unknown[]
+  | string
+  | number
+  | boolean;
+
 interface Cache {
   get(key: string): unknown;
   set(key: string, value: unknown): void;
@@ -74,11 +81,11 @@ export const createCache = ({
     options.maxSize = maxSize;
     options.sizeCalculation = (value) => sizeOf(value);
   }
-  const cache = new LRUCache<string, any>(options);
+  const cache = new LRUCache<string, CacheValue>(options);
   return {
     get: (key) => cache.get(key),
     set: (key, value) => {
-      cache.set(key, value);
+      cache.set(key, value as CacheValue);
     },
     has: (key) => cache.has(key),
     del: (key) => {
@@ -86,7 +93,7 @@ export const createCache = ({
     },
     clear: () => cache.clear(),
     size: () => cache.size,
-    calculatedSize: () => (cache as any).calculatedSize ?? 0,
+    calculatedSize: () => cache.calculatedSize,
   };
 };
 

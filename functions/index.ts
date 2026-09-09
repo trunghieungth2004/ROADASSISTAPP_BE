@@ -1,7 +1,7 @@
 import express, {NextFunction, Request, Response} from "express";
 import cors from "cors";
 import compression from "compression";
-import rateLimit from "express-rate-limit";
+import rateLimiter from "express-rate-limit";
 import morgan from "morgan";
 import * as functions from "firebase-functions";
 import {requireAuth, requireRole} from "./middleware/auth";
@@ -25,7 +25,7 @@ const app = express();
 
 const routeDeps = {requireAuth, requireRole, validate, schemas};
 
-const limiter = rateLimit({
+const limiter = rateLimiter({
   windowMs: 1 * 60 * 1000,
   max: 100,
   standardHeaders: true,

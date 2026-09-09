@@ -8,6 +8,8 @@ interface SchemaMap {
   query?: Joi.ObjectSchema;
 }
 
+export {SchemaMap};
+
 export const validate =
   (schema: SchemaMap) =>
     (req: Request, res: Response, next: NextFunction): void => {
@@ -28,7 +30,7 @@ export const validate =
           } as unknown as Error & { errors: unknown });
           return;
         }
-        (req as any)[part] = value;
+        (req as unknown as Record<string, unknown>)[part] = value;
       }
       next();
     };

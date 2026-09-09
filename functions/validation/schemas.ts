@@ -160,4 +160,6 @@ const schemas = {
   getStatuses: emptyBody(),
 };
 
-export {schemas, locationBody};
+type Schemas = typeof schemas;
+
+export {schemas, locationBody, Schemas};

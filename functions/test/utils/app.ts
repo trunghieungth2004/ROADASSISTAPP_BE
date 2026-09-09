@@ -1,4 +1,5 @@
 import express, {Express, NextFunction, Request, Response} from "express";
+import {RouteDeps} from "../../types/routes";
 import {validate} from "../../middleware/validate";
 import {schemas} from "../../validation/schemas";
 import {handleServiceError} from "../../utils/response";
@@ -20,16 +21,7 @@ import shopRoutes from "../../routes/shopRoutes";
 import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
 
-interface TestDeps {
-  requireAuth: (req: any, res: any, next: any) => void;
-  requireRole: (
-    role: string | string[],
-  ) => (req: any, res: any, next: any) => void;
-  validate: (schema: any) => (req: any, res: any, next: any) => void;
-  schemas: Record<string, unknown>;
-}
-
-const registerRoutes = (app: Express, deps: TestDeps): void => {
+const registerRoutes = (app: Express, deps: RouteDeps): void => {
   userRoutes(app, deps);
   roleRoutes(app, deps);
   statusRoutes(app, deps);
@@ -43,7 +35,7 @@ const registerRoutes = (app: Express, deps: TestDeps): void => {
   dispatchRoutes(app, deps);
 };
 
-const buildApp = (deps: TestDeps): Express => {
+const buildApp = (deps: RouteDeps): Express => {
   const app = express();
   app.use(express.json());
   registerRoutes(app, deps);

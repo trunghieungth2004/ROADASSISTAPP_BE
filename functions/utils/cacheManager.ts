@@ -73,27 +73,36 @@ export const del = (namespace: string, key?: string): void => {
   else caches[namespace].del(key);
 };
 
-type AnyFn = (...args: any[]) => Promise<unknown>;
+type CacheFn<T extends unknown[] = unknown[], R = unknown> = (
+  ...args: T
+) => Promise<R>;
 
-export const wrap = (
-  fn: AnyFn,
+type WrappedFn<T extends unknown[] = unknown[], R = unknown> =
+  CacheFn<T, R> & {
+    invalidate: (key: string) => void;
+    invalidateAll: () => void;
+  };
+
+export const wrap = <T extends unknown[], R>(
+  fn: CacheFn<T, R>,
   {
     namespace,
-    keyFn = (...args: unknown[]) => JSON.stringify(args),
-  }: { namespace: string; keyFn?: (...args: any[]) => string },
-) => {
+    keyFn = (...args: T) => JSON.stringify(args),
+  }: {namespace: string; keyFn?: (...args: T) => string},
+): WrappedFn<T, R> => {
   ensureCache(namespace);
-  const wrapped = async (...args: unknown[]): Promise<unknown> => {
+  const wrapped = async (...args: T): Promise<R> => {
     const key = keyFn(...args);
     const hit = get(namespace, key);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return hit as R;
     const result = await fn(...args);
     if (result !== undefined) set(namespace, key, result);
     return result;
   };
-  (wrapped as any).invalidate = (key: string) => del(namespace, key);
-  (wrapped as any).invalidateAll = () => del(namespace);
-  return wrapped;
+  return Object.assign(wrapped, {
+    invalidate: (key: string) => del(namespace, key),
+    invalidateAll: () => del(namespace),
+  });
 };
 
 export {caches, isCacheEnabled};

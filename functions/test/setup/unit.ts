@@ -1,7 +1,7 @@
 import {jest} from "@jest/globals";
 
 jest.mock("../../config/firebase", () => {
-  const chain = (): any => {
+  const chain = (): unknown => {
     const handler: ProxyHandler<Record<string, unknown>> = {
       get: (_target, prop: string | symbol) => {
         if (prop === "get") {
