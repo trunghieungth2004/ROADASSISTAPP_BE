@@ -2,11 +2,16 @@ import * as flagRepository from "../repository/flagRepository";
 import {STATUS_FLAGS} from "../constants/status";
 import {cellsForBounds, lineStringHitsCircles} from "../utils/geo";
 
-const BLOCKING_TYPES = ["FLOOD"];
+const BLOCKING_TYPES = ["FLOOD", "OBSTRUCTION", "ACCIDENT"];
 const BLOCKING_STATUSES: string[] = [
   STATUS_FLAGS.CONFIRMED,
   STATUS_FLAGS.LOCKED,
 ];
+const BLOCKING_RADIUS_METERS: Record<string, number> = {
+  FLOOD: 200,
+  OBSTRUCTION: 100,
+  ACCIDENT: 100,
+};
 const DEFAULT_RADIUS_METERS = 200;
 const BBOX_MARGIN_DEG = 0.03;
 
@@ -57,6 +62,7 @@ const findBlocking = async (geometry: unknown): Promise<BlockingZone[]> => {
       lng: f.lng,
       radiusMeters:
         (f.radiusMeters as number | null | undefined) ??
+        BLOCKING_RADIUS_METERS[f.type] ??
         DEFAULT_RADIUS_METERS,
       note: f.note ?? null,
     }));
@@ -67,6 +73,7 @@ export {
   findBlocking,
   BLOCKING_TYPES,
   BLOCKING_STATUSES,
+  BLOCKING_RADIUS_METERS,
   DEFAULT_RADIUS_METERS,
   BlockingZone,
 };

@@ -17,7 +17,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > ```
 > - `status` is `"SUCCESS"` or `"ERROR"`. `statusCode` mirrors the HTTP status. `data` is present on read/query/created responses; `message` is present on action responses. `errors` (an array of strings) appears on `400` validation failures.
 > - Success status codes: `200` (OK), `201` (created).
-> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by floods), `500` (unexpected, e.g. Auth create failure, OSRM outage).
+> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by hazards), `500` (unexpected, e.g. Auth create failure, OSRM outage).
 
 > **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
@@ -630,7 +630,7 @@ Route between two points for the caller's vehicle width. Served from the `routin
 }
 ```
 
-Every request (cache hit or fresh) is re-validated against active `FLOOD` flags (`"2"` Confirmed / `"3"` Locked). If the geometry crosses a flood's impact circle (`radiusMeters`, default 200), the route is refused:
+Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the route is refused:
 
 **Response `409` (blocked):**
 ```json

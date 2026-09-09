@@ -58,12 +58,34 @@ describe("closureService.findBlocking", () => {
     expect(zones.map((z) => z.flagId)).toEqual(["wide"]);
   });
 
+  it("blocks obstruction/accident flags with 100 m defaults", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "obstruction-1", type: "OBSTRUCTION"}),
+      flood({id: "accident-1", type: "ACCIDENT"}),
+    ] as never);
+    const zones = await findBlocking(line);
+    expect(zones.map((z) => z.flagId).sort()).toEqual([
+      "accident-1",
+      "obstruction-1",
+    ]);
+    for (const zone of zones) {
+      expect(zone.radiusMeters).toBe(100);
+    }
+  });
+
+  it("reports locked flags as blocking", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "locked", status: "3"}),
+    ] as never);
+    const zones = await findBlocking(line);
+    expect(zones.map((z) => z.flagId)).toEqual(["locked"]);
+  });
+
   it("ignores non-blocking flags", async () => {
     jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
       flood({id: "suggested", status: "1"}),
       flood({id: "expired", status: "4"}),
       flood({id: "rejected", status: "5"}),
-      flood({id: "accident", type: "ACCIDENT", status: "2"}),
       flood({id: "far", lat: 11.7, lng: 107.6}),
     ] as never);
     await expect(findBlocking(line)).resolves.toEqual([]);

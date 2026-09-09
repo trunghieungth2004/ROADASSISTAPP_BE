@@ -105,8 +105,8 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
 | `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
-| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), flood block → 409 on fresh *and* cached routes, OSRM error → `ServiceError`, empty routes → 404. |
-| `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, per-flag radius override, non-blocking filter (suggested/expired/rejected/non-flood/far), distance sorting. |
+| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), hazard block → 409 on fresh *and* cached routes, OSRM error → `ServiceError`, empty routes → 404. |
+| `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
