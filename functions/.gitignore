@@ -1,0 +1,12 @@
+# Compiled JavaScript files
+lib/
+
+# Test reports
+test-report/
+
+# TypeScript v1 declaration files
+typings/
+
+# Node.js dependency directory
+node_modules/
+*.local
