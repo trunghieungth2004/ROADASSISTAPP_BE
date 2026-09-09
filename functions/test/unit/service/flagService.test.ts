@@ -49,7 +49,7 @@ describe("flagService.confirmFlag", () => {
   });
 
   it("short-circuits locked flags", async () => {
-    const flag = {id: "f1", status: "LOCKED", voteCount: 5};
+    const flag = {id: "f1", status: "3", voteCount: 5};
     jest.mocked(flagRepository.findById).mockResolvedValue(flag as never);
     await expect(confirmFlag("f1")).resolves.toBe(flag);
     expect(flagRepository.incrementVote).not.toHaveBeenCalled();
@@ -58,28 +58,28 @@ describe("flagService.confirmFlag", () => {
   it("flips to CONFIRMED at the threshold", async () => {
     jest.mocked(flagRepository.findById).mockResolvedValue({
       id: "f1",
-      status: "SUGGESTED",
+      status: "1",
       voteCount: 2,
       reporterTrust: 0,
     } as never);
     await expect(confirmFlag("f1")).resolves.toMatchObject({
       voteCount: 3,
-      status: "CONFIRMED",
+      status: "2",
     });
     expect(flagRepository.incrementVote).toHaveBeenCalledWith("f1");
-    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "CONFIRMED");
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "2");
   });
 
   it("weights trusted reporters at 1.5", async () => {
     jest.mocked(flagRepository.findById).mockResolvedValue({
       id: "f1",
-      status: "SUGGESTED",
+      status: "1",
       voteCount: 1,
       reporterTrust: 60,
     } as never);
     await expect(confirmFlag("f1")).resolves.toMatchObject({
       voteCount: 2.5,
-      status: "SUGGESTED",
+      status: "1",
     });
     expect(flagRepository.updateStatus).not.toHaveBeenCalled();
   });
@@ -88,10 +88,10 @@ describe("flagService.confirmFlag", () => {
 describe("flagService.getNear", () => {
   it("excludes expired and rejected flags", async () => {
     jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
-      {id: "a", status: "SUGGESTED"},
-      {id: "b", status: "EXPIRED"},
-      {id: "c", status: "REJECTED"},
-      {id: "d", status: "CONFIRMED"},
+      {id: "a", status: "1"},
+      {id: "b", status: "4"},
+      {id: "c", status: "5"},
+      {id: "d", status: "2"},
     ] as never);
     const result = await getNear({lat: 10.7, lng: 106.6});
     expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
@@ -105,7 +105,7 @@ describe("flagService.moderateFlag", () => {
   it("throws 404 for an unknown flag", async () => {
     jest.mocked(flagRepository.findById).mockResolvedValue(null);
     await expect(
-      moderateFlag({flagId: "ghost", status: "LOCKED"}),
+      moderateFlag({flagId: "ghost", status: "3"}),
     ).rejects.toMatchObject({statusCode: 404});
   });
 
@@ -115,7 +115,7 @@ describe("flagService.moderateFlag", () => {
     } as never);
     jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
     await expect(
-      moderateFlag({flagId: "f1", status: "LOCKED"}),
+      moderateFlag({flagId: "f1", status: "3"}),
     ).resolves.toEqual({updated: 1});
   });
 });
@@ -128,8 +128,8 @@ describe("flagService.expireFlags", () => {
     ] as never);
     jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
     await expect(expireFlags()).resolves.toBe(2);
-    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "EXPIRED");
-    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f2", "EXPIRED");
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "4");
+    expect(flagRepository.updateStatus).toHaveBeenCalledWith("f2", "4");
   });
 
   it("returns zero when nothing lapsed", async () => {

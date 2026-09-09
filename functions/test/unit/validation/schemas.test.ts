@@ -8,7 +8,7 @@ const valid: Record<string, unknown> = {
   getOneUser: {},
   updateUserRole: {targetUserId: "u1", role: "1"},
   updateUserTrust: {targetUserId: "u1", trustScore: 60},
-  updateUserStatus: {targetUserId: "u1", status: false},
+  updateUserStatus: {targetUserId: "u1", status: "0"},
   createVehicleProfile: {type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
   addRideConfig: {profileId: "p1", configType: "CARGO"},
   getAllVehicleProfiles: {},
@@ -18,7 +18,7 @@ const valid: Record<string, unknown> = {
   setPassability: {segmentId: "s1", tier: "TIER1"},
   moderateSegment: {segmentId: "s1"},
   createFlag: {type: "FLOOD", lat: 10.7626, lng: 106.6602},
-  moderateFlag: {flagId: "f1", status: "LOCKED"},
+  moderateFlag: {flagId: "f1", status: "3"},
   getFlagsNear: {lat: 10.7626, lng: 106.6602},
   confirmFlag: {flagId: "f1"},
   nearLandmarks: {lat: 10.7626, lng: 106.6602},
@@ -36,9 +36,10 @@ const valid: Record<string, unknown> = {
   getDiagnostic: {diagnosticId: "d1"},
   createDispatch: {ticketType: "TOW", lat: 10.7, lng: 106.6},
   getDispatch: {ticketId: "t1"},
-  updateDispatchStatus: {ticketId: "t1", status: "MATCHED"},
+  updateDispatchStatus: {ticketId: "t1", status: "2"},
   getRoles: {},
   getRoleByUser: {},
+  getStatuses: {},
 };
 
 describe("schemas accept valid samples", () => {
@@ -62,10 +63,10 @@ describe("schemas reject invalid input", () => {
       .toBeDefined();
   });
 
-  it("updateUserStatus rejects non-boolean status", () => {
+  it("updateUserStatus rejects unknown status codes", () => {
     const {error} = table.updateUserStatus.validate({
       targetUserId: "b",
-      status: "yes",
+      status: "9",
     });
     expect(error).toBeDefined();
   });

@@ -1,4 +1,5 @@
 import {db, FieldValue, Timestamp} from "../config/firebase";
+import {STATUS_FLAGS} from "../constants/status";
 import {encodeGeohash} from "../utils/geo";
 
 interface FlagRecord {
@@ -55,7 +56,7 @@ const create = async (data: {
   const doc = {
     id: ref.id,
     type: data.type,
-    status: "SUGGESTED",
+    status: STATUS_FLAGS.SUGGESTED,
     geoHash,
     geoCell: encodeGeohash(data.lat, data.lng, 5),
     lat: data.lat,
@@ -82,10 +83,16 @@ const updateStatus = async (flagId: string, status: string): Promise<void> => {
   await db.collection("flags").doc(flagId).update({status});
 };
 
+const ACTIVE_STATUSES = [
+  STATUS_FLAGS.SUGGESTED,
+  STATUS_FLAGS.CONFIRMED,
+  STATUS_FLAGS.LOCKED,
+];
+
 const findExpired = async (): Promise<FlagRecord[]> => {
   const snapshot = await db
     .collection("flags")
-    .where("status", "in", ["SUGGESTED", "CONFIRMED", "LOCKED"])
+    .where("status", "in", ACTIVE_STATUSES)
     .where("ttlExpiresAt", "<=", Timestamp.fromDate(new Date()))
     .get();
   const results: FlagRecord[] = [];

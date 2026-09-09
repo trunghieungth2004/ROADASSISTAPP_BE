@@ -31,7 +31,7 @@ describe("dispatch endpoints", () => {
       .set("Authorization", bearer(USER))
       .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(201);
-    expect(res.body.data.status).toBe("PENDING");
+    expect(res.body.data.status).toBe("1");
     ticketId = res.body.data.id as string;
   });
 
@@ -48,7 +48,7 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
-      .send({ticketId, status: "MATCHED"});
+      .send({ticketId, status: "2"});
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({updated: 1});
   });

@@ -35,7 +35,7 @@ describe("flag endpoints", () => {
       .set("Authorization", bearer(USER))
       .send({type: "FLOOD", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(201);
-    expect(res.body.data.status).toBe("SUGGESTED");
+    expect(res.body.data.status).toBe("1");
     flagId = res.body.data.id as string;
   });
 
@@ -55,12 +55,12 @@ describe("flag endpoints", () => {
     expect(third.status).toBe(200);
     expect(third.body.data).toMatchObject({
       voteCount: 3,
-      status: "CONFIRMED",
+      status: "2",
     });
   });
 
   it("POST /flags/near excludes expired flags", async () => {
-    await seedFlag({lat: BASE_LAT, lng: BASE_LNG, status: "EXPIRED"});
+    await seedFlag({lat: BASE_LAT, lng: BASE_LNG, status: "4"});
     const res = await request(app)
       .post("/flags/near")
       .set("Authorization", bearer(USER))
@@ -69,7 +69,7 @@ describe("flag endpoints", () => {
     const ids = res.body.data.map((f: {id: string}) => f.id);
     expect(ids).toContain(flagId);
     for (const flag of res.body.data as {status: string}[]) {
-      expect(["SUGGESTED", "CONFIRMED", "LOCKED"]).toContain(flag.status);
+      expect(["1", "2", "3"]).toContain(flag.status);
     }
   });
 
@@ -77,7 +77,7 @@ describe("flag endpoints", () => {
     const res = await request(app)
       .put("/flags/moderate")
       .set("Authorization", bearer(ADMIN))
-      .send({flagId, status: "LOCKED"});
+      .send({flagId, status: "3"});
     expect(res.status).toBe(200);
   });
 

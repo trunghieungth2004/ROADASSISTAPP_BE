@@ -1,5 +1,6 @@
 import * as dispatchRepository from "../repository/dispatchRepository";
 import * as userRepository from "../repository/userRepository";
+import {STATUS_DISPATCH} from "../constants/status";
 
 class ValidationError extends Error {
   statusCode: number;
@@ -16,13 +17,7 @@ class NotFoundError extends Error {
   }
 }
 
-const VALID_STATUSES = [
-  "PENDING",
-  "MATCHED",
-  "ARRIVED",
-  "RESOLVED",
-  "CANCELLED",
-];
+const VALID_STATUSES: string[] = Object.values(STATUS_DISPATCH);
 
 const createDispatch = async ({
   userId,

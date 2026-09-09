@@ -1,4 +1,5 @@
 import {db, Timestamp} from "../../config/firebase";
+import {STATUS_USER} from "../../constants/status";
 import {encodeGeohash} from "../../utils/geo";
 
 const PREFIX = "IT";
@@ -8,6 +9,7 @@ const BASE_LNG = 106.6602;
 const ALL_COLLECTIONS = [
   "users",
   "roles",
+  "statuses",
   "alley_segments",
   "flags",
   "landmarks",
@@ -46,8 +48,8 @@ const cleanAll = async (): Promise<void> => {
 
 const seedUser = async (
   id: string,
-  role = "2",
-  status = true,
+  role: string = "2",
+  status: string = STATUS_USER.ACTIVE,
   trustScore = 0,
 ): Promise<string> => {
   await db.collection("users").doc(id).set({
@@ -68,6 +70,21 @@ const seedRole = async (
 ): Promise<string> => {
   await db.collection("roles").doc(code).set({name, description});
   return code;
+};
+
+const seedStatus = async (
+  domain: string,
+  code: string,
+  name: string,
+  description: string,
+  order = 0,
+): Promise<string> => {
+  const id = `${domain}:${code}`;
+  await db
+    .collection("statuses")
+    .doc(id)
+    .set({domain, code, name, description, order});
+  return id;
 };
 
 const seedProfile = async (
@@ -139,7 +156,7 @@ const seedFlag = async (
   const lng = (overrides.lng as number) ?? BASE_LNG;
   await ref.set({
     type: "FLOOD",
-    status: "SUGGESTED",
+    status: "1",
     geoHash: encodeGeohash(lat, lng, 7),
     geoCell: encodeGeohash(lat, lng, 5),
     lat,
@@ -215,7 +232,7 @@ const seedTicket = async (
   await ref.set({
     userId: `${PREFIX}-user-1`,
     ticketType: "TOW",
-    status: "PENDING",
+    status: "1",
     lat: BASE_LAT,
     lng: BASE_LNG,
     diagnosticId: null,
@@ -255,6 +272,7 @@ export {
   cleanAll,
   seedUser,
   seedRole,
+  seedStatus,
   seedProfile,
   seedRideConfig,
   seedSegment,

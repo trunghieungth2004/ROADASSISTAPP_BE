@@ -1,5 +1,6 @@
 import {NextFunction, Request, Response} from "express";
 import {auth, db} from "../config/firebase";
+import {STATUS_USER} from "../constants/status";
 import * as cacheManager from "../utils/cacheManager";
 
 const USER_NS = "user";
@@ -7,7 +8,7 @@ const USER_NS = "user";
 interface UserData {
   id: string;
   role: string;
-  status?: boolean;
+  status?: string;
   trustScore?: number;
 }
 
@@ -67,7 +68,7 @@ export const requireAuth = async (
       return;
     }
 
-    if (userData.status !== true) {
+    if (userData.status !== STATUS_USER.ACTIVE) {
       res.status(403).json({
         statusCode: 403,
         status: "ERROR",

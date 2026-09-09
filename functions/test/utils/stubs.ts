@@ -1,5 +1,6 @@
 import {NextFunction, Request, Response} from "express";
 import {db} from "../../config/firebase";
+import {STATUS_USER} from "../../constants/status";
 
 interface AuthedRequest extends Request {
   uid?: string;
@@ -49,8 +50,8 @@ const integrationRequireAuth = async (
       });
       return;
     }
-    const data = doc.data() as {role?: string; status?: boolean};
-    if (data.status !== true) {
+    const data = doc.data() as {role?: string; status?: string};
+    if (data.status !== STATUS_USER.ACTIVE) {
       res.status(403).json({
         statusCode: 403,
         status: "ERROR",

@@ -1,11 +1,12 @@
 import {db, auth} from "../config/firebase";
+import {STATUS_USER} from "../constants/status";
 
 const BATCH_SIZE = 400;
 
 interface UserRecord {
   id: string;
   role: string;
-  status?: boolean;
+  status?: string;
   trustScore?: number;
   [key: string]: unknown;
 }
@@ -20,7 +21,7 @@ const findActiveById = async (userId: string): Promise<UserRecord | null> => {
   const doc = await db.collection("users").doc(userId).get();
   if (!doc.exists) return null;
   const data = doc.data() as UserRecord;
-  if (data.status !== true) return null;
+  if (data.status !== STATUS_USER.ACTIVE) return null;
   return {...data, id: doc.id};
 };
 
@@ -44,7 +45,7 @@ const create = async (
       email: data.email ?? null,
       displayName: data.displayName ?? null,
       role: data.role,
-      status: true,
+      status: STATUS_USER.ACTIVE,
       trustScore: 0,
       createdAt: new Date().toISOString(),
     });
@@ -61,9 +62,9 @@ const updateTrustScore = async (
   await db.collection("users").doc(userId).update({trustScore});
 };
 
-const updateStatus = async (userId: string, status: boolean): Promise<void> => {
+const updateStatus = async (userId: string, status: string): Promise<void> => {
   await db.collection("users").doc(userId).update({status});
-  await auth.updateUser(userId, {disabled: !status});
+  await auth.updateUser(userId, {disabled: status !== STATUS_USER.ACTIVE});
 };
 
 const updateRoles = async (
@@ -85,7 +86,7 @@ const updateRoles = async (
 
 const updateStatuses = async (
   userIds: string[],
-  status: boolean,
+  status: string,
 ): Promise<number> => {
   let updated = 0;
   for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
@@ -98,7 +99,9 @@ const updateStatuses = async (
     updated += chunk.length;
   }
   await Promise.all(
-    userIds.map((u) => auth.updateUser(u, {disabled: !status})),
+    userIds.map((u) =>
+      auth.updateUser(u, {disabled: status !== STATUS_USER.ACTIVE}),
+    ),
   );
   return updated;
 };

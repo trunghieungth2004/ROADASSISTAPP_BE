@@ -113,7 +113,7 @@ describe("userService.updateStatus", () => {
       id: "u1",
     } as never);
     await expect(
-      updateStatus({actorId: "u1", targetUserId: "u1", status: false}),
+      updateStatus({actorId: "u1", targetUserId: "u1", status: "0"}),
     ).rejects.toMatchObject({statusCode: 400});
     expect(userRepository.updateStatus).not.toHaveBeenCalled();
   });
@@ -124,9 +124,9 @@ describe("userService.updateStatus", () => {
     } as never);
     jest.mocked(userRepository.updateStatus).mockResolvedValue(undefined);
     await expect(
-      updateStatus({actorId: "admin", targetUserId: "u2", status: false}),
+      updateStatus({actorId: "admin", targetUserId: "u2", status: "0"}),
     ).resolves.toEqual({updated: 1});
-    expect(userRepository.updateStatus).toHaveBeenCalledWith("u2", false);
+    expect(userRepository.updateStatus).toHaveBeenCalledWith("u2", "0");
     expect(cacheManager.del).toHaveBeenCalledWith("user", "u2");
   });
 });

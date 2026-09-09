@@ -10,6 +10,7 @@ import {
 } from "./stubs";
 import userRoutes from "../../routes/userRoutes";
 import roleRoutes from "../../routes/roleRoutes";
+import statusRoutes from "../../routes/statusRoutes";
 import vehicleProfileRoutes from "../../routes/vehicleProfileRoutes";
 import alleySegmentRoutes from "../../routes/alleySegmentRoutes";
 import flagRoutes from "../../routes/flagRoutes";
@@ -31,6 +32,7 @@ interface TestDeps {
 const registerRoutes = (app: Express, deps: TestDeps): void => {
   userRoutes(app, deps);
   roleRoutes(app, deps);
+  statusRoutes(app, deps);
   vehicleProfileRoutes(app, deps);
   alleySegmentRoutes(app, deps);
   flagRoutes(app, deps);

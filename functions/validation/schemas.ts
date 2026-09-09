@@ -1,10 +1,14 @@
 import Joi from "joi";
+import {
+  STATUS_DISPATCH,
+  STATUS_FLAGS,
+  STATUS_USER,
+} from "../constants/status";
 
 const strReq = (): Joi.StringSchema => Joi.string().required();
 const strOpt = (): Joi.StringSchema => Joi.string().allow("", null).optional();
 const numReq = (): Joi.NumberSchema => Joi.number().required();
 const numOpt = (): Joi.NumberSchema => Joi.number().optional();
-const boolReq = (): Joi.BooleanSchema => Joi.boolean().required();
 const langAttr = (): Joi.NumberSchema =>
   Joi.number().min(-180).max(180).required();
 const latAttr = (): Joi.NumberSchema =>
@@ -41,7 +45,9 @@ const schemas = {
   }),
   updateUserStatus: Joi.object({
     targetUserId: strReq(),
-    status: boolReq(),
+    status: Joi.string()
+      .valid(...Object.values(STATUS_USER))
+      .required(),
   }),
   createVehicleProfile: Joi.object({
     type: Joi.string().valid("SCOOTER", "CUB", "MANUAL").required(),
@@ -89,7 +95,7 @@ const schemas = {
   moderateFlag: Joi.object({
     flagId: strReq(),
     status: Joi.string()
-      .valid("SUGGESTED", "CONFIRMED", "LOCKED", "EXPIRED", "REJECTED")
+      .valid(...Object.values(STATUS_FLAGS))
       .required(),
   }),
   getFlagsNear: locationBody().append({radiusMeters: numOpt()}),
@@ -146,11 +152,12 @@ const schemas = {
   updateDispatchStatus: Joi.object({
     ticketId: strReq(),
     status: Joi.string()
-      .valid("PENDING", "MATCHED", "ARRIVED", "RESOLVED", "CANCELLED")
+      .valid(...Object.values(STATUS_DISPATCH))
       .required(),
   }),
   getRoles: emptyBody(),
   getRoleByUser: emptyBody(),
+  getStatuses: emptyBody(),
 };
 
 export {schemas, locationBody};

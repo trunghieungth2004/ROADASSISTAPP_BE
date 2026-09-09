@@ -64,11 +64,11 @@ let offToken = "";
 beforeAll(async () => {
   await cleanAll();
   const rider = await auth.createUser({email: RIDER_EMAIL, password: PASSWORD});
-  await seedUser(rider.uid, "2", true);
+  await seedUser(rider.uid, "2", "1");
   const admin = await auth.createUser({email: ADMIN_EMAIL, password: PASSWORD});
-  await seedUser(admin.uid, "1", true);
+  await seedUser(admin.uid, "1", "1");
   const off = await auth.createUser({email: OFF_EMAIL, password: PASSWORD});
-  await seedUser(off.uid, "2", false);
+  await seedUser(off.uid, "2", "0");
   riderToken = await mintToken(RIDER_EMAIL);
   adminToken = await mintToken(ADMIN_EMAIL);
   offToken = await mintToken(OFF_EMAIL);

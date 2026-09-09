@@ -32,7 +32,7 @@ describe("user endpoints", () => {
     const doc = await db.collection("users").doc(res.body.data.uid).get();
     expect(doc.data()).toMatchObject({
       role: "2",
-      status: true,
+      status: "1",
       trustScore: 0,
     });
   });
@@ -105,14 +105,14 @@ describe("user endpoints", () => {
     const off = await request(app)
       .put("/users/status")
       .set("Authorization", bearer(ADMIN))
-      .send({targetUserId: uid, status: false});
+      .send({targetUserId: uid, status: "0"});
     expect(off.status).toBe(200);
     const doc = await db.collection("users").doc(uid).get();
-    expect(doc.data()?.status).toBe(false);
+    expect(doc.data()?.status).toBe("0");
     const on = await request(app)
       .put("/users/status")
       .set("Authorization", bearer(ADMIN))
-      .send({targetUserId: uid, status: true});
+      .send({targetUserId: uid, status: "1"});
     expect(on.status).toBe(200);
   });
 });

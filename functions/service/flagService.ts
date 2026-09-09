@@ -1,5 +1,6 @@
 import * as flagRepository from "../repository/flagRepository";
 import * as userRepository from "../repository/userRepository";
+import {STATUS_FLAGS} from "../constants/status";
 import {boundsForRadiusMeters, encodeGeohash} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 
@@ -70,14 +71,18 @@ const createFlag = async ({
 const confirmFlag = async (flagId: string): Promise<FlagRecord | null> => {
   const flag = await flagRepository.findById(flagId);
   if (!flag) return null;
-  if (flag.status === "LOCKED") return flag;
+  if (flag.status === STATUS_FLAGS.LOCKED) return flag;
   const voteWeight = 1 + ((flag.reporterTrust as number) >= 50 ? 0.5 : 0);
   const newCount = (flag.voteCount as number) + voteWeight;
   await flagRepository.incrementVote(flagId);
   if (newCount >= CONSENSUS_THRESHOLD) {
-    await flagRepository.updateStatus(flagId, "CONFIRMED");
+    await flagRepository.updateStatus(flagId, STATUS_FLAGS.CONFIRMED);
     cacheManager.del(NS, flagId);
-    return {...flag, voteCount: newCount, status: "CONFIRMED"};
+    return {
+      ...flag,
+      voteCount: newCount,
+      status: STATUS_FLAGS.CONFIRMED,
+    };
   }
   cacheManager.del(NS, flagId);
   return {...flag, voteCount: newCount};
@@ -108,7 +113,9 @@ const getNear = cacheManager.wrap(
     const unique = Array.from(new Set([...prefixes]));
     const active = await flagRepository.findByGeohashPrefixes(unique);
     return active.filter(
-      (f) => f.status !== "EXPIRED" && f.status !== "REJECTED",
+      (f) =>
+        f.status !== STATUS_FLAGS.EXPIRED &&
+        f.status !== STATUS_FLAGS.REJECTED,
     );
   },
   {
@@ -146,7 +153,7 @@ const moderateFlag = async ({
 const expireFlags = async (): Promise<number> => {
   const expired = await flagRepository.findExpired();
   for (const flag of expired) {
-    await flagRepository.updateStatus(flag.id, "EXPIRED");
+    await flagRepository.updateStatus(flag.id, STATUS_FLAGS.EXPIRED);
     cacheManager.del(NS, flag.id);
   }
   return expired.length;

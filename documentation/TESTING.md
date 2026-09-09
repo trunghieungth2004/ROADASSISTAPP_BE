@@ -95,11 +95,11 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, active), cache invalidation, Auth disable sync. |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync. |
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
-| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, LOCKED short-circuit, TTL selection per type, near-search status filter, expiry. |
+| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, expiry. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
 | `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), OSRM error → `ServiceError`, empty routes → 404. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
@@ -118,14 +118,15 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
 | `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400 |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
+| `status.test.ts` | POST /statuses returns groups sorted by order, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
 | `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
-| `flag.test.ts` | POST create 201 + SUGGESTED, POST confirm ×3 → CONFIRMED, POST near excludes EXPIRED, PUT moderate (admin), POST expire |
+| `flag.test.ts` | POST create 201 + code `"1"`, POST confirm ×3 → code `"2"`, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, OSRM down → 500 |
 | `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
-| `dispatch.test.ts` | POST create 201 + PENDING, POST one, PUT status advance, illegal status 400 |
+| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 
 ## How the mock works

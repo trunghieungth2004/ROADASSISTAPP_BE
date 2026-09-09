@@ -63,7 +63,7 @@ No body schema (any body allowed).
 | Field | Type | |
 |-------|------|---|
 | `targetUserId` | string | req |
-| `status` | bool | req |
+| `status` | enum: `"0"` Inactive, `"1"` Active | req |
 
 ---
 
@@ -74,6 +74,13 @@ No body schema (any body allowed).
 
 ### `POST /roles/user` — `getRoleByUser`
 No body schema (resolves the authenticated caller's mapping).
+
+---
+
+## Status codes
+
+### `POST /statuses` — `getStatuses`
+No body schema (returns the mapping grouped by domain: `users`, `flags`, `dispatch`; see `API.md` → Status Codes for the code tables).
 
 ---
 
@@ -166,7 +173,7 @@ The reporter is the authenticated caller (trust score is snapshotted from their 
 | Field | Type | |
 |-------|------|---|
 | `flagId` | string | req |
-| `status` | enum: SUGGESTED, CONFIRMED, LOCKED, EXPIRED, REJECTED | req |
+| `status` | enum: `"1"` Suggested, `"2"` Confirmed, `"3"` Locked, `"4"` Expired, `"5"` Rejected | req |
 
 ### `POST /flags/expire` — `expireFlags`
 No body schema (any body allowed; still admin-gated).
@@ -266,7 +273,7 @@ No body schema (any body allowed; still admin-gated).
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
-| `status` | enum: PENDING, MATCHED, ARRIVED, RESOLVED, CANCELLED | req |
+| `status` | enum: `"1"` Pending, `"2"` Matched, `"3"` Arrived, `"4"` Resolved, `"5"` Cancelled | req |
 
 ---
 

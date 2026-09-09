@@ -28,6 +28,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 - [Health](#health)
 - [Users](#users)
 - [Roles](#roles)
+- [Status Codes](#status-codes)
 - [Vehicle Profiles](#vehicle-profiles)
 - [Alley Segments](#alley-segments)
 - [Flags](#flags)
@@ -57,7 +58,7 @@ RoadAssist backend is running
 
 ### `POST /users/register`
 
-Register a new rider. Creates the Firebase Auth user and a `users` doc with role `"2"`, `status: true`, `trustScore: 0`. **Public.** The client signs in afterwards to obtain an ID token — the server never mints tokens.
+Register a new rider. Creates the Firebase Auth user and a `users` doc with role `"2"`, `status: "1"` (Active), `trustScore: 0`. **Public.** The client signs in afterwards to obtain an ID token — the server never mints tokens.
 
 **Request:**
 ```json
@@ -100,7 +101,7 @@ Get the authenticated caller's own user document. No body required.
     "email": "rider@example.com",
     "displayName": "Rider One",
     "role": "2",
-    "status": true,
+    "status": "1",
     "trustScore": 10,
     "createdAt": "2026-01-10T08:00:00.000Z"
   }
@@ -156,11 +157,11 @@ Set a user's trust score (feeds flag vote weighting).
 
 ### `PUT /users/status` **(Admin)**
 
-Activate/deactivate a user. Also syncs Firebase Auth `disabled`. Cannot change your own status (`400`).
+Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled`. Cannot change your own status (`400`).
 
 **Request:**
 ```json
-{ "targetUserId": "abc123", "status": false }
+{ "targetUserId": "abc123", "status": "0" }
 ```
 
 **Response `200`:**
@@ -206,6 +207,53 @@ Resolve the authenticated caller's role code plus its mapping. No body required.
 ```
 
 If the `roles` collection has not been seeded, `name`/`description` come back `null` while `role` still returns the code.
+
+---
+
+## Status Codes
+
+Statuses are stored as short codes, like role codes. The `statuses` collection maps codes to names/descriptions per domain (`users`, `flags`, `dispatch`) and is seeded via `npm run db:init` (from `functions/constants/status.ts`).
+
+### `POST /statuses` **(Auth)**
+
+List all status mappings grouped by domain. No body required.
+
+**Response `200`:**
+```json
+{
+  "statusCode": 200,
+  "status": "SUCCESS",
+  "data": {
+    "users": [
+      { "id": "users:1", "domain": "users", "code": "1", "name": "Active", "description": "User can authenticate and use protected endpoints" },
+      { "id": "users:0", "domain": "users", "code": "0", "name": "Inactive", "description": "User is blocked from authenticating" }
+    ],
+    "flags": [
+      { "id": "flags:1", "domain": "flags", "code": "1", "name": "Suggested", "description": "Submitted by a rider, awaiting consensus votes" }
+    ],
+    "dispatch": [
+      { "id": "dispatch:1", "domain": "dispatch", "code": "1", "name": "Pending", "description": "Ticket opened, awaiting a mechanic match" }
+    ]
+  }
+}
+```
+
+### Code tables
+
+| Domain | Code | Name | Meaning |
+|--------|------|------|---------|
+| `users` | `"1"` | Active | Can authenticate |
+| `users` | `"0"` | Inactive | Blocked (403) |
+| `flags` | `"1"` | Suggested | Awaiting consensus |
+| `flags` | `"2"` | Confirmed | Reached vote threshold |
+| `flags` | `"3"` | Locked | Admin-pinned, ignores votes |
+| `flags` | `"4"` | Expired | TTL lapsed |
+| `flags` | `"5"` | Rejected | Dismissed by admin |
+| `dispatch` | `"1"` | Pending | Awaiting a match |
+| `dispatch` | `"2"` | Matched | Mechanic en route |
+| `dispatch` | `"3"` | Arrived | Mechanic on scene |
+| `dispatch` | `"4"` | Resolved | Completed |
+| `dispatch` | `"5"` | Cancelled | Withdrawn |
 
 ---
 
@@ -385,7 +433,7 @@ Admin patch of any segment fields (only provided fields are written).
 
 ### `POST /flags` **(Auth)**
 
-Submit a road flag. Starts at `SUGGESTED` with `voteCount: 0` and a per-type TTL (`ACCIDENT` 1h, `FLOOD` 6h, `OBSTRUCTION` 3h). The reporter is the authenticated caller.
+Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-type TTL (`ACCIDENT` 1h, `FLOOD` 6h, `OBSTRUCTION` 3h). The reporter is the authenticated caller.
 
 **Request:**
 ```json
@@ -400,14 +448,14 @@ Submit a road flag. Starts at `SUGGESTED` with `voteCount: 0` and a per-type TTL
 
 **Response `201`:**
 ```json
-{ "statusCode": 201, "status": "SUCCESS", "message": "Flag submitted", "data": { "id": "flag1", "status": "SUGGESTED", "...": "..." } }
+{ "statusCode": 201, "status": "SUCCESS", "message": "Flag submitted", "data": { "id": "flag1", "status": "1", "...": "..." } }
 ```
 
 ---
 
 ### `POST /flags/confirm` **(Auth)**
 
-Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count ≥ 3 flips the flag to `CONFIRMED` (reflected in the response). `LOCKED` flags are returned unchanged.
+Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count ≥ 3 flips the flag to `"2"` (Confirmed, reflected in the response). `"3"` (Locked) flags are returned unchanged.
 
 **Request:**
 ```json
@@ -416,7 +464,7 @@ Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count �
 
 **Response `200`:**
 ```json
-{ "statusCode": 200, "status": "SUCCESS", "message": "Flag vote recorded", "data": { "id": "flag1", "voteCount": 3, "status": "CONFIRMED" } }
+{ "statusCode": 200, "status": "SUCCESS", "message": "Flag vote recorded", "data": { "id": "flag1", "voteCount": 3, "status": "2" } }
 ```
 
 Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
@@ -425,7 +473,7 @@ Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
 
 ### `POST /flags/near` **(Auth)**
 
-List active flags near a point (`EXPIRED` and `REJECTED` are excluded).
+List active flags near a point (`"4"` Expired and `"5"` Rejected are excluded).
 
 **Request:**
 ```json
@@ -438,11 +486,11 @@ List active flags near a point (`EXPIRED` and `REJECTED` are excluded).
 
 ### `PUT /flags/moderate` **(Admin)**
 
-Force-set a flag status (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTED`).
+Force-set a flag status (see Status Codes: `"1"`–`"5"`).
 
 **Request:**
 ```json
-{ "flagId": "flag1", "status": "LOCKED" }
+{ "flagId": "flag1", "status": "3" }
 ```
 
 **Response `200`:**
@@ -454,7 +502,7 @@ Force-set a flag status (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTE
 
 ### `POST /flags/expire` **(Admin)**
 
-Flip all lapsed `SUGGESTED`/`CONFIRMED`/`LOCKED` flags to `EXPIRED`. No body schema.
+Flip all lapsed `"1"`/`"2"`/`"3"` flags to `"4"` (Expired). No body schema.
 
 **Response `200`:**
 ```json
@@ -644,7 +692,7 @@ Get a diagnostic by ID.
 
 ## Dispatch
 
-XeAssist stub endpoints. Ticket lifecycle: `PENDING` → `MATCHED` → `ARRIVED` → `RESOLVED` (or `CANCELLED`).
+XeAssist stub endpoints. Ticket lifecycle: `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved (or `"5"` Cancelled).
 
 ### `POST /dispatch` **(Auth)**
 
@@ -662,7 +710,7 @@ Open a dispatch ticket, optionally linked to a diagnostic.
 
 **Response `201`:**
 ```json
-{ "statusCode": 201, "status": "SUCCESS", "message": "Dispatch created", "data": { "id": "tick1", "status": "PENDING", "...": "..." } }
+{ "statusCode": 201, "status": "SUCCESS", "message": "Dispatch created", "data": { "id": "tick1", "status": "1", "...": "..." } }
 ```
 
 ---
@@ -686,7 +734,7 @@ Advance a ticket's status (validated against the lifecycle enum).
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "status": "MATCHED" }
+{ "ticketId": "tick1", "status": "2" }
 ```
 
 **Response `200`:**

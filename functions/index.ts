@@ -11,6 +11,7 @@ import {handleServiceError} from "./utils/response";
 import {schemas} from "./validation/schemas";
 import userRoutes from "./routes/userRoutes";
 import roleRoutes from "./routes/roleRoutes";
+import statusRoutes from "./routes/statusRoutes";
 import vehicleProfileRoutes from "./routes/vehicleProfileRoutes";
 import alleySegmentRoutes from "./routes/alleySegmentRoutes";
 import flagRoutes from "./routes/flagRoutes";
@@ -76,6 +77,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 userRoutes(app, routeDeps);
 roleRoutes(app, routeDeps);
+statusRoutes(app, routeDeps);
 vehicleProfileRoutes(app, routeDeps);
 alleySegmentRoutes(app, routeDeps);
 flagRoutes(app, routeDeps);

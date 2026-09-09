@@ -7,6 +7,7 @@ import {
 import {getFirestore} from "firebase-admin/firestore";
 import * as serviceAccount from "../config/serviceAccountKey.json";
 import {ROLES} from "../constants/roles";
+import {STATUS_GROUPS} from "../constants/status";
 
 const useEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 
@@ -32,6 +33,27 @@ const main = async (): Promise<void> => {
   await batch.commit();
   const codes = roles.map((r) => r.code).join(", ");
   console.log(`Seeded roles collection with codes: ${codes}`);
+
+  const statusBatch = db.batch();
+  const statuses = Object.values(STATUS_GROUPS)
+    .map((group) => Object.values(group))
+    .flat();
+  for (const status of statuses) {
+    statusBatch.set(
+      db.collection("statuses").doc(`${status.domain}:${status.code}`),
+      {
+        domain: status.domain,
+        code: status.code,
+        name: status.name,
+        description: status.description,
+        order: status.order,
+      },
+      {merge: true},
+    );
+  }
+  await statusBatch.commit();
+  const ids = statuses.map((s) => `${s.domain}:${s.code}`).join(", ");
+  console.log(`Seeded statuses collection with ids: ${ids}`);
 };
 
 main()

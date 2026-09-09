@@ -105,7 +105,7 @@ const updateStatus = async ({
 }: {
   actorId: string;
   targetUserId: string;
-  status: boolean;
+  status: string;
 }) => {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("Target user not found");

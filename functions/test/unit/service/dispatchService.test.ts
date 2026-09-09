@@ -26,7 +26,7 @@ describe("dispatchService.createDispatch", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
-    const ticket = {id: "t1", status: "PENDING"};
+    const ticket = {id: "t1", status: "1"};
     jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
     await expect(
       createDispatch({userId: "u1", ticketType: "TOW", lat: 1, lng: 2}),
@@ -62,7 +62,7 @@ describe("dispatchService.updateDispatchStatus", () => {
   it("throws 404 for an unknown ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(null);
     await expect(
-      updateDispatchStatus({id: "ghost", status: "MATCHED"}),
+      updateDispatchStatus({id: "ghost", status: "2"}),
     ).rejects.toMatchObject({statusCode: 404});
   });
 
@@ -72,11 +72,11 @@ describe("dispatchService.updateDispatchStatus", () => {
     } as never);
     jest.mocked(dispatchRepository.updateStatus).mockResolvedValue(undefined);
     await expect(
-      updateDispatchStatus({id: "t1", status: "MATCHED"}),
+      updateDispatchStatus({id: "t1", status: "2"}),
     ).resolves.toEqual({updated: 1});
     expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
       "t1",
-      "MATCHED",
+      "2",
     );
   });
 });

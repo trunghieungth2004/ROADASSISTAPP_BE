@@ -48,7 +48,7 @@ Protected endpoints require an `Authorization: Bearer <idToken>` header carrying
 | `1` | Admin (full access) |
 | `2` | Rider (default on register) |
 
-Role codes live in the `roles` collection (`name`, `description` per code), seeded from `functions/constants/roles.ts`:
+Role codes live in the `roles` collection (`name`, `description` per code), seeded from `functions/constants/roles.ts`. Status codes work the same way — `users` (`"1"` Active / `"0"` Inactive), `flags` (`"1"`–`"5"`), `dispatch` (`"1"`–`"5"`) — seeded from `functions/constants/status.ts`:
 
 ```bash
 cd functions
@@ -56,7 +56,7 @@ npm run db:init            # production Firestore
 npm run db:init:emulator   # local emulator (FUNCTIONS_EMULATOR=true)
 ```
 
-Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve the caller via `POST /roles/user` (both require a Bearer token).
+Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve the caller via `POST /roles/user` (both require a Bearer token). Clients fetch status mappings (grouped by domain) via `POST /statuses`.
 
 ## Secrets
 

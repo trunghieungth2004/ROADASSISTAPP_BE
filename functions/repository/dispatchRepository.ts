@@ -1,4 +1,5 @@
 import {db} from "../config/firebase";
+import {STATUS_DISPATCH} from "../constants/status";
 
 interface DispatchTicket {
   id: string;
@@ -26,7 +27,7 @@ const create = async (data: {
     lat: data.lat,
     lng: data.lng,
     diagnosticId: data.diagnosticId ?? null,
-    status: "PENDING",
+    status: STATUS_DISPATCH.PENDING,
     createdAt: new Date().toISOString(),
   };
   await ref.set(doc);
