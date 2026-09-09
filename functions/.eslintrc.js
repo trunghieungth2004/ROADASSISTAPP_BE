@@ -14,7 +14,7 @@ module.exports = {
   ],
   parser: "@typescript-eslint/parser",
   parserOptions: {
-    project: ["tsconfig.json"],
+    project: ["tsconfig.eslint.json"],
     sourceType: "module",
   },
   ignorePatterns: [
@@ -34,4 +34,13 @@ module.exports = {
     "indent": ["error", 2],
     "@typescript-eslint/no-explicit-any": 1,
   },
+  overrides: [
+    {
+      files: ["*.js"],
+      parser: "espree",
+      parserOptions: {
+        ecmaVersion: 2020,
+      },
+    },
+  ],
 };

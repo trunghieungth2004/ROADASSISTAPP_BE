@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "index.ts",
+    "config/**/*.ts",
+    "constants/**/*.ts",
+    "controller/**/*.ts",
+    "service/**/*.ts",
+    "repository/**/*.ts",
+    "middleware/**/*.ts",
+    "validation/**/*.ts",
+    "routes/**/*.ts",
+    "utils/**/*.ts",
+    "scripts/**/*.ts",
+    "test/**/*.ts"
+  ]
+}
