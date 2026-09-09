@@ -2,7 +2,9 @@
 
 This document describes the **request-body validation** enforced at the edge for every endpoint, via the shared Joi schemas in `functions/validation/schemas.ts` (applied by `functions/middleware/validate.ts`).
 
-On failure, the endpoint returns `400` with the canonical error envelope (see `API.md` → Response envelope) and an `errors` array of human-readable messages, e.g. `"userId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`.
+Identity is **not** part of any schema: protected endpoints authenticate via the `Authorization: Bearer <idToken>` header (`requireAuth` verifies the Firebase ID token and exposes the uid as `req.uid`). The `userId` field no longer appears in any request body — the only user references are **resource targets** (`targetUserId`) and stored attribution fields.
+
+On failure, the endpoint returns `400` with the canonical error envelope (see `API.md` → Response envelope) and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`.
 
 Unknown fields are **stripped** before the request reaches the handler.
 
@@ -14,7 +16,7 @@ Unknown fields are **stripped** before the request reaches the handler.
 | opt | Optional |
 | `string` | Any string |
 | `number` | Any number |
-| `bool` | Real JSON boolean (`true`/`false`, not `"true"`) |
+| `bool` | Real JSON boolean (`true`/`false`; note Joi coerces `"true"`/`"false"` strings) |
 | `lat` | Number in `[-90, 90]` |
 | `lng` | Number in `[-180, 180]` |
 | `enum: A, B` | Must be one of the listed values |
@@ -23,8 +25,8 @@ Unknown fields are **stripped** before the request reaches the handler.
 ## Reusable rules
 
 - `lat` → number `[-90, 90]`; `lng` → number `[-180, 180]`
-- Location bodies always carry `userId` (string, req) alongside `lat`/`lng`
 - `radiusMeters` → number, opt (endpoint-specific default applies when omitted)
+- Empty-body schemas (`Joi.object({}).unknown(true)`) accept anything; the caller identity still comes from the Bearer token.
 
 ---
 
@@ -38,17 +40,14 @@ Unknown fields are **stripped** before the request reaches the handler.
 | `displayName` | string (allows `""`/`null`) | opt |
 
 ### `POST /users/one` — `getOneUser`
-| Field | Type | |
-|-------|------|---|
-| `userId` | string | req |
+No body schema (returns the authenticated caller's own document).
 
 ### `POST /users/all` — `getAllUser`
-No body schema (any body allowed; `requireAuth` still needs `userId`).
+No body schema (any body allowed).
 
 ### `PUT /users/role` — `updateUserRole`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `targetUserId` | string | req |
 | `role` | string | req |
 
@@ -57,14 +56,12 @@ No body schema (any body allowed; `requireAuth` still needs `userId`).
 ### `PUT /users/trust` — `updateUserTrust`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `targetUserId` | string | req |
 | `trustScore` | number | req |
 
 ### `PUT /users/status` — `updateUserStatus`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `targetUserId` | string | req |
 | `status` | bool | req |
 
@@ -73,26 +70,21 @@ No body schema (any body allowed; `requireAuth` still needs `userId`).
 ## Roles
 
 ### `POST /roles/all` — `getRoles`
-No body schema (any body allowed; `requireAuth` still needs `userId`).
+No body schema (any body allowed).
 
 ### `POST /roles/user` — `getRoleByUser`
-| Field | Type | |
-|-------|------|---|
-| `userId` | string | req |
+No body schema (resolves the authenticated caller's mapping).
 
 ---
 
 ## Vehicle Profiles
 
 ### `POST /vehicleProfiles/all` — `getAllVehicleProfiles`
-| Field | Type | |
-|-------|------|---|
-| `userId` | string | req |
+No body schema (lists the authenticated caller's profiles).
 
 ### `POST /vehicleProfiles` — `createVehicleProfile`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `type` | enum: SCOOTER, CUB, MANUAL | req |
 | `baseWidth` | number | req |
 | `baseHeight` | number | req |
@@ -100,7 +92,6 @@ No body schema (any body allowed; `requireAuth` still needs `userId`).
 ### `POST /vehicleProfiles/rideConfig` — `addRideConfig`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `profileId` | string | req |
 | `configType` | enum: SOLO, PASSENGER, CARGO | req |
 | `estWidth` | number | opt |
@@ -113,13 +104,11 @@ No body schema (any body allowed; `requireAuth` still needs `userId`).
 ### `POST /alleys/segment` — `getAlleySegment`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `segmentId` | string | req |
 
 ### `POST /alleys/near` — `searchAlleysNear`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 2000) |
@@ -127,7 +116,6 @@ No body schema (any body allowed; `requireAuth` still needs `userId`).
 ### `POST /alleys` — `createAlleySegment`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `baseWidth` | number | opt |
@@ -141,7 +129,6 @@ Same as `createAlleySegment` plus `segmentId` (string, req) instead of `lat`/`ln
 ### `PUT /alleys/moderate` — `moderateSegment`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `segmentId` | string | req |
 | `baseWidth` | number | opt |
 | `wireHeight` | number | opt |
@@ -156,22 +143,21 @@ Same as `createAlleySegment` plus `segmentId` (string, req) instead of `lat`/`ln
 ### `POST /flags` — `createFlag`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `type` | enum: ACCIDENT, FLOOD, OBSTRUCTION | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `note` | string (allows `""`/`null`) | opt |
 
+The reporter is the authenticated caller (trust score is snapshotted from their user doc).
+
 ### `POST /flags/confirm` — `confirmFlag`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `flagId` | string | req |
 
 ### `POST /flags/near` — `getFlagsNear`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 2000) |
@@ -179,7 +165,6 @@ Same as `createAlleySegment` plus `segmentId` (string, req) instead of `lat`/`ln
 ### `PUT /flags/moderate` — `moderateFlag`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `flagId` | string | req |
 | `status` | enum: SUGGESTED, CONFIRMED, LOCKED, EXPIRED, REJECTED | req |
 
@@ -193,7 +178,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /landmarks/near` — `nearLandmarks`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 500) |
@@ -201,7 +185,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /landmarks` — `createLandmark`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `displayLabel` | string | req |
@@ -209,7 +192,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /landmarks/match` — `matchLandmark`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `embedding` | arr (min1) of number | req |
@@ -222,7 +204,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /routes` — `getRoute`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `originLat` | lat | req |
 | `originLng` | lng | req |
 | `destLat` | lat | req |
@@ -236,7 +217,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /shops` — `createShop`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `name` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
@@ -245,7 +225,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /shops/near` — `nearShops`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 2000) |
@@ -258,14 +237,12 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /diagnostics` — `createDiagnostic`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `category` | enum: FLAT_TIRE, FLUID_LEAK, CHAIN_SLACK, SPARK_CAP | req |
 | `imagePath` | string | req |
 
 ### `POST /diagnostics/one` — `getDiagnostic`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `diagnosticId` | string | req |
 
 ---
@@ -275,7 +252,6 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /dispatch` — `createDispatch`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `ticketType` | enum: MECHANIC, TOW, SOS | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
@@ -284,13 +260,11 @@ No body schema (any body allowed; still admin-gated).
 ### `POST /dispatch/one` — `getDispatch`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `ticketId` | string | req |
 
 ### `PUT /dispatch/status` — `updateDispatchStatus`
 | Field | Type | |
 |-------|------|---|
-| `userId` | string | req |
 | `ticketId` | string | req |
 | `status` | enum: PENDING, MATCHED, ARRIVED, RESOLVED, CANCELLED | req |
 

@@ -1,6 +1,7 @@
 import {Request, Response} from "express";
 import * as userService from "../service/userService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const register = async (req: Request, res: Response) => {
   try {
@@ -17,7 +18,7 @@ const register = async (req: Request, res: Response) => {
 
 const getOneUser = async (req: Request, res: Response) => {
   try {
-    const {userId} = req.body;
+    const {uid: userId} = req as AuthedRequest;
     const result = await userService.getOneUser(userId);
     sendSuccess(res, result);
   } catch (error) {
@@ -36,7 +37,8 @@ const getAllUser = async (_req: Request, res: Response) => {
 
 const updateRole = async (req: Request, res: Response) => {
   try {
-    const {userId, targetUserId, role} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {targetUserId, role} = req.body;
     const result = await userService.updateRole({
       actorId: userId,
       targetUserId,
@@ -63,7 +65,8 @@ const updateTrustScore = async (req: Request, res: Response) => {
 
 const updateStatus = async (req: Request, res: Response) => {
   try {
-    const {userId, targetUserId, status} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {targetUserId, status} = req.body;
     const result = await userService.updateStatus({
       actorId: userId,
       targetUserId,

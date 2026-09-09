@@ -39,6 +39,7 @@ functions/
     │   ├── utils/cacheManager.test.ts
     │   ├── utils/sanitize.test.ts
     │   ├── validation/schemas.test.ts
+    │   ├── middleware/auth.test.ts
     │   └── service/
     │       ├── userService.test.ts
     │       ├── roleService.test.ts
@@ -51,6 +52,7 @@ functions/
     │       ├── diagnosticService.test.ts
     │       └── dispatchService.test.ts
     ├── integration/
+    │   ├── auth.test.ts
     │   ├── user.test.ts
     │   ├── role.test.ts
     │   ├── vehicleProfile.test.ts
@@ -78,7 +80,7 @@ functions/
 
 | File | Purpose |
 |------|---------|
-| `stubs.ts` | Four auth stubs: `stubRequireAuth`/`stubRequireRole` (unit — ignore request, set admin defaults) and `integrationRequireAuth`/`integrationRequireRole` (token-shaped: read `Authorization: Bearer <uid>`, load that uid's `users` doc for `userRole`, 401/404/403 otherwise — mirroring the Phase E contract). |
+| `stubs.ts` | Four auth stubs: `stubRequireAuth`/`stubRequireRole` (unit — ignore request, set admin defaults) and `integrationRequireAuth`/`integrationRequireRole` (read `Authorization: Bearer <uid>`, load that uid's `users` doc for `userRole`, 401/404/403 otherwise — mirroring production; stub bearers are raw uids, while `integration/auth.test.ts` uses real emulator-minted JWTs against the real middleware). |
 | `app.ts` | `buildUnitApp()` — Express app with all 10 route files wired with unit stubs + `validate` middleware + error handler. `buildIntegrationApp()` — same but with integration stubs. |
 | `seed.ts` | Firestore seed helpers: `cleanAll()` (top-level collections plus `vehicle_profiles`/`ride_configs` subcollections), `cleanCollection(name)`, `seedUser()`, `seedRole()`, `seedProfile()`, `seedRideConfig()`, `seedSegment()`, `seedFlag()`, `seedLandmark()`, `seedShop()`, `seedDiagnostic()`, `seedTicket()`, `seedRoute()`. |
 
@@ -103,15 +105,17 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
+| `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
 ### test/integration/
 
 Each file is **self-contained** — owns its own `beforeAll`/`afterAll` that cleans Firestore and seeds exactly the data it needs. Tests within a file are sequential (create → read → update). Files run independently with no cross-file state dependencies.
 
-Run against the Firestore + Auth emulators. Requests carry `Authorization: Bearer <uid>` (the stub resolves identity/role from the seeded `users` doc) plus the `userId` body field the current schemas still require. Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no OSRM in CI).
+Run against the Firestore + Auth emulators. Requests carry `Authorization: Bearer <uid>` (the stub resolves identity/role from the seeded `users` doc; bodies carry only resource fields — identity comes from the header). Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no OSRM in CI).
 
 | File | Tests |
 |------|-------|
+| `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
 | `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400 |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |

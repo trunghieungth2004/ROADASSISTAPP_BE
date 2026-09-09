@@ -23,7 +23,7 @@ describe("diagnostic endpoints", () => {
     const res = await request(app)
       .post("/diagnostics")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, category: "FLAT_TIRE", imagePath: "d/1.jpg"});
+      .send({category: "FLAT_TIRE", imagePath: "d/1.jpg"});
     expect(res.status).toBe(201);
     expect(res.body.data.id).toBeDefined();
     diagnosticId = res.body.data.id as string;
@@ -33,7 +33,7 @@ describe("diagnostic endpoints", () => {
     const res = await request(app)
       .post("/diagnostics/one")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, diagnosticId});
+      .send({diagnosticId});
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe(diagnosticId);
   });
@@ -42,7 +42,7 @@ describe("diagnostic endpoints", () => {
     const res = await request(app)
       .post("/diagnostics/one")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, diagnosticId: "ghost"});
+      .send({diagnosticId: "ghost"});
     expect(res.status).toBe(404);
   });
 });

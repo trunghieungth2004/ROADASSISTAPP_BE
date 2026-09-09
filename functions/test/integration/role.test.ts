@@ -23,7 +23,7 @@ describe("role endpoints", () => {
     const res = await request(app)
       .post("/roles/all")
       .set("Authorization", bearer(USER))
-      .send({userId: USER});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual(
       expect.arrayContaining([
@@ -37,7 +37,7 @@ describe("role endpoints", () => {
     const res = await request(app)
       .post("/roles/user")
       .set("Authorization", bearer(USER))
-      .send({userId: USER});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({
       id: USER,
@@ -50,12 +50,12 @@ describe("role endpoints", () => {
     const res = await request(app)
       .post("/roles/user")
       .set("Authorization", bearer(`${PREFIX}-ghost`))
-      .send({userId: `${PREFIX}-ghost`});
+      .send({});
     expect(res.status).toBe(404);
   });
 
   it("rejects requests without a bearer token", async () => {
-    const res = await request(app).post("/roles/all").send({userId: USER});
+    const res = await request(app).post("/roles/all").send({});
     expect(res.status).toBe(401);
   });
 });

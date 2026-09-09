@@ -33,7 +33,7 @@ describe("flag endpoints", () => {
     const res = await request(app)
       .post("/flags")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, type: "FLOOD", lat: BASE_LAT, lng: BASE_LNG});
+      .send({type: "FLOOD", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(201);
     expect(res.body.data.status).toBe("SUGGESTED");
     flagId = res.body.data.id as string;
@@ -43,15 +43,15 @@ describe("flag endpoints", () => {
     await request(app)
       .post("/flags/confirm")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, flagId});
+      .send({flagId});
     await request(app)
       .post("/flags/confirm")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, flagId});
+      .send({flagId});
     const third = await request(app)
       .post("/flags/confirm")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, flagId});
+      .send({flagId});
     expect(third.status).toBe(200);
     expect(third.body.data).toMatchObject({
       voteCount: 3,
@@ -64,7 +64,7 @@ describe("flag endpoints", () => {
     const res = await request(app)
       .post("/flags/near")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG});
+      .send({lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(200);
     const ids = res.body.data.map((f: {id: string}) => f.id);
     expect(ids).toContain(flagId);
@@ -77,7 +77,7 @@ describe("flag endpoints", () => {
     const res = await request(app)
       .put("/flags/moderate")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, flagId, status: "LOCKED"});
+      .send({flagId, status: "LOCKED"});
     expect(res.status).toBe(200);
   });
 
@@ -90,7 +90,7 @@ describe("flag endpoints", () => {
     const res = await request(app)
       .post("/flags/expire")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data.expired).toBeGreaterThanOrEqual(1);
   });

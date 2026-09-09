@@ -1,6 +1,7 @@
 import {Request, Response} from "express";
 import * as alleySegmentService from "../service/alleySegmentService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const getSegment = async (req: Request, res: Response) => {
   try {
@@ -29,8 +30,8 @@ const searchNear = async (req: Request, res: Response) => {
 
 const createSegment = async (req: Request, res: Response) => {
   try {
-    const {userId, lat, lng, baseWidth, wireHeight, inclinePct, tier} =
-      req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {lat, lng, baseWidth, wireHeight, inclinePct, tier} = req.body;
     const result = await alleySegmentService.createSegment({
       userId,
       lat,
@@ -51,8 +52,8 @@ const createSegment = async (req: Request, res: Response) => {
 
 const setPassability = async (req: Request, res: Response) => {
   try {
-    const {userId, segmentId, baseWidth, wireHeight, inclinePct, tier} =
-      req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {segmentId, baseWidth, wireHeight, inclinePct, tier} = req.body;
     const result = await alleySegmentService.setPassability({
       userId,
       segmentId,

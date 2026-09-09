@@ -31,7 +31,6 @@ describe("landmark endpoints", () => {
       .post("/landmarks")
       .set("Authorization", bearer(USER))
       .send({
-        userId: USER,
         lat: BASE_LAT,
         lng: BASE_LNG,
         displayLabel: "Gate",
@@ -45,7 +44,7 @@ describe("landmark endpoints", () => {
     const res = await request(app)
       .post("/landmarks/near")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG});
+      .send({lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(200);
     expect(res.body.data.map((l: {id: string}) => l.id)).toContain(landmarkId);
     for (const landmark of res.body.data as {distance: unknown}[]) {
@@ -62,7 +61,7 @@ describe("landmark endpoints", () => {
     const res = await request(app)
       .post("/landmarks/match")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG, embedding: [1, 0]});
+      .send({lat: BASE_LAT, lng: BASE_LNG, embedding: [1, 0]});
     expect(res.status).toBe(200);
     expect(res.body.data.landmark.id).toBe(seeded);
     expect(res.body.data.confidence).toBeCloseTo(1, 5);
@@ -72,7 +71,7 @@ describe("landmark endpoints", () => {
     const res = await request(app)
       .post("/landmarks/match")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG, embedding: [0, 1]});
+      .send({lat: BASE_LAT, lng: BASE_LNG, embedding: [0, 1]});
     expect(res.status).toBe(200);
     expect(res.body.data.landmark).toBeNull();
   });

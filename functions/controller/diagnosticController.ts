@@ -1,10 +1,12 @@
 import {Request, Response} from "express";
 import * as diagnosticService from "../service/diagnosticService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const createDiagnostic = async (req: Request, res: Response) => {
   try {
-    const {userId, category, imagePath} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {category, imagePath} = req.body;
     const result = await diagnosticService.createDiagnostic({
       userId,
       category,

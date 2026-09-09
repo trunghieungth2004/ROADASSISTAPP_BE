@@ -34,12 +34,12 @@ All endpoints return JSON. Requests with a body must send `Content-Type: applica
 
 ## Authentication
 
-Most endpoints require `userId` in the request body. The middleware validates the user exists and is active, then attaches `req.userRole` for downstream role checks.
+Protected endpoints require an `Authorization: Bearer <idToken>` header carrying a Firebase ID token. The middleware verifies the token, loads the user by the verified uid (404 unknown, 403 inactive), and attaches `req.uid` / `req.userRole` for downstream handlers and role checks.
 
-- **`requireAuth`** — body must include `userId`; user must exist and be active
+- **`requireAuth`** — valid ID token required; user must exist and be active
 - **`requireRole("1")`** — admin-only; checks `req.userRole === "1"`
 
-> Token-based authentication (verifying `Authorization: Bearer <idToken>`) is planned and will replace body-`userId` identity. Until then, treat the gating as unverified.
+`POST /users/register` is the only public write endpoint: it creates the Auth user and returns its `uid`, after which the client signs in to obtain an ID token.
 
 ## Roles
 
@@ -56,7 +56,7 @@ npm run db:init            # production Firestore
 npm run db:init:emulator   # local emulator (FUNCTIONS_EMULATOR=true)
 ```
 
-Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve a single user via `POST /roles/user` (both require `userId`).
+Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve the caller via `POST /roles/user` (both require a Bearer token).
 
 ## Secrets
 

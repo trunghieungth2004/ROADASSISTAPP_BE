@@ -27,7 +27,7 @@ describe("validation edge cases", () => {
     const res = await request(app)
       .post("/alleys")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: 200, lng: BASE_LNG, tier: "TIER1"});
+      .send({lat: 200, lng: BASE_LNG, tier: "TIER1"});
     expect(res.status).toBe(400);
     expect(res.body.errors).toBeDefined();
   });
@@ -36,16 +36,23 @@ describe("validation edge cases", () => {
     const res = await request(app)
       .post("/flags")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, type: "FIRE", lat: BASE_LAT, lng: BASE_LNG});
+      .send({type: "FIRE", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(400);
   });
 
-  it("rejects missing userId with 400", async () => {
+  it("rejects missing required fields with 400", async () => {
     const res = await request(app)
       .post("/alleys/near")
       .set("Authorization", bearer(USER))
-      .send({lat: BASE_LAT, lng: BASE_LNG});
+      .send({lng: BASE_LNG});
     expect(res.status).toBe(400);
+  });
+
+  it("rejects requests without a bearer token with 401", async () => {
+    const res = await request(app)
+      .post("/alleys/near")
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    expect(res.status).toBe(401);
   });
 
   it("strips unknown fields", async () => {
@@ -53,7 +60,6 @@ describe("validation edge cases", () => {
       .post("/alleys")
       .set("Authorization", bearer(USER))
       .send({
-        userId: USER,
         lat: BASE_LAT,
         lng: BASE_LNG,
         tier: "TIER1",

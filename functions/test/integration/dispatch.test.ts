@@ -29,7 +29,7 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
+      .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(201);
     expect(res.body.data.status).toBe("PENDING");
     ticketId = res.body.data.id as string;
@@ -39,7 +39,7 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .post("/dispatch/one")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, ticketId});
+      .send({ticketId});
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe(ticketId);
   });
@@ -48,7 +48,7 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, ticketId, status: "MATCHED"});
+      .send({ticketId, status: "MATCHED"});
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({updated: 1});
   });
@@ -57,7 +57,7 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, ticketId, status: "FLYING"});
+      .send({ticketId, status: "FLYING"});
     expect(res.status).toBe(400);
   });
 });

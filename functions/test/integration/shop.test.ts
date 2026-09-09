@@ -28,7 +28,6 @@ describe("shop endpoints", () => {
       .post("/shops")
       .set("Authorization", bearer(USER))
       .send({
-        userId: USER,
         name: "Fix",
         lat: BASE_LAT,
         lng: BASE_LNG,
@@ -39,7 +38,6 @@ describe("shop endpoints", () => {
       .post("/shops")
       .set("Authorization", bearer(USER))
       .send({
-        userId: USER,
         name: "Fuel",
         lat: BASE_LAT,
         lng: BASE_LNG,
@@ -52,7 +50,7 @@ describe("shop endpoints", () => {
     const res = await request(app)
       .post("/shops/near")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG});
+      .send({lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBeGreaterThanOrEqual(2);
     for (const shop of res.body.data as {distance: unknown}[]) {
@@ -64,7 +62,7 @@ describe("shop endpoints", () => {
     const res = await request(app)
       .post("/shops/near")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, lat: BASE_LAT, lng: BASE_LNG, type: "PUMP"});
+      .send({lat: BASE_LAT, lng: BASE_LNG, type: "PUMP"});
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBeGreaterThanOrEqual(1);
     for (const shop of res.body.data as {type: string}[]) {

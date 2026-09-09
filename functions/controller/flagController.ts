@@ -1,10 +1,12 @@
 import {Request, Response} from "express";
 import * as flagService from "../service/flagService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const createFlag = async (req: Request, res: Response) => {
   try {
-    const {userId, type, lat, lng, note} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {type, lat, lng, note} = req.body;
     const result = await flagService.createFlag({
       userId,
       type,

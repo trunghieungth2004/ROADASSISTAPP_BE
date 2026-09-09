@@ -1,10 +1,12 @@
 import {Request, Response} from "express";
 import * as dispatchService from "../service/dispatchService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const createDispatch = async (req: Request, res: Response) => {
   try {
-    const {userId, ticketType, lat, lng, diagnosticId} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketType, lat, lng, diagnosticId} = req.body;
     const result = await dispatchService.createDispatch({
       userId,
       ticketType,

@@ -23,7 +23,7 @@ describe("vehicle profile endpoints", () => {
     const res = await request(app)
       .post("/vehicleProfiles")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1});
+      .send({type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1});
     expect(res.status).toBe(201);
     expect(res.body.data.id).toBeDefined();
     profileId = res.body.data.id as string;
@@ -33,7 +33,7 @@ describe("vehicle profile endpoints", () => {
     const res = await request(app)
       .post("/vehicleProfiles/all")
       .set("Authorization", bearer(USER))
-      .send({userId: USER});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data.map((p: {id: string}) => p.id)).toContain(profileId);
   });
@@ -42,7 +42,7 @@ describe("vehicle profile endpoints", () => {
     const res = await request(app)
       .post("/vehicleProfiles/rideConfig")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, profileId, configType: "CARGO", estWidth: 0.9});
+      .send({profileId, configType: "CARGO", estWidth: 0.9});
     expect(res.status).toBe(201);
     expect(res.body.data.id).toBeDefined();
   });
@@ -51,7 +51,7 @@ describe("vehicle profile endpoints", () => {
     const res = await request(app)
       .post("/vehicleProfiles/rideConfig")
       .set("Authorization", bearer(USER))
-      .send({userId: USER, profileId: "ghost", configType: "SOLO"});
+      .send({profileId: "ghost", configType: "SOLO"});
     expect(res.status).toBe(404);
   });
 });

@@ -41,7 +41,7 @@ describe("user endpoints", () => {
     const res = await request(app)
       .post("/users/one")
       .set("Authorization", bearer(RIDER))
-      .send({userId: RIDER});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe(RIDER);
     expect(res.body.data.role).toBe("2");
@@ -51,7 +51,7 @@ describe("user endpoints", () => {
     const res = await request(app)
       .post("/users/one")
       .set("Authorization", bearer(`${PREFIX}-ghost`))
-      .send({userId: `${PREFIX}-ghost`});
+      .send({});
     expect(res.status).toBe(404);
   });
 
@@ -59,7 +59,7 @@ describe("user endpoints", () => {
     const res = await request(app)
       .post("/users/all")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN});
+      .send({});
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBeGreaterThanOrEqual(3);
   });
@@ -68,21 +68,21 @@ describe("user endpoints", () => {
     const res = await request(app)
       .put("/users/role")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: TARGET, role: "1"});
+      .send({targetUserId: TARGET, role: "1"});
     expect(res.status).toBe(200);
     const doc = await db.collection("users").doc(TARGET).get();
     expect(doc.data()?.role).toBe("1");
     await request(app)
       .put("/users/role")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: TARGET, role: "2"});
+      .send({targetUserId: TARGET, role: "2"});
   });
 
   it("PUT /users/role blocks self changes with 400", async () => {
     const res = await request(app)
       .put("/users/role")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: ADMIN, role: "2"});
+      .send({targetUserId: ADMIN, role: "2"});
     expect(res.status).toBe(400);
   });
 
@@ -90,7 +90,7 @@ describe("user endpoints", () => {
     const res = await request(app)
       .put("/users/trust")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: TARGET, trustScore: 60});
+      .send({targetUserId: TARGET, trustScore: 60});
     expect(res.status).toBe(200);
     const doc = await db.collection("users").doc(TARGET).get();
     expect(doc.data()?.trustScore).toBe(60);
@@ -105,14 +105,14 @@ describe("user endpoints", () => {
     const off = await request(app)
       .put("/users/status")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: uid, status: false});
+      .send({targetUserId: uid, status: false});
     expect(off.status).toBe(200);
     const doc = await db.collection("users").doc(uid).get();
     expect(doc.data()?.status).toBe(false);
     const on = await request(app)
       .put("/users/status")
       .set("Authorization", bearer(ADMIN))
-      .send({userId: ADMIN, targetUserId: uid, status: true});
+      .send({targetUserId: uid, status: true});
     expect(on.status).toBe(200);
   });
 });

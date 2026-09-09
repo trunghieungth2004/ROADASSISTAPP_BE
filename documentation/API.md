@@ -2,11 +2,11 @@
 
 Base URL: `https://asia-southeast1-roadassistapp-c2e37.cloudfunctions.net/api`
 
-All requests use `Content-Type: application/json`. Endpoints marked with **(Auth)** require `userId` in the request body. Endpoints marked with **(Admin)** require `userId` and the user must have role `"1"`.
+All requests use `Content-Type: application/json`. Endpoints marked with **(Auth)** require an `Authorization: Bearer <idToken>` header. Endpoints marked with **(Admin)** require a valid token whose user has role `"1"`.
 
 Request-body field schemas (per-endpoint validation rules) are documented separately in [`SCHEMA.md`](./SCHEMA.md).
 
-> **Authentication note (current behavior):** `requireAuth` reads `userId` (and the role used by `requireRole`) from the **request body** and does **not** verify a Firebase ID token. Until token verification is added, the **(Auth)**/**(Admin)** gating is enforced only by trusting the caller-supplied `userId`/`role` fields. Treat all authenticated/admin endpoints as unverified from a security standpoint.
+> **Authentication:** `requireAuth` verifies the Firebase ID token via `admin.auth().verifyIdToken`, loads the user doc by the verified uid (404 if unknown, 403 if inactive), and exposes `req.uid` / `req.userRole` downstream. Missing or invalid tokens get `401`. The request body never carries identity — `userId` appears nowhere in any schema; `targetUserId` names a resource, not the caller.
 
 > **Response envelope (canonical):** Every response — success or error — uses the same JSON shape:
 > ```json
@@ -17,9 +17,9 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > ```
 > - `status` is `"SUCCESS"` or `"ERROR"`. `statusCode` mirrors the HTTP status. `data` is present on read/query/created responses; `message` is present on action responses. `errors` (an array of strings) appears on `400` validation failures.
 > - Success status codes: `200` (OK), `201` (created).
-> - Error status codes: `400` (validation / business-rule violation), `401` (auth required), `403` (inactive user / insufficient permissions), `404` (not found), `500` (unexpected, e.g. Auth create failure, OSRM outage).
+> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions), `404` (not found), `500` (unexpected, e.g. Auth create failure, OSRM outage).
 
-> **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"userId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
+> **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
 ---
 
@@ -57,7 +57,7 @@ RoadAssist backend is running
 
 ### `POST /users/register`
 
-Register a new rider. Creates the Firebase Auth user and a `users` doc with role `"2"`, `status: true`, `trustScore: 0`. **Public.**
+Register a new rider. Creates the Firebase Auth user and a `users` doc with role `"2"`, `status: true`, `trustScore: 0`. **Public.** The client signs in afterwards to obtain an ID token — the server never mints tokens.
 
 **Request:**
 ```json
@@ -88,12 +88,7 @@ Register a new rider. Creates the Firebase Auth user and a `users` doc with role
 
 ### `POST /users/one` **(Auth)**
 
-Get a single user document.
-
-**Request:**
-```json
-{ "userId": "abc123" }
-```
+Get the authenticated caller's own user document. No body required.
 
 **Response `200`:**
 ```json
@@ -116,12 +111,7 @@ Get a single user document.
 
 ### `POST /users/all` **(Admin)**
 
-List all users. No body schema (any body allowed; `requireAuth` still needs `userId`).
-
-**Request:**
-```json
-{ "userId": "adminUid" }
-```
+List all users. No body schema.
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...user docs... ] }`
 
@@ -133,12 +123,11 @@ Change a user's role. Cannot change your own role (`400`).
 
 **Request:**
 ```json
-{ "userId": "adminUid", "targetUserId": "abc123", "role": "1" }
+{ "targetUserId": "abc123", "role": "1" }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Admin caller's ID |
 | `targetUserId` | string | yes | User to update |
 | `role` | string | yes | `"1"` admin, `"2"` rider |
 
@@ -155,7 +144,7 @@ Set a user's trust score (feeds flag vote weighting).
 
 **Request:**
 ```json
-{ "userId": "adminUid", "targetUserId": "abc123", "trustScore": 60 }
+{ "targetUserId": "abc123", "trustScore": 60 }
 ```
 
 **Response `200`:**
@@ -171,7 +160,7 @@ Activate/deactivate a user. Also syncs Firebase Auth `disabled`. Cannot change y
 
 **Request:**
 ```json
-{ "userId": "adminUid", "targetUserId": "abc123", "status": false }
+{ "targetUserId": "abc123", "status": false }
 ```
 
 **Response `200`:**
@@ -189,11 +178,6 @@ The `roles` collection maps numeric codes to names/descriptions for clients. It 
 
 List all role mappings.
 
-**Request:**
-```json
-{ "userId": "abc123" }
-```
-
 **Response `200`:**
 ```json
 {
@@ -210,12 +194,7 @@ List all role mappings.
 
 ### `POST /roles/user` **(Auth)**
 
-Resolve a user's role code plus its mapping. Unknown user returns `404`, inactive user `403` (both enforced by `requireAuth`).
-
-**Request:**
-```json
-{ "userId": "abc123" }
-```
+Resolve the authenticated caller's role code plus its mapping. No body required.
 
 **Response `200`:**
 ```json
@@ -234,12 +213,7 @@ If the `roles` collection has not been seeded, `name`/`description` come back `n
 
 ### `POST /vehicleProfiles/all` **(Auth)**
 
-List all vehicle profiles for the caller.
-
-**Request:**
-```json
-{ "userId": "abc123" }
-```
+List all vehicle profiles for the caller. No body required.
 
 **Response `200`:**
 ```json
@@ -260,12 +234,11 @@ Create a vehicle profile (physical footprint used for passability checks).
 
 **Request:**
 ```json
-{ "userId": "abc123", "type": "SCOOTER", "baseWidth": 0.7, "baseHeight": 1.1 }
+{ "type": "SCOOTER", "baseWidth": 0.7, "baseHeight": 1.1 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Owner's ID |
 | `type` | string | yes | One of `SCOOTER`, `CUB`, `MANUAL` |
 | `baseWidth` | number | yes | Meters |
 | `baseHeight` | number | yes | Meters |
@@ -283,12 +256,11 @@ Attach a ride configuration (solo/passenger/cargo with estimated footprint) to a
 
 **Request:**
 ```json
-{ "userId": "abc123", "profileId": "prof1", "configType": "CARGO", "estWidth": 0.9, "estHeight": 1.4 }
+{ "profileId": "prof1", "configType": "CARGO", "estWidth": 0.9, "estHeight": 1.4 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Owner's ID |
 | `profileId` | string | yes | Profile to attach to |
 | `configType` | string | yes | One of `SOLO`, `PASSENGER`, `CARGO` |
 | `estWidth` | number | no | Estimated width in meters |
@@ -309,7 +281,7 @@ Get a single alley segment by ID.
 
 **Request:**
 ```json
-{ "userId": "abc123", "segmentId": "seg1" }
+{ "segmentId": "seg1" }
 ```
 
 **Response `200`:**
@@ -321,7 +293,8 @@ Get a single alley segment by ID.
     "id": "seg1",
     "lat": 10.7626,
     "lng": 106.6602,
-    "geoHash": "w3gv...",
+    "geoHash": "w3gv5p78d",
+    "geoCell": "w3gv",
     "baseWidth": 1.2,
     "wireHeight": 2.5,
     "inclinePct": 4,
@@ -336,16 +309,15 @@ Get a single alley segment by ID.
 
 ### `POST /alleys/near` **(Auth)**
 
-Search segments near a point (geohash grid + exact distance filter).
+Search segments near a point (geohash cell match).
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000 }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Caller's ID |
 | `lat` | number | yes | `-90` to `90` |
 | `lng` | number | yes | `-180` to `180` |
 | `radiusMeters` | number | no | Defaults to `2000` |
@@ -361,7 +333,6 @@ Submit a new alley segment.
 **Request:**
 ```json
 {
-  "userId": "abc123",
   "lat": 10.7626,
   "lng": 106.6602,
   "baseWidth": 1.2,
@@ -380,11 +351,11 @@ Submit a new alley segment.
 
 ### `PUT /alleys/passability` **(Auth)**
 
-Overwrite a segment's passability measurements.
+Overwrite a segment's passability measurements (only provided fields are written).
 
 **Request:**
 ```json
-{ "userId": "abc123", "segmentId": "seg1", "baseWidth": 1.1, "wireHeight": 2.4, "inclinePct": 5, "tier": "TIER2" }
+{ "segmentId": "seg1", "baseWidth": 1.1, "wireHeight": 2.4, "inclinePct": 5, "tier": "TIER2" }
 ```
 
 **Response `200`:**
@@ -400,7 +371,7 @@ Admin patch of any segment fields (only provided fields are written).
 
 **Request:**
 ```json
-{ "userId": "adminUid", "segmentId": "seg1", "tier": "TIER1", "verifiedCount": 5 }
+{ "segmentId": "seg1", "tier": "TIER1", "verifiedCount": 5 }
 ```
 
 **Response `200`:**
@@ -414,16 +385,15 @@ Admin patch of any segment fields (only provided fields are written).
 
 ### `POST /flags` **(Auth)**
 
-Submit a road flag. Starts at `SUGGESTED` with `voteCount: 0` and a per-type TTL (`ACCIDENT` 1h, `FLOOD` 6h, `OBSTRUCTION` 3h).
+Submit a road flag. Starts at `SUGGESTED` with `voteCount: 0` and a per-type TTL (`ACCIDENT` 1h, `FLOOD` 6h, `OBSTRUCTION` 3h). The reporter is the authenticated caller.
 
 **Request:**
 ```json
-{ "userId": "abc123", "type": "FLOOD", "lat": 10.7626, "lng": 106.6602, "note": "Knee-deep water" }
+{ "type": "FLOOD", "lat": 10.7626, "lng": 106.6602, "note": "Knee-deep water" }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Reporter's ID (trust score is snapshotted) |
 | `type` | string | yes | One of `ACCIDENT`, `FLOOD`, `OBSTRUCTION` |
 | `lat` / `lng` | number | yes | Coordinates |
 | `note` | string | no | May be `""`/`null` |
@@ -437,11 +407,11 @@ Submit a road flag. Starts at `SUGGESTED` with `voteCount: 0` and a per-type TTL
 
 ### `POST /flags/confirm` **(Auth)**
 
-Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count ≥ 3 flips the flag to `CONFIRMED`. `LOCKED` flags are returned unchanged.
+Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count ≥ 3 flips the flag to `CONFIRMED` (reflected in the response). `LOCKED` flags are returned unchanged.
 
 **Request:**
 ```json
-{ "userId": "abc123", "flagId": "flag1" }
+{ "flagId": "flag1" }
 ```
 
 **Response `200`:**
@@ -459,7 +429,7 @@ List active flags near a point (`EXPIRED` and `REJECTED` are excluded).
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000 }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000 }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...flags... ] }`
@@ -472,7 +442,7 @@ Force-set a flag status (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTE
 
 **Request:**
 ```json
-{ "userId": "adminUid", "flagId": "flag1", "status": "LOCKED" }
+{ "flagId": "flag1", "status": "LOCKED" }
 ```
 
 **Response `200`:**
@@ -485,11 +455,6 @@ Force-set a flag status (`SUGGESTED`, `CONFIRMED`, `LOCKED`, `EXPIRED`, `REJECTE
 ### `POST /flags/expire` **(Admin)**
 
 Flip all lapsed `SUGGESTED`/`CONFIRMED`/`LOCKED` flags to `EXPIRED`. No body schema.
-
-**Request:**
-```json
-{ "userId": "adminUid" }
-```
 
 **Response `200`:**
 ```json
@@ -506,7 +471,7 @@ List landmarks near a point, each with computed `distance` in meters.
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7626, "lng": 106.6602, "radiusMeters": 500 }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 500 }
 ```
 
 **Response `200`:**
@@ -528,7 +493,7 @@ Create a landmark.
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7627, "lng": 106.6603, "displayLabel": "Chợ Bến Thành gate" }
+{ "lat": 10.7627, "lng": 106.6603, "displayLabel": "Chợ Bến Thành gate" }
 ```
 
 **Response `201`:**
@@ -544,12 +509,11 @@ Match a query embedding against nearby landmarks (cosine similarity, 0.7 thresho
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7626, "lng": 106.6602, "embedding": [0.12, -0.03], "radiusMeters": 300 }
+{ "lat": 10.7626, "lng": 106.6602, "embedding": [0.12, -0.03], "radiusMeters": 300 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Caller's ID |
 | `lat` / `lng` | number | yes | Search center |
 | `embedding` | number[] | yes | Non-empty query vector |
 | `radiusMeters` | number | no | Defaults to `300` |
@@ -567,12 +531,11 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted OSRM (`source: "osrm"`) and persisted.
+Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted OSRM (`source: "osrm"`) and persisted (geometry stored JSON-stringified).
 
 **Request:**
 ```json
 {
-  "userId": "abc123",
   "originLat": 10.7626,
   "originLng": 106.6602,
   "destLat": 10.7758,
@@ -583,7 +546,6 @@ Route between two points for the caller's vehicle width. Served from the `routin
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `userId` | string | yes | Caller's ID |
 | `originLat` / `originLng` | number | yes | Start point |
 | `destLat` / `destLng` | number | yes | Destination |
 | `width` | number | no | Vehicle width in meters → bucket `<0.8` NARROW, `≤1.0` MEDIUM, else WIDE |
@@ -615,7 +577,7 @@ Register a repair shop or fuel pump.
 
 **Request:**
 ```json
-{ "userId": "abc123", "name": "Sửa xe Minh", "lat": 10.7626, "lng": 106.6602, "type": "SHOP" }
+{ "name": "Sửa xe Minh", "lat": 10.7626, "lng": 106.6602, "type": "SHOP" }
 ```
 
 | Field | Type | Required | Description |
@@ -635,7 +597,7 @@ List shops near a point with computed `distance`, optionally filtered by `type`.
 
 **Request:**
 ```json
-{ "userId": "abc123", "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "type": "PUMP" }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "type": "PUMP" }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
@@ -652,7 +614,7 @@ Record a photo diagnostic.
 
 **Request:**
 ```json
-{ "userId": "abc123", "category": "FLAT_TIRE", "imagePath": "diagnostics/abc123/img1.jpg" }
+{ "category": "FLAT_TIRE", "imagePath": "diagnostics/abc123/img1.jpg" }
 ```
 
 | Field | Type | Required | Description |
@@ -673,7 +635,7 @@ Get a diagnostic by ID.
 
 **Request:**
 ```json
-{ "userId": "abc123", "diagnosticId": "diag1" }
+{ "diagnosticId": "diag1" }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "id": "diag1", "...": "..." } }`
@@ -690,7 +652,7 @@ Open a dispatch ticket, optionally linked to a diagnostic.
 
 **Request:**
 ```json
-{ "userId": "abc123", "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "diagnosticId": "diag1" }
+{ "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "diagnosticId": "diag1" }
 ```
 
 | Field | Type | Required | Description |
@@ -711,7 +673,7 @@ Get a ticket by ID.
 
 **Request:**
 ```json
-{ "userId": "abc123", "ticketId": "tick1" }
+{ "ticketId": "tick1" }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "id": "tick1", "...": "..." } }`
@@ -724,7 +686,7 @@ Advance a ticket's status (validated against the lifecycle enum).
 
 **Request:**
 ```json
-{ "userId": "abc123", "ticketId": "tick1", "status": "MATCHED" }
+{ "ticketId": "tick1", "status": "MATCHED" }
 ```
 
 **Response `200`:**
@@ -760,7 +722,7 @@ Validation failures include an `errors` array:
 | Status Code | Meaning |
 |-------------|---------|
 | `400` | Validation error / business-rule violation (e.g. self role change, invalid dispatch status) |
-| `401` | Auth required (admin route without an authenticated role) |
+| `401` | Missing or invalid ID token |
 | `403` | Inactive user / insufficient permissions |
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
 | `500` | Internal server error (e.g. Auth create failure, OSRM outage) |

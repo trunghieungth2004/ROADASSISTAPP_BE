@@ -27,7 +27,6 @@ afterAll(async () => {
 
 describe("routing endpoints", () => {
   const body = {
-    userId: USER,
     originLat: BASE_LAT,
     originLng: BASE_LNG,
     destLat: 10.7758,

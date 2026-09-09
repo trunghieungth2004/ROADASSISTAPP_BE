@@ -28,7 +28,7 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 - Geohash `in`-queries are chunked (`IN_CHUNK_SIZE = 30`, the Firestore `in` limit); bulk user writes chunk at `BATCH_SIZE = 400`.
 
 ### Middleware (`functions/middleware/`)
-- `requireAuth`: resolves `userId` from the request body (400 if missing), loads the user (404 if unknown), rejects inactive users (403), sets `req.userRole` / `req.userId`.
+- `requireAuth`: verifies `Authorization: Bearer <idToken>` via `verifyIdToken` (401 if missing/invalid), loads the user by verified uid (404 if unknown), rejects inactive users (403), sets `req.uid` / `req.userRole`.
 - `requireRole(role)`: 401 when no authenticated role, 403 on mismatch. Admin routes use `requireRole("1")`.
 - `validate({body})`: Joi schema validation against `validation/schemas.ts`; strips unknown fields.
 

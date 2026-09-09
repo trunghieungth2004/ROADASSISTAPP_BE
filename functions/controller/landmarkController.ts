@@ -1,6 +1,7 @@
 import {Request, Response} from "express";
 import * as landmarkService from "../service/landmarkService";
 import {sendSuccess, handleServiceError} from "../utils/response";
+import {AuthedRequest} from "../middleware/auth";
 
 const nearLandmarks = async (req: Request, res: Response) => {
   try {
@@ -19,7 +20,8 @@ const nearLandmarks = async (req: Request, res: Response) => {
 
 const createLandmark = async (req: Request, res: Response) => {
   try {
-    const {userId, lat, lng, displayLabel} = req.body;
+    const {uid: userId} = req as AuthedRequest;
+    const {lat, lng, displayLabel} = req.body;
     const result = await landmarkService.createLandmark({
       userId,
       lat,
