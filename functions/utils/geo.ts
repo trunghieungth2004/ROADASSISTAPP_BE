@@ -1,4 +1,12 @@
+import {lineString as turfLineString, point as turfPoint} from
+  "@turf/helpers";
+import turfBooleanPointInPolygon from "@turf/boolean-point-in-polygon";
+import turfCircle from "@turf/circle";
+import turfLineIntersect from "@turf/line-intersect";
+
 const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+
+const CIRCLE_STEPS = 64;
 
 export const encodeGeohash = (
   lat: number,
@@ -141,32 +149,65 @@ interface CircleZone {
   [key: string]: unknown;
 }
 
+export const extractLineCoords = (
+  geometry: unknown,
+): Array<[number, number]> => {
+  const raw = (geometry as {coordinates?: unknown} | null)?.coordinates;
+  if (!Array.isArray(raw)) return [];
+  const coords: Array<[number, number]> = [];
+  for (const pt of raw) {
+    if (!Array.isArray(pt) || pt.length < 2) continue;
+    const [lng, lat] = pt as [unknown, unknown];
+    if (typeof lat !== "number" || typeof lng !== "number") continue;
+    coords.push([lng, lat]);
+  }
+  return coords;
+};
+
 export const lineStringHitsCircles = <T extends CircleZone>(
   geometry: unknown,
   zones: T[],
 ): Array<T & {distanceMeters: number}> => {
-  const raw = (geometry as {coordinates?: unknown} | null)?.coordinates;
-  if (!Array.isArray(raw) || raw.length === 0 || zones.length === 0) {
+  const coords = extractLineCoords(geometry);
+  if (coords.length === 0 || zones.length === 0) {
     return [];
   }
   const hits: Array<T & {distanceMeters: number}> = [];
   for (const zone of zones) {
+    if (
+      typeof zone.lat !== "number" ||
+      typeof zone.lng !== "number" ||
+      typeof zone.radiusMeters !== "number"
+    ) {
+      continue;
+    }
+    let hit = false;
+    try {
+      const ring = turfCircle(
+        [zone.lng, zone.lat],
+        zone.radiusMeters / 1000,
+        {steps: CIRCLE_STEPS, units: "kilometers"},
+      );
+      if (coords.length === 1) {
+        hit = turfBooleanPointInPolygon(turfPoint(coords[0]), ring);
+      } else {
+        hit =
+          turfLineIntersect(turfLineString(coords), ring).features.length >
+            0 ||
+          coords.some((c) => turfBooleanPointInPolygon(turfPoint(c), ring));
+      }
+    } catch {
+      hit = false;
+    }
+    if (!hit) continue;
     let min = Infinity;
-    for (let i = 0; i < raw.length; i++) {
-      const pt = raw[i] as [number, number] | null;
-      if (!Array.isArray(pt) || pt.length < 2) continue;
-      const [lng, lat] = pt;
-      if (typeof lat !== "number" || typeof lng !== "number") continue;
+    for (let i = 0; i < coords.length; i++) {
+      const [lng, lat] = coords[i];
       if (i === 0) {
         min = Math.min(min, haversineMeters(zone.lat, zone.lng, lat, lng));
         continue;
       }
-      const prev = raw[i - 1] as [number, number] | null;
-      if (!Array.isArray(prev) || prev.length < 2) continue;
-      const [prevLng, prevLat] = prev;
-      if (typeof prevLat !== "number" || typeof prevLng !== "number") {
-        continue;
-      }
+      const [prevLng, prevLat] = coords[i - 1];
       min = Math.min(
         min,
         pointToSegmentMeters(
@@ -179,9 +220,7 @@ export const lineStringHitsCircles = <T extends CircleZone>(
         ),
       );
     }
-    if (min <= zone.radiusMeters) {
-      hits.push({...zone, distanceMeters: min});
-    }
+    hits.push({...zone, distanceMeters: min});
   }
   return hits.sort((a, b) => a.distanceMeters - b.distanceMeters);
 };

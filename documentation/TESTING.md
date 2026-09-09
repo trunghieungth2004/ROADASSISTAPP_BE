@@ -95,7 +95,6 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | File | What it asserts |
 |------|-----------------|
 | `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped. |
-| `utils/geo.test.ts` | Geohash round-trip, haversine sanity (known distances), bounds containment, radius predicate, point-to-segment distance, polyline-vs-circle hits, bounds cell coverage. |
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
@@ -104,9 +103,11 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
 | `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry. |
+| `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
-| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), hazard block → 409 on fresh *and* cached routes, OSRM error → `ServiceError`, empty routes → 404. |
+| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), hazard block → detour (`source: "detour"` + `via`/`hazards`, detour never cached) → 409 after 3 blocked attempts (4 fetches), OSRM retry-once then success, unreachable-twice → 500, OSRM error → `ServiceError`, empty routes → 404. |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
+| `utils/detour.test.ts` | Margin schedule `[20, 60, 120]`, bypass lands outside the zone, margin escalation pushes farther, endpoint-inside → null, degenerate geometry → null, invalid zone/margin → null. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
@@ -128,7 +129,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
 | `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
-| `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, flood removed → 200 again, OSRM down → 500 |
+| `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, fresh blockage → `source: detour` + `via`/`hazards`, flood removed → 200 again, OSRM down → 500 |
 | `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
 | `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400 |

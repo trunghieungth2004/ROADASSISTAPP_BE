@@ -94,6 +94,17 @@ firebase deploy --only firestore:indexes
 
 See [Architecture → Firestore Indexes](./documentation/ARCHITECTURE.md#firestore-indexes).
 
+## Routing Engine Ops
+
+`POST /routes` solves via a self-hosted OSRM instance (`OSRM_URL`, default `http://localhost:5000`) and is designed for a **scale-to-zero** engine — cost-per-request (~$0–4/mo at trial scale) instead of an always-on instance (~$15–20/mo). Keep it that way:
+
+```bash
+gcloud run services update <osrm-service> --region=asia-southeast1 \
+  --min-instances=0 --max-instances=2
+```
+
+Relevant functions env vars: `OSRM_URL`, `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
+
 ## Full Documentation
 
 - [Architecture](./documentation/ARCHITECTURE.md) — Layered design, collections, key decisions

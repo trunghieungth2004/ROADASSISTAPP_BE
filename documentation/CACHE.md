@@ -63,6 +63,10 @@ Notable behaviors:
 
 Because the check runs live on every request, **no cache invalidation is needed**: confirming a hazard blocks the next request, and removing it — `POST /flags/unflag` by the reporter, admin moderation, or the per-type TTL sweep (ACCIDENT 1h, FLOOD 6h, OBSTRUCTION 3h) — unblocks the next request automatically. Impact radius defaults per type (`FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m; overridable per flag via `radiusMeters` at creation).
 
+### Engine economics: cost-per-request posture
+
+The routing engine (self-hosted OSRM) runs **scale-to-zero** — no `min-instances`, billed per request (~$0–4/mo at trial scale). The cache is what makes this viable: the engine is only touched on `routing_cache` misses, and OD pairs saturate quickly at low user counts, so cold boots are rare. Two knobs support the posture: `ROUTING_CACHE_TTL_SECONDS` (default 30 d; prod recommendation 90 d to stretch warmth) and the single retry on OSRM fetch (15 s timeout), which absorbs the cold-boot race so a waking engine reads as one slow request instead of a 500. Detour re-solves also hit the engine but stay uncached by design — negligible at this volume. Revisit always-on (or a native-avoidance engine) only when traffic justifies it; see the engine-economics decision record in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ### Decision record: why Firestore, not Redis (option A)
 
 Evaluated 2026-09: move the route cache to Redis (Memorystore) vs. keep Firestore and fix the two gaps (no expiry, dropped ETA on hits).

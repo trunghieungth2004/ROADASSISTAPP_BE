@@ -596,7 +596,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted OSRM (`source: "osrm"`) and persisted (geometry stored JSON-stringified).
+Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted OSRM (`source: "osrm"`) and persisted (geometry stored JSON-stringified). The OSRM fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine).
 
 **Request:**
 ```json
@@ -630,7 +630,28 @@ Route between two points for the caller's vehicle width. Served from the `routin
 }
 ```
 
-Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the route is refused:
+Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service stitches a bypass: it offsets a waypoint outside the nearest zone (margins 20 → 60 → 120 m, up to 3 attempts), re-solves origin → via → destination through OSRM, and re-validates the new geometry. See `200 (detour)` below.
+
+**Response `200` (detour):**
+```json
+{
+  "statusCode": 200,
+  "status": "SUCCESS",
+  "data": {
+    "cached": false,
+    "distanceMeters": 2600.1,
+    "durationSeconds": 560.0,
+    "geometry": { "type": "LineString", "coordinates": [] },
+    "source": "detour",
+    "via": { "lat": 10.7712, "lng": 106.6821 },
+    "hazards": [
+      { "flagId": "flag1", "type": "FLOOD", "lat": 10.77, "lng": 106.68, "radiusMeters": 200, "note": null, "distanceMeters": 0 }
+    ]
+  }
+}
+```
+
+Detours are never written to `routing_cache`. If every bypass attempt still crosses a hazard (or an endpoint sits inside a zone, where no bypass exists), the route is refused:
 
 **Response `409` (blocked):**
 ```json

@@ -117,6 +117,35 @@ describe("lineStringHitsCircles", () => {
     expect(hits.map((h) => h.flagId)).toEqual(["near", "far"]);
   });
 
+  it("hits a route fully contained in a zone", () => {
+    const inside = {
+      type: "LineString",
+      coordinates: [
+        [106.65, 10.7],
+        [106.651, 10.7005],
+      ],
+    };
+    const hits = lineStringHitsCircles(inside, [
+      {flagId: "f1", lat: 10.7002, lng: 106.6505, radiusMeters: 500},
+    ]);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].flagId).toBe("f1");
+  });
+
+  it("ignores malformed coordinates and zones", () => {
+    expect(
+      lineStringHitsCircles(
+        {type: "LineString", coordinates: [["a", "b"], [null, {}]]},
+        [{flagId: "f1", lat: 10.7, lng: 106.65, radiusMeters: 200}],
+      ),
+    ).toEqual([]);
+    expect(
+      lineStringHitsCircles(line, [
+        {flagId: "f1", lat: 10.7, lng: 106.65, radiusMeters: "x"},
+      ] as never),
+    ).toEqual([]);
+  });
+
   it("handles single-point and malformed geometry", () => {
     const zone = {flagId: "f1", lat: 10.7, lng: 106.65, radiusMeters: 200};
     const point = {type: "LineString", coordinates: [[106.65, 10.7]]};

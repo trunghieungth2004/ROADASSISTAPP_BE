@@ -94,6 +94,65 @@ describe("routing endpoints", () => {
     await db.collection("flags").doc(floodId).delete();
   });
 
+  it("POST /routes detours around a fresh blockage", async () => {
+    const direct = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    const around = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.69, 10.79],
+        [106.7, 10.78],
+      ],
+    };
+    jest.mocked(global.fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: "Ok",
+          routes: [{distance: 2450, duration: 512, geometry: direct}],
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: "Ok",
+          routes: [{distance: 2600, duration: 560, geometry: around}],
+        }),
+      } as unknown as Response);
+    const floodId = await seedFlag({
+      type: "FLOOD",
+      status: "2",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 200,
+    });
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send({...body, destLat: 10.795, destLng: 106.71});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      cached: false,
+      source: "detour",
+      distanceMeters: 2600,
+    });
+    expect(res.body.data.via).toMatchObject({
+      lat: expect.any(Number),
+      lng: expect.any(Number),
+    });
+    expect(res.body.data.hazards[0]).toMatchObject({
+      flagId: floodId,
+      type: "FLOOD",
+    });
+    await db.collection("flags").doc(floodId).delete();
+  });
+
   it("POST /routes unblocks after the flood is gone", async () => {
     const res = await request(app)
       .post("/routes")

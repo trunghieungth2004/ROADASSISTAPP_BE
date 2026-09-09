@@ -135,6 +135,141 @@ describe("routingService.getRoute", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("detours around a blocked route with source detour", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const direct = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    const around = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.69, 10.79],
+        [106.7, 10.78],
+      ],
+    };
+    jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: "Ok",
+          routes: [{distance: 2450, duration: 512, geometry: direct}],
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: "Ok",
+          routes: [{distance: 2600, duration: 560, geometry: around}],
+        }),
+      } as unknown as Response);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const zones = [
+      {
+        flagId: "flood-1",
+        lat: 10.77,
+        lng: 106.68,
+        radiusMeters: 200,
+        distanceMeters: 0,
+      },
+    ];
+    jest.mocked(closureService.findBlocking)
+      .mockResolvedValueOnce(zones as never)
+      .mockResolvedValueOnce([]);
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      cached: false,
+      source: "detour",
+      hazards: zones,
+      distanceMeters: 2600,
+      durationSeconds: 560,
+      geometry: around,
+    });
+    expect(res.via).toMatchObject({
+      lat: expect.any(Number),
+      lng: expect.any(Number),
+    });
+    expect(routingCacheRepository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws 409 after detour attempts stay blocked", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        code: "Ok",
+        routes: [{distance: 2450, duration: 512, geometry}],
+      }),
+    } as unknown as Response);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const zones = [
+      {
+        flagId: "flood-1",
+        lat: 10.77,
+        lng: 106.68,
+        radiusMeters: 200,
+        distanceMeters: 0,
+      },
+    ];
+    jest.mocked(closureService.findBlocking).mockResolvedValue(zones as never);
+    await expect(getRoute(base)).rejects.toMatchObject({
+      statusCode: 409,
+      errors: zones,
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries once when the engine connection drops", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry = {type: "LineString", coordinates: [[1, 2]]};
+    jest.spyOn(global, "fetch")
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          code: "Ok",
+          routes: [{distance: 100, duration: 50, geometry}],
+        }),
+      } as unknown as Response);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.findBlocking).mockResolvedValue([]);
+    await expect(getRoute(base)).resolves.toMatchObject({source: "osrm"});
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws 500 when the engine stays unreachable", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    jest.spyOn(global, "fetch").mockRejectedValue(new TypeError("down"));
+    await expect(getRoute(base)).rejects.toMatchObject({
+      statusCode: 500,
+      message: "Routing service unreachable",
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("throws 500 when OSRM is down", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
