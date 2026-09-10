@@ -669,6 +669,41 @@ Removing the blocking flag (`POST /flags/unflag` by its reporter, or expiry) unb
 
 ---
 
+## Push
+
+Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); flag transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job that fans out to riders whose active route still crosses the flag. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off.
+
+### `POST /push/register` **(Auth)**
+
+**Request:**
+```json
+{ "token": "fcm-device-token", "platform": "android" }
+```
+
+**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user.
+
+### `POST /push/unregister` **(Auth)**
+
+**Request:**
+```json
+{ "token": "fcm-device-token" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "removed": true } }`.
+
+### `POST /push/deliver` (Cloud Tasks only)
+
+Enqueued automatically — guarded by the `X-CloudTasks-QueueName: hazard-push` header (else `403`), not rate-limited.
+
+**Request:**
+```json
+{ "flagId": "flag1" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "delivered": 1, "skipped": false } }` — `skipped: true` when FCM is disabled or the flag no longer blocks. Each notified device gets a notification (`"Road hazard on your route"`) plus data (`flagId`, `type`, `status`, `lat`, `lng`, `radiusMeters`); dead tokens are pruned.
+
+---
+
 ## Shops
 
 XeAssist stub endpoints.

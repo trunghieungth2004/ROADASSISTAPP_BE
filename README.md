@@ -105,6 +105,15 @@ gcloud run services update <osrm-service> --region=asia-southeast1 \
 
 Relevant functions env vars: `OSRM_URL`, `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
 
+Hazard push (FCM + Cloud Tasks) is env-gated and idle unless enabled. To turn it on:
+
+```bash
+cd functions
+GCLOUD_PROJECT=roadassistapp-c2e37 npm run queue:init   # create hazard-push queue
+```
+
+then set `FCM_ENABLED=true`, `CLOUD_TASKS_ENABLED=true`, `PUSH_DELIVER_URL` (the deployed `/push/deliver` URL), `TASK_INVOKER_EMAIL` (service account with `roles/cloudtasks.enqueuer` + permission to invoke the function), and optionally `TASK_QUEUE_LOCATION` (default `asia-southeast1`). See [API → Push](./documentation/API.md#push).
+
 ## Full Documentation
 
 - [Architecture](./documentation/ARCHITECTURE.md) — Layered design, collections, key decisions

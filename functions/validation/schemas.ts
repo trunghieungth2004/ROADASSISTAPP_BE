@@ -125,6 +125,16 @@ const schemas = {
     destLng: langAttr(),
     width: numOpt(),
   }),
+  registerPush: Joi.object({
+    token: Joi.string().min(1).max(4096).required(),
+    platform: Joi.string().valid("android", "ios", "web").optional(),
+  }),
+  unregisterPush: Joi.object({
+    token: Joi.string().min(1).max(4096).required(),
+  }),
+  deliverPush: Joi.object({
+    flagId: strReq(),
+  }),
   createShop: Joi.object({
     name: strReq(),
     lat: latAttr(),

@@ -20,8 +20,10 @@ import routingRoutes from "../../routes/routingRoutes";
 import shopRoutes from "../../routes/shopRoutes";
 import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
+import pushRoutes, {mountPushDeliver} from "../../routes/pushRoutes";
 
 const registerRoutes = (app: Express, deps: RouteDeps): void => {
+  mountPushDeliver(app, deps);
   userRoutes(app, deps);
   roleRoutes(app, deps);
   statusRoutes(app, deps);
@@ -33,6 +35,7 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   shopRoutes(app, deps);
   diagnosticRoutes(app, deps);
   dispatchRoutes(app, deps);
+  pushRoutes(app, deps);
 };
 
 const buildApp = (deps: RouteDeps): Express => {

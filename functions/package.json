@@ -16,6 +16,7 @@
     "deploy": "firebase deploy --only functions",
     "db:init": "npm run build && node lib/scripts/db.init.js",
     "db:init:emulator": "FUNCTIONS_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=demo npm run db:init",
+    "queue:init": "npm run build && node lib/scripts/createTaskQueue.js",
     "logs": "firebase functions:log"
   },
   "engines": {
@@ -24,6 +25,7 @@
   "main": "lib/index.js",
   "dependencies": {
     "@google-cloud/aiplatform": "^6.11.0",
+    "@google-cloud/tasks": "^4.1.0",
     "@turf/bearing": "^7.4.0",
     "@turf/boolean-point-in-polygon": "^7.4.0",
     "@turf/circle": "^7.4.0",

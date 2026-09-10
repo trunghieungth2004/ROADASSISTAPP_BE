@@ -41,6 +41,13 @@ jest.mock("../../config/firebase", () => {
       verifyIdToken: async () => ({uid: "mock-uid"}),
     },
     storage: {},
+    messaging: {
+      sendEach: jest.fn(async () => ({
+        successCount: 0,
+        failureCount: 0,
+        responses: [],
+      })),
+    },
     Timestamp: {
       now: () => ({toDate: () => new Date()}),
       fromDate: (d: Date) => ({toDate: () => d}),

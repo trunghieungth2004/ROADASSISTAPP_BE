@@ -1,5 +1,7 @@
 import * as routingCacheRepository from
   "../repository/routingCacheRepository";
+import * as activeRouteRepository from
+  "../repository/activeRouteRepository";
 import * as closureService from "../service/closureService";
 import * as userRepository from "../repository/userRepository";
 import {buildBypassPoint, DETOUR_MARGINS_METERS} from "../utils/detour";
@@ -161,6 +163,18 @@ const parseGeometry = (stored: unknown): unknown => {
   }
 };
 
+const recordActiveRoute = async (
+  routeKey: string,
+  userId: string,
+  geometry: unknown,
+): Promise<void> => {
+  try {
+    await activeRouteRepository.touch(routeKey, userId, geometry);
+  } catch {
+    // Active-route tracking must never fail a route request.
+  }
+};
+
 const getRoute = async ({
   userId,
   originLat,
@@ -216,6 +230,7 @@ const getRoute = async ({
 
   const zones = await closureService.findBlocking(geometry);
   if (zones.length === 0) {
+    await recordActiveRoute(key, userId, geometry);
     return {
       cached,
       distanceMeters,
@@ -234,6 +249,7 @@ const getRoute = async ({
     zones,
   });
   if (detoured) {
+    await recordActiveRoute(key, userId, detoured.geometry);
     return {
       cached: false,
       distanceMeters: detoured.distanceMeters,

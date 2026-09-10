@@ -31,7 +31,7 @@ functions/
     │   └── integration.ts       ← emulator host env vars, CACHE_ENABLED=false
     ├── utils/
     │   ├── stubs.ts             ← stubRequireAuth/Role (unit) + integration variants
-    │   ├── app.ts               ← buildUnitApp(), buildIntegrationApp() — all 11 routes wired
+    │   ├── app.ts               ← buildUnitApp(), buildIntegrationApp() — all 12 routes wired
     │   └── seed.ts              ← cleanAll + per-collection seed helpers
     ├── unit/
     │   ├── utils/geo.test.ts
@@ -102,13 +102,15 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
-| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry. |
+| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
-| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), hazard block → detour (`source: "detour"` + `via`/`hazards`, detour never cached) → 409 after 3 blocked attempts (4 fetches), OSRM retry-once then success, unreachable-twice → 500, OSRM error → `ServiceError`, empty routes → 404. |
+| `service/routingService.test.ts` | Bucket mapping, cache-hit short-circuit (no fetch), hazard block → detour (`source: "detour"` + `via`/`hazards`, detour never cached) → 409 after 3 blocked attempts (4 fetches), OSRM retry-once then success, unreachable-twice → 500, OSRM error → `ServiceError`, empty routes → 404, `active_routes` touch on every 200 (never on 409). |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
 | `utils/detour.test.ts` | Margin schedule `[20, 60, 120]`, bypass lands outside the zone, margin escalation pushes farther, endpoint-inside → null, degenerate geometry → null, invalid zone/margin → null. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
+| `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open. |
+| `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
@@ -130,6 +132,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, fresh blockage → `source: detour` + `via`/`hazards`, flood removed → 200 again, OSRM down → 500 |
+| `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
 | `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
 | `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400 |

@@ -227,6 +227,26 @@ No body schema (any body allowed; still admin-gated).
 
 ---
 
+## Push
+
+### `POST /push/register` — `registerPush` **(Auth)**
+| Field | Type | |
+|-------|------|---|
+| `token` | string (1–4096) | req |
+| `platform` | enum: android, ios, web | opt |
+
+### `POST /push/unregister` — `unregisterPush` **(Auth)**
+| Field | Type | |
+|-------|------|---|
+| `token` | string (1–4096) | req |
+
+### `POST /push/deliver` — `deliverPush` (Cloud Tasks only)
+| Field | Type | |
+|-------|------|---|
+| `flagId` | string | req |
+
+---
+
 ## Shops (XeAssist stub)
 
 ### `POST /shops` — `createShop`

@@ -1,5 +1,6 @@
 import * as flagRepository from "../../../repository/flagRepository";
 import * as userRepository from "../../../repository/userRepository";
+import * as taskQueueService from "../../../service/taskQueueService";
 import {
   createFlag,
   confirmFlag,
@@ -11,6 +12,9 @@ import {
 
 jest.mock("../../../repository/flagRepository");
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../service/taskQueueService", () => ({
+  enqueueHazardPush: jest.fn(async () => ({enqueued: false})),
+}));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -97,6 +101,34 @@ describe("flagService.confirmFlag", () => {
     });
     expect(flagRepository.updateStatus).not.toHaveBeenCalled();
   });
+
+  it("enqueues a push when consensus flips a blocking type", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "FLOOD",
+      status: "1",
+      voteCount: 2,
+      reporterTrust: 0,
+    } as never);
+    await confirmFlag("f1");
+    expect(taskQueueService.enqueueHazardPush).toHaveBeenCalledWith(
+      "f1",
+      "FLOOD",
+      "2",
+    );
+  });
+
+  it("skips the queue below the threshold", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "FLOOD",
+      status: "1",
+      voteCount: 1,
+      reporterTrust: 0,
+    } as never);
+    await confirmFlag("f1");
+    expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
+  });
 });
 
 describe("flagService.getNear", () => {
@@ -131,6 +163,30 @@ describe("flagService.moderateFlag", () => {
     await expect(
       moderateFlag({flagId: "f1", status: "3"}),
     ).resolves.toEqual({updated: 1});
+  });
+
+  it("enqueues a push on admin confirm", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "OBSTRUCTION",
+    } as never);
+    jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
+    await moderateFlag({flagId: "f1", status: "2"});
+    expect(taskQueueService.enqueueHazardPush).toHaveBeenCalledWith(
+      "f1",
+      "OBSTRUCTION",
+      "2",
+    );
+  });
+
+  it("skips the queue on reject", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "OBSTRUCTION",
+    } as never);
+    jest.mocked(flagRepository.updateStatus).mockResolvedValue(undefined);
+    await moderateFlag({flagId: "f1", status: "5"});
+    expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
   });
 });
 

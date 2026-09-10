@@ -3,6 +3,7 @@ import * as userRepository from "../repository/userRepository";
 import {STATUS_FLAGS} from "../constants/status";
 import {boundsForRadiusMeters, cellsForBounds} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
+import {enqueueHazardPush} from "./taskQueueService";
 
 class ValidationError extends Error {
   statusCode: number;
@@ -88,6 +89,11 @@ const confirmFlag = async (flagId: string): Promise<FlagRecord | null> => {
   if (newCount >= CONSENSUS_THRESHOLD) {
     await flagRepository.updateStatus(flagId, STATUS_FLAGS.CONFIRMED);
     cacheManager.del(NS, flagId);
+    await enqueueHazardPush(
+      flagId,
+      flag.type,
+      STATUS_FLAGS.CONFIRMED,
+    );
     return {
       ...flag,
       voteCount: newCount,
@@ -146,6 +152,9 @@ const moderateFlag = async ({
   if (!flag) throw new NotFoundError("Flag not found");
   await flagRepository.updateStatus(flagId, status);
   cacheManager.del(NS, flagId);
+  if (status === STATUS_FLAGS.CONFIRMED || status === STATUS_FLAGS.LOCKED) {
+    await enqueueHazardPush(flagId, flag.type, status);
+  }
   return {updated: 1};
 };
 

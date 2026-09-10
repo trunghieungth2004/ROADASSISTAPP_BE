@@ -20,10 +20,13 @@ import routingRoutes from "./routes/routingRoutes";
 import shopRoutes from "./routes/shopRoutes";
 import diagnosticRoutes from "./routes/diagnosticRoutes";
 import dispatchRoutes from "./routes/dispatchRoutes";
+import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 
 const app = express();
 
 const routeDeps = {requireAuth, requireRole, validate, schemas};
+
+mountPushDeliver(app, routeDeps);
 
 const limiter = rateLimiter({
   windowMs: 1 * 60 * 1000,
@@ -86,6 +89,7 @@ routingRoutes(app, routeDeps);
 shopRoutes(app, routeDeps);
 diagnosticRoutes(app, routeDeps);
 dispatchRoutes(app, routeDeps);
+pushRoutes(app, routeDeps);
 
 app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);

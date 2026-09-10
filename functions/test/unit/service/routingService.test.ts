@@ -1,10 +1,13 @@
 import * as routingCacheRepository from
   "../../../repository/routingCacheRepository";
+import * as activeRouteRepository from
+  "../../../repository/activeRouteRepository";
 import * as closureService from "../../../service/closureService";
 import * as userRepository from "../../../repository/userRepository";
 import {getRoute, widthToBucket} from "../../../service/routingService";
 
 jest.mock("../../../repository/routingCacheRepository");
+jest.mock("../../../repository/activeRouteRepository");
 jest.mock("../../../service/closureService");
 jest.mock("../../../repository/userRepository");
 
@@ -92,6 +95,11 @@ describe("routingService.getRoute", () => {
         durationSeconds: 50,
       }),
     );
+    expect(activeRouteRepository.touch).toHaveBeenCalledWith(
+      expect.any(String),
+      "u1",
+      geometry,
+    );
   });
 
   it("throws 409 with zones when a fresh route crosses a flood", async () => {
@@ -115,6 +123,7 @@ describe("routingService.getRoute", () => {
       errors: zones,
     });
     expect(routingCacheRepository.save).toHaveBeenCalled();
+    expect(activeRouteRepository.touch).not.toHaveBeenCalled();
   });
 
   it("throws 409 with zones on a cache hit crossing a flood", async () => {
@@ -197,6 +206,11 @@ describe("routingService.getRoute", () => {
       lng: expect.any(Number),
     });
     expect(routingCacheRepository.save).toHaveBeenCalledTimes(1);
+    expect(activeRouteRepository.touch).toHaveBeenCalledWith(
+      expect.any(String),
+      "u1",
+      around,
+    );
   });
 
   it("throws 409 after detour attempts stay blocked", async () => {
