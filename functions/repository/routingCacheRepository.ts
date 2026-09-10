@@ -14,6 +14,7 @@ interface RouteCacheEntry {
   originLng: number;
   destLat: number;
   destLng: number;
+  stops?: {lat: number; lng: number}[];
   widthBucket: string;
   geometry: unknown;
   distanceMeters?: number;
@@ -48,6 +49,7 @@ const save = async (
     originLng: number;
     destLat: number;
     destLng: number;
+    stops?: {lat: number; lng: number}[];
     widthBucket: string;
     geometry: unknown;
     distanceMeters?: number;

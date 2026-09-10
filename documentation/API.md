@@ -605,6 +605,7 @@ Route between two points for the caller's vehicle width. Served from the `routin
   "originLng": 106.6602,
   "destLat": 10.7758,
   "destLng": 106.7019,
+  "stops": [{ "lat": 10.77, "lng": 106.68 }],
   "width": 0.9
 }
 ```
@@ -613,6 +614,7 @@ Route between two points for the caller's vehicle width. Served from the `routin
 |-------|------|----------|-------------|
 | `originLat` / `originLng` | number | yes | Start point |
 | `destLat` / `destLng` | number | yes | Destination |
+| `stops` | array of `{lat, lng}` (max 10) | no | Via points, visited in order; part of the cache key |
 | `width` | number | no | Vehicle width in meters → bucket `<0.8` NARROW, `≤1.0` MEDIUM, else WIDE |
 
 **Response `200` (fresh):**
@@ -630,7 +632,7 @@ Route between two points for the caller's vehicle width. Served from the `routin
 }
 ```
 
-Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service stitches a bypass: it offsets a waypoint outside the nearest zone (margins 20 → 60 → 120 m, up to 3 attempts), re-solves origin → via → destination through OSRM, and re-validates the new geometry. See `200 (detour)` below.
+Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service stitches a bypass: it offsets a waypoint outside the nearest zone (margins 20 → 60 → 120 m, up to 3 attempts), re-solves through OSRM, and re-validates the new geometry. With `stops`, the bypass is inserted at the blocked leg so every stop is preserved (origin → … → stop → via → … → destination); if a stop cannot be located on the route the request is refused instead. See `200 (detour)` below.
 
 **Response `200` (detour):**
 ```json
@@ -661,6 +663,20 @@ Detours are never written to `routing_cache`. If every bypass attempt still cros
   "message": "Route is blocked by active road hazards",
   "errors": [
     { "flagId": "flag1", "type": "FLOOD", "lat": 10.76, "lng": 106.66, "radiusMeters": 300, "note": null, "distanceMeters": 0 }
+  ]
+}
+```
+
+Separately, when `width` is provided the resolved route is checked against measured alley widths (`alley_segments`): any segment narrower than the vehicle within 20 m of the route refuses it — hazard blocks take precedence, and there is no bypass for width:
+
+**Response `409` (impassable width):**
+```json
+{
+  "statusCode": 409,
+  "status": "ERROR",
+  "message": "Route is impassable for this vehicle width",
+  "errors": [
+    { "segmentId": "seg1", "baseWidth": 0.5, "distanceMeters": 0 }
   ]
 }
 ```
@@ -862,5 +878,5 @@ Validation failures include an `errors` array:
 | `401` | Missing or invalid ID token |
 | `403` | Inactive user / insufficient permissions (e.g. unflag by a non-reporter) |
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
-| `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`) |
+| `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`) or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
 | `500` | Internal server error (e.g. Auth create failure, OSRM outage) |

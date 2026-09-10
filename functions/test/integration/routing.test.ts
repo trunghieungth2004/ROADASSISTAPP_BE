@@ -4,6 +4,7 @@ import {
   cleanAll,
   seedUser,
   seedFlag,
+  seedSegment,
   db,
   PREFIX,
   BASE_LAT,
@@ -162,6 +163,30 @@ describe("routing endpoints", () => {
     expect(res.body.data).toMatchObject({cached: true, source: "cache"});
   });
 
+  it("POST /routes routes through stops in order", async () => {
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send({...body, stops: [{lat: 10.77, lng: 106.68}]});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({cached: false, source: "osrm"});
+    const url = String(jest.mocked(global.fetch).mock.calls[0][0]);
+    expect(url).toContain(
+      "106.6602,10.7626;106.68,10.77;106.7019,10.7758",
+    );
+  });
+
+  it("POST /routes rejects too many stops", async () => {
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send({
+        ...body,
+        stops: Array.from({length: 11}, () => ({lat: 10.77, lng: 106.68})),
+      });
+    expect(res.status).toBe(400);
+  });
+
   it("POST /routes returns 500 when OSRM is down", async () => {
     jest.restoreAllMocks();
     jest.spyOn(global, "fetch").mockResolvedValue({
@@ -173,5 +198,40 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send({...body, destLat: 10.79});
     expect(res.status).toBe(500);
+  });
+
+  it("POST /routes 409s on a narrower segment", async () => {
+    const geometry = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    jest.mocked(global.fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        code: "Ok",
+        routes: [{distance: 2450, duration: 512, geometry}],
+      }),
+    } as unknown as Response);
+    const segId = await seedSegment({
+      lat: 10.77,
+      lng: 106.68,
+      baseWidth: 0.5,
+    });
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER))
+      .send({...body, width: 0.9, destLat: 10.796, destLng: 106.711});
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe(
+      "Route is impassable for this vehicle width",
+    );
+    expect(res.body.errors[0]).toMatchObject({
+      segmentId: segId,
+      baseWidth: 0.5,
+    });
+    await db.collection("alley_segments").doc(segId).delete();
   });
 });

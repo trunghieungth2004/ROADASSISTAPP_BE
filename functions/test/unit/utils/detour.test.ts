@@ -1,5 +1,7 @@
 import {
   buildBypassPoint,
+  nearestSegmentIndex,
+  legOrdinalForZone,
   DETOUR_MARGINS_METERS,
 } from "../../../utils/detour";
 import {haversineMeters} from "../../../utils/geo";
@@ -66,5 +68,48 @@ describe("buildBypassPoint", () => {
       buildBypassPoint(line, {...zone, radiusMeters: 0}, 20, origin, dest),
     ).toBeNull();
     expect(buildBypassPoint(line, zone, -1, origin, dest)).toBeNull();
+  });
+});
+
+describe("nearestSegmentIndex", () => {
+  it("returns the clamped segment index nearest the zone", () => {
+    const idx = nearestSegmentIndex(line, zone);
+    expect(idx).toBe(0);
+    expect(
+      nearestSegmentIndex({type: "LineString", coordinates: []}, zone),
+    ).toBeNull();
+    expect(nearestSegmentIndex(null, zone)).toBeNull();
+    expect(
+      nearestSegmentIndex(line, {...zone, radiusMeters: -5}),
+    ).toBeNull();
+  });
+});
+
+describe("legOrdinalForZone", () => {
+  const routed = {
+    type: "LineString",
+    coordinates: [
+      [106.66, 10.76],
+      [106.68, 10.77],
+      [106.7, 10.78],
+    ],
+  };
+  const stop = {lat: 10.77, lng: 106.68};
+
+  it("counts stops at or before the blocked segment", () => {
+    expect(legOrdinalForZone(routed, [], 1)).toBe(0);
+    expect(legOrdinalForZone(routed, [stop], 0)).toBe(0);
+    expect(legOrdinalForZone(routed, [stop], 1)).toBe(1);
+  });
+
+  it("returns null when a stop cannot be located", () => {
+    expect(
+      legOrdinalForZone(routed, [{lat: 50, lng: 50}], 1),
+    ).toBeNull();
+    expect(legOrdinalForZone(routed, [stop], 7)).toBeNull();
+    expect(legOrdinalForZone(routed, [stop], -1)).toBeNull();
+    expect(
+      legOrdinalForZone({type: "LineString", coordinates: []}, [stop], 0),
+    ).toBeNull();
   });
 });

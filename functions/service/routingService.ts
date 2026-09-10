@@ -4,7 +4,14 @@ import * as activeRouteRepository from
   "../repository/activeRouteRepository";
 import * as closureService from "../service/closureService";
 import * as userRepository from "../repository/userRepository";
-import {buildBypassPoint, DETOUR_MARGINS_METERS} from "../utils/detour";
+import * as alleySegmentRepository from
+  "../repository/alleySegmentRepository";
+import {computePassability} from "../service/alleySegmentService";
+import {cellsForBounds, extractLineCoords, pointToSegmentMeters} from
+  "../utils/geo";
+import {buildBypassPoint, DETOUR_MARGINS_METERS, nearestSegmentIndex,
+  legOrdinalForZone} from "../utils/detour";
+import type {LatLng} from "../utils/detour";
 
 class NotFoundError extends Error {
   statusCode: number;
@@ -29,9 +36,25 @@ class RouteBlockedError extends Error {
     this.errors = zones;
   }
 }
+class WidthBlockedError extends Error {
+  statusCode: number;
+  errors: unknown;
+  constructor(segments: unknown) {
+    super("Route is impassable for this vehicle width");
+    this.statusCode = 409;
+    this.errors = segments;
+  }
+}
 
 const OSRM_URL = process.env.OSRM_URL || "http://localhost:5000";
 const OSRM_TIMEOUT_MS = 15000;
+const WIDTH_GATE_RADIUS_METERS = 20;
+
+const EXCLUDE_BY_BUCKET: Record<string, string | null> = {
+  NARROW: null,
+  MEDIUM: "narrowonly",
+  WIDE: "narrowonly,mediumonly",
+};
 
 interface RouteResult {
   cached: boolean;
@@ -66,9 +89,11 @@ const solveOsrm = async (
   coordinates: string,
   widthBucket: string,
 ): Promise<OsrmRoute> => {
+  const exclude = EXCLUDE_BY_BUCKET[widthBucket] ?? null;
   const url =
     `${OSRM_URL}/route/v1/motorbike/${coordinates}` +
-    `?overview=full&geometries=geojson&width_bucket=${widthBucket}`;
+    "?overview=full&geometries=geojson" +
+    (exclude === null ? "" : `&exclude=${exclude}`);
   const response = await fetchOsrm(url);
   if (!response.ok) {
     throw new ServiceError(`Routing service returned ${response.status}`);
@@ -88,6 +113,7 @@ const tryDetour = async ({
   originLng,
   destLat,
   destLng,
+  stops,
   widthBucket,
   geometry,
   zones,
@@ -96,6 +122,7 @@ const tryDetour = async ({
   originLng: number;
   destLat: number;
   destLng: number;
+  stops: LatLng[];
   widthBucket: string;
   geometry: unknown;
   zones: closureService.BlockingZone[];
@@ -116,9 +143,20 @@ const tryDetour = async ({
       {lat: destLat, lng: destLng},
     );
     if (!via) break;
-    const coordinates =
-      `${originLng},${originLat};${via.lng},${via.lat};` +
-      `${destLng},${destLat}`;
+    const ordered = orderedControls(
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      stops,
+      geometry,
+      zone,
+      via,
+    );
+    if (!ordered) return null;
+    const coordinates = ordered
+      .map((p) => `${p.lng},${p.lat}`)
+      .join(";");
     const solved = await solveOsrm(coordinates, widthBucket);
     const remaining = await closureService.findBlocking(
       solved.geometry ?? null,
@@ -135,6 +173,35 @@ const tryDetour = async ({
   return null;
 };
 
+const orderedControls = (
+  originLat: number,
+  originLng: number,
+  destLat: number,
+  destLng: number,
+  stops: LatLng[],
+  geometry: unknown,
+  zone: closureService.BlockingZone,
+  via: LatLng,
+): LatLng[] | null => {
+  const controls: LatLng[] = [
+    {lat: originLat, lng: originLng},
+    ...stops,
+    {lat: destLat, lng: destLng},
+  ];
+  if (stops.length === 0) {
+    return [controls[0], via, controls[1]];
+  }
+  const segIndex = nearestSegmentIndex(geometry, zone);
+  const ordinal =
+    segIndex === null ? null : legOrdinalForZone(geometry, stops, segIndex);
+  if (ordinal === null) return null;
+  return [
+    ...controls.slice(0, ordinal + 1),
+    via,
+    ...controls.slice(ordinal + 1),
+  ];
+};
+
 const widthToBucket = (width?: number): string => {
   if (width === undefined) return "MEDIUM";
   if (width < 0.8) return "NARROW";
@@ -142,16 +209,28 @@ const widthToBucket = (width?: number): string => {
   return "WIDE";
 };
 
+const pointKey = (lat: number, lng: number): string =>
+  `${lat.toFixed(5)},${lng.toFixed(5)}`;
+
 const buildKey = (
   originLat: number,
   originLng: number,
   destLat: number,
   destLng: number,
+  stops: LatLng[],
   widthBucket: string,
 ): string => {
-  const origin = `${originLat.toFixed(5)},${originLng.toFixed(5)}`;
-  const dest = `${destLat.toFixed(5)},${destLng.toFixed(5)}`;
-  return `${origin}:${dest}:${widthBucket}`;
+  if (stops.length === 0) {
+    const origin = pointKey(originLat, originLng);
+    const dest = pointKey(destLat, destLng);
+    return `${origin}:${dest}:${widthBucket}`;
+  }
+  const legs = [
+    pointKey(originLat, originLng),
+    ...stops.map((s) => pointKey(s.lat, s.lng)),
+    pointKey(destLat, destLng),
+  ];
+  return `${legs.join(";")}:${widthBucket}`;
 };
 
 const parseGeometry = (stored: unknown): unknown => {
@@ -168,11 +247,72 @@ const recordActiveRoute = async (
   userId: string,
   geometry: unknown,
 ): Promise<void> => {
-  try {
-    await activeRouteRepository.touch(routeKey, userId, geometry);
-  } catch {
-    // Active-route tracking must never fail a route request.
+  await activeRouteRepository
+    .touch(routeKey, userId, geometry)
+    .catch(() => undefined);
+};
+
+interface WidthBlock {
+  segmentId: string;
+  baseWidth: number;
+  distanceMeters: number;
+}
+
+const findWidthBlocks = async (
+  geometry: unknown,
+  width: number,
+): Promise<WidthBlock[]> => {
+  const coords = extractLineCoords(geometry);
+  if (coords.length === 0) return [];
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const [lng, lat] of coords) {
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng);
+    maxLng = Math.max(maxLng, lng);
   }
+  const segments = await alleySegmentRepository.findByGeohashPrefixes(
+    cellsForBounds({minLat, maxLat, minLng, maxLng}, 4),
+  );
+  const blocks: WidthBlock[] = [];
+  for (const segment of segments) {
+    const lat = (segment as {lat?: unknown}).lat;
+    const lng = (segment as {lng?: unknown}).lng;
+    const baseWidth = segment.baseWidth;
+    if (
+      typeof lat !== "number" ||
+      typeof lng !== "number" ||
+      typeof baseWidth !== "number"
+    ) {
+      continue;
+    }
+    if (computePassability(segment, width).compatible) continue;
+    let nearest = Infinity;
+    for (let i = 0; i + 1 < coords.length; i++) {
+      nearest = Math.min(
+        nearest,
+        pointToSegmentMeters(
+          lat,
+          lng,
+          coords[i][1],
+          coords[i][0],
+          coords[i + 1][1],
+          coords[i + 1][0],
+        ),
+      );
+    }
+    if (Number.isFinite(nearest) && nearest <= WIDTH_GATE_RADIUS_METERS) {
+      blocks.push({
+        segmentId: segment.id,
+        baseWidth,
+        distanceMeters: Math.round(nearest * 10) / 10,
+      });
+    }
+  }
+  return blocks;
 };
 
 const getRoute = async ({
@@ -181,6 +321,7 @@ const getRoute = async ({
   originLng,
   destLat,
   destLng,
+  stops,
   width,
 }: {
   userId: string;
@@ -188,13 +329,22 @@ const getRoute = async ({
   originLng: number;
   destLat: number;
   destLng: number;
+  stops?: LatLng[];
   width?: number;
 }): Promise<RouteResult> => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
 
+  const stopList = stops ?? [];
   const widthBucket = widthToBucket(width);
-  const key = buildKey(originLat, originLng, destLat, destLng, widthBucket);
+  const key = buildKey(
+    originLat,
+    originLng,
+    destLat,
+    destLng,
+    stopList,
+    widthBucket,
+  );
 
   const existing = await routingCacheRepository.findExisting(key);
   let geometry: unknown;
@@ -209,8 +359,12 @@ const getRoute = async ({
     cached = true;
     source = "cache";
   } else {
-    const coordinates = `${originLng},${originLat};${destLng},${destLat}`;
-    const route = await solveOsrm(coordinates, widthBucket);
+    const controls = [
+      `${originLng},${originLat}`,
+      ...stopList.map((s) => `${s.lng},${s.lat}`),
+      `${destLng},${destLat}`,
+    ];
+    const route = await solveOsrm(controls.join(";"), widthBucket);
     geometry = route.geometry ?? null;
     distanceMeters = route.distance;
     durationSeconds = route.duration;
@@ -219,6 +373,7 @@ const getRoute = async ({
       originLng,
       destLat,
       destLng,
+      stops: stopList,
       widthBucket,
       geometry: route.geometry ?? null,
       distanceMeters: route.distance,
@@ -230,6 +385,10 @@ const getRoute = async ({
 
   const zones = await closureService.findBlocking(geometry);
   if (zones.length === 0) {
+    if (width !== undefined) {
+      const blocks = await findWidthBlocks(geometry, width);
+      if (blocks.length > 0) throw new WidthBlockedError(blocks);
+    }
     await recordActiveRoute(key, userId, geometry);
     return {
       cached,
@@ -244,6 +403,7 @@ const getRoute = async ({
     originLng,
     destLat,
     destLng,
+    stops: stopList,
     widthBucket,
     geometry,
     zones,
@@ -269,4 +429,5 @@ export {
   NotFoundError,
   ServiceError,
   RouteBlockedError,
+  WidthBlockedError,
 };

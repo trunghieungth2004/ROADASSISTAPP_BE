@@ -20,6 +20,8 @@ const locationBody = (): Joi.ObjectSchema =>
     lng: langAttr(),
   });
 
+const MAX_STOPS = 10;
+
 const emptyBody = (): Joi.ObjectSchema => Joi.object({}).unknown(true);
 
 const rideConfigFields = {
@@ -123,6 +125,7 @@ const schemas = {
     originLng: langAttr(),
     destLat: latAttr(),
     destLng: langAttr(),
+    stops: Joi.array().items(locationBody()).max(MAX_STOPS).optional(),
     width: numOpt(),
   }),
   registerPush: Joi.object({
@@ -176,4 +179,4 @@ const schemas = {
 
 type Schemas = typeof schemas;
 
-export {schemas, locationBody, Schemas};
+export {schemas, locationBody, Schemas, MAX_STOPS};

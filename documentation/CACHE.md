@@ -53,7 +53,7 @@ Notable behaviors:
 
 - Key: origin/dest rounded to 5 decimals plus width bucket, e.g. `10.76262,106.66017:10.77584,106.70194:MEDIUM`.
 - Hit returns the full payload `{cached: true, distanceMeters, durationSeconds, geometry, source: "cache"}` without touching OSRM.
-- Miss calls OSRM, persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, distanceMeters, durationSeconds, cachedAt, expiresAt}`, and returns `{cached: false, ..., source: "osrm"}`.
+- Miss calls OSRM, persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, distanceMeters, durationSeconds, cachedAt, expiresAt}`, and returns `{cached: false, ..., source: "osrm"}`. The fetch also carries an inverted `exclude=` for the bucket (`narrowonly` / `narrowonly,mediumonly` / none), so each cached bucket is a genuinely different route.
 - Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
 - TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
 
@@ -65,7 +65,7 @@ Because the check runs live on every request, **no cache invalidation is needed*
 
 ### Engine economics: cost-per-request posture
 
-The routing engine (self-hosted OSRM) runs **scale-to-zero** — no `min-instances`, billed per request (~$0–4/mo at trial scale). The cache is what makes this viable: the engine is only touched on `routing_cache` misses, and OD pairs saturate quickly at low user counts, so cold boots are rare. Two knobs support the posture: `ROUTING_CACHE_TTL_SECONDS` (default 30 d; prod recommendation 90 d to stretch warmth) and the single retry on OSRM fetch (15 s timeout), which absorbs the cold-boot race so a waking engine reads as one slow request instead of a 500. Detour re-solves also hit the engine but stay uncached by design — negligible at this volume. Revisit always-on (or a native-avoidance engine) only when traffic justifies it; see the engine-economics decision record in [ARCHITECTURE.md](./ARCHITECTURE.md).
+The routing engine (self-hosted OSRM) runs **scale-to-zero** — no `min-instances`, billed per request (~$0.5–1.5/mo at trial scale, Artifact Registry storage included). The cache is what makes this viable: the engine is only touched on `routing_cache` misses, and OD pairs saturate quickly at low user counts, so cold boots are rare. Two knobs support the posture: `ROUTING_CACHE_TTL_SECONDS` (default 30 d; prod recommendation 90 d to stretch warmth) and the single retry on OSRM fetch (15 s timeout), which absorbs the cold-boot race so a waking engine reads as one slow request instead of a 500. Detour re-solves also hit the engine but stay uncached by design — negligible at this volume. Revisit always-on (or a native-avoidance engine) only when traffic justifies it; see the engine-economics decision record in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ### Decision record: why Firestore, not Redis (option A)
 

@@ -96,14 +96,9 @@ See [Architecture → Firestore Indexes](./documentation/ARCHITECTURE.md#firesto
 
 ## Routing Engine Ops
 
-`POST /routes` solves via a self-hosted OSRM instance (`OSRM_URL`, default `http://localhost:5000`) and is designed for a **scale-to-zero** engine — cost-per-request (~$0–4/mo at trial scale) instead of an always-on instance (~$15–20/mo). Keep it that way:
+`POST /routes` solves via a self-hosted OSRM instance and is designed for a **scale-to-zero** engine — cost-per-request (~$0.5–1.5/mo at trial scale, storage included) instead of an always-on instance (~$190/mo at 8Gi/2vCPU). The engine is **provisioned by deploy, not by hand**: `infra/osrm/` holds the `motorbike.lua` profile (scooter speeds + request-time width classes) and the `Dockerfile` (Vietnam graph baked in); `bash infra/osrm/setup.sh` — wired as the last functions `predeploy` hook — builds the image via Cloud Build only when the profile changes, deploys Cloud Run `osrm` (`--min-instances=0 --max-instances=2`), writes `OSRM_URL` into `functions/.env`, and smoke-tests the live engine. Standalone: `npm run osrm:setup` from `functions/`.
 
-```bash
-gcloud run services update <osrm-service> --region=asia-southeast1 \
-  --min-instances=0 --max-instances=2
-```
-
-Relevant functions env vars: `OSRM_URL`, `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
+Relevant functions env vars: `OSRM_URL` (deploy-managed), `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Infrastructure](./documentation/INFRASTRUCTURE.md), [Deploy](./documentation/DEPLOY.md), [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
 
 Hazard push (FCM + Cloud Tasks) is env-gated and idle unless enabled. One-time setup creates the queue and grants the two IAM bindings (queue-enqueue + function-invoke, single service account by default):
 
@@ -118,6 +113,8 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if
 ## Full Documentation
 
 - [Architecture](./documentation/ARCHITECTURE.md) — Layered design, collections, key decisions
+- [Infrastructure](./documentation/INFRASTRUCTURE.md) — GCP services, env wiring
+- [Deploy](./documentation/DEPLOY.md) — Deploy checklist and engine provisioning
 - [API Reference](./documentation/API.md) — All endpoints with request/response schemas
 - [Request Schemas](./documentation/SCHEMA.md) — Per-endpoint validation rules
 - [Status Codes](./documentation/STATUS.md) — Numeric status codes, the statuses collection, POST /statuses

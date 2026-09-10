@@ -180,6 +180,37 @@ describe("schemas reject invalid input", () => {
     expect(error).toBeDefined();
   });
 
+  it("getRoute accepts up to 10 stops and rejects bad ones", () => {
+    const base = {
+      originLat: 10.7,
+      originLng: 106.6,
+      destLat: 10.8,
+      destLng: 106.7,
+    };
+    const stop = {lat: 10.75, lng: 106.65};
+    expect(
+      table.getRoute.validate({...base, stops: [stop]}).error,
+    ).toBeUndefined();
+    expect(
+      table.getRoute.validate({
+        ...base,
+        stops: Array.from({length: 10}, () => stop),
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.getRoute.validate({
+        ...base,
+        stops: Array.from({length: 11}, () => stop),
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.getRoute.validate({...base, stops: [{lat: 91, lng: 0}]}).error,
+    ).toBeDefined();
+    expect(
+      table.getRoute.validate({...base, stops: "nope"}).error,
+    ).toBeDefined();
+  });
+
   it("shop schemas reject bad type", () => {
     const base = {lat: 10.7, lng: 106.6};
     expect(

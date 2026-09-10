@@ -223,6 +223,7 @@ No body schema (any body allowed; still admin-gated).
 | `originLng` | lng | req |
 | `destLat` | lat | req |
 | `destLng` | lng | req |
+| `stops` | array of {lat, lng} (max 10) | opt |
 | `width` | number (meters) | opt (default bucket MEDIUM) |
 
 ---

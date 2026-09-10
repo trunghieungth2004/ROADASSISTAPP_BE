@@ -54,7 +54,7 @@ Returns `{delivered, skipped}`. Cloud Tasks retries automatically on 5xx — the
 | Collection | Shape |
 |---|---|
 | `fcm_tokens` | doc ID = `userId`; `tokens` (most-recent-first, capped at 5), `updatedAt` |
-| `active_routes` | doc ID = deterministic route key; `userId`, `geometry` (JSON string), `geoCells` (precision-5 cells over the route bbox), `expiresAt` (30 min); rewritten on every `POST /routes` 200 (`recordActiveRoute` is try/catch — it can never fail the request; no write on 409) |
+| `active_routes` | doc ID = deterministic route key (incl. stops); `userId`, `geometry` (JSON string), `geoCells` (precision-5 cells over the route bbox), `expiresAt` (30 min); rewritten on every `POST /routes` 200 (`recordActiveRoute` is try/catch — it can never fail the request; no write on 409) |
 
 ## Configuration
 
