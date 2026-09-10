@@ -105,14 +105,15 @@ gcloud run services update <osrm-service> --region=asia-southeast1 \
 
 Relevant functions env vars: `OSRM_URL`, `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
 
-Hazard push (FCM + Cloud Tasks) is env-gated and idle unless enabled. To turn it on:
+Hazard push (FCM + Cloud Tasks) is env-gated and idle unless enabled. One-time setup creates the queue and grants the two IAM bindings (queue-enqueue + function-invoke, single service account by default):
 
 ```bash
 cd functions
-GCLOUD_PROJECT=roadassistapp-c2e37 npm run queue:init   # create hazard-push queue
+GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup
+GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if anything is missing
 ```
 
-then set `FCM_ENABLED=true`, `CLOUD_TASKS_ENABLED=true`, `PUSH_DELIVER_URL` (the deployed `/push/deliver` URL), `TASK_INVOKER_EMAIL` (service account with `roles/cloudtasks.enqueuer` + permission to invoke the function), and optionally `TASK_QUEUE_LOCATION` (default `asia-southeast1`). See [API → Push](./documentation/API.md#push).
+`TASK_INVOKER_EMAIL` defaults to the `api` function's runtime service account — set it explicitly only if you ever want a separate invoker identity. Then set `FCM_ENABLED=true`, `CLOUD_TASKS_ENABLED=true`, `PUSH_DELIVER_URL` (the deployed `/push/deliver` URL), and optionally `TASK_QUEUE_LOCATION` / `FUNCTION_REGION` (both default `asia-southeast1`). Whoever runs setup needs IAM-grant rights on the project. See [API → Push](./documentation/API.md#push).
 
 ## Full Documentation
 

@@ -17,6 +17,8 @@
     "db:init": "npm run build && node lib/scripts/db.init.js",
     "db:init:emulator": "FUNCTIONS_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=demo npm run db:init",
     "queue:init": "npm run build && node lib/scripts/createTaskQueue.js",
+    "push:setup": "npm run build && node lib/scripts/setupPush.js",
+    "push:check": "npm run build && node lib/scripts/setupPush.js --check",
     "logs": "firebase functions:log"
   },
   "engines": {
