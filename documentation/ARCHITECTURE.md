@@ -3,10 +3,63 @@
 ## Layered Architecture
 
 ```
-Request → Routes → Controllers → Services → Repositories → Firestore
+┌────────────────────────────────────────────────────┐
+│            Client (mobile app)                     │
+│        HTTPS + Bearer JWT (Firebase ID token)      │
+└────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────┐
+│          Middleware Layer (Auth & Security)        │
+│  - authMiddleware: JWT verification                │
+│  - roleMiddleware: role-based access (admin/rider) │
+│  - validate: Joi schema + sanitizeObject           │
+│  - rate limit (100 req/min) + CORS allowlist       │
+└────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────┐
+│       Presentation Layer (Routes / Controllers)    │
+│  - HTTP request/response handling                  │
+│  - route mounting + auth/role guards               │
+│  - response formatting (sendSuccess / sendError)   │
+└────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────┐
+│         Business Logic Layer (Services)            │
+│  - flag consensus (Rule-of-3) + per-type TTLs      │
+│  - passability scoring (computePassability)        │
+│  - routing orchestration (cache + OSRM + detour)   │
+│  - hazard push enqueue (flag → Cloud Tasks)        │
+│  - in-instance LRU cache (cacheManager)            │
+└────────────┬────────────────────────────────┬──────┘
+             │                                │
+             │ (sync OSRM resolve + detour)   │ (async, on blocking transition)
+             ▼                                ▼
+┌────────────┬──────────────┐   ┌─────────────┬──────────────────────────┐
+│   Routing Engine (OSRM)   │   │  Hazard Push Pipeline                  │
+│   self-hosted Cloud Run   │   │  Cloud Tasks hazard-push → FCM         │
+│   scale-to-zero, retry-   │   │  live re-match vs active_routes        │
+│   once, 15 s timeout      │   │  (detail: see PIPELINE.md)             │
+└───────────────────────────┘   └───────────────────┬────────────────────┘
+                                                    ↓
+                               ┌────────────────────────────────────────┐
+                               │  Rider device (FCM notification)       │
+                               └────────────────────────────────────────┘
+             ↓
+┌────────────────────────────────────────────────────┐
+│         Data Access Layer (Repositories)           │
+│  - Firestore CRUD                                  │
+│  - geoCell `in` queries (chunked ≤ 30 prefixes)    │
+│  - local LRU wrap/del (cacheManager)               │
+└────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────┐
+│          Database (Firebase Firestore)             │
+│  users, roles, flags, alley_segments, routing_cache│
+│  fcm_tokens, active_routes, landmarks, shops, ...  │
+└────────────────────────────────────────────────────┘
 ```
 
-Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-southeast1`, `memory: '512MiB'`, `timeoutSeconds: 120`, `maxInstances: 20`). Project: `roadassistapp-c2e37`.
+Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-southeast1`, `memory: '512MiB'`, `timeoutSeconds: 120`, `maxInstances: 20`). Project: `roadassistapp-c2e37`. The routing engine is a separate Cloud Run service (self-hosted OSRM, scale-to-zero, `--max-instances=2`); the hazard push pipeline (Cloud Tasks + FCM) is documented in [PIPELINE.md](./PIPELINE.md).
 
 ### Routes (`functions/routes/`)
 - Define HTTP method + path + middleware (auth, role checks, Joi validation).
@@ -81,7 +134,7 @@ The index file (`firestore.indexes.json`, deployed via `firebase deploy --only f
 - **Passability model** (`computePassability`): unknown width → neutral 50; vehicle wider than segment → incompatible 10; otherwise margin-based scores 90 (`WIDE`) / 70 (`TIGHT`) / 50 (`VERY_TIGHT`).
 - **Routing**: width maps to buckets (`<0.8` NARROW, `≤1.0` MEDIUM, else WIDE, default MEDIUM); the cache key is origin/dest rounded to 5 decimals plus bucket. Misses call self-hosted OSRM on Cloud Run (`OSRM_URL`, default `http://localhost:5000`, `motorbike` profile with `width_bucket`) and persist the GeoJSON geometry (as a JSON string — Firestore rejects nested arrays; parsed back on cache hits) plus ETA and a 30-day `expiresAt` enforced in code. Every request — hit or miss — is re-validated against active blocking flags of every hazard type (`FLOOD`, `OBSTRUCTION`, `ACCIDENT`) via `closureService.findBlocking` (Turf `lineIntersect` + vertex-containment hit test in `utils/geo`; distance/sorting keep the existing planar math). On a hit the service stitches a bypass in `routingService.tryDetour`: `utils/detour.buildBypassPoint` offsets a waypoint outside the nearest zone perpendicular to the route (margins 20 → 60 → 120 m, ≤3 OSRM re-solves), re-validates, and returns `200 {source: "detour", via, hazards}` — detours are never cached; exhausted attempts (or an endpoint inside a zone) return `409` with the zones, so no cache invalidation is ever needed (details in [CACHE.md](./CACHE.md#hazard-feedback-loop)). OSRM fetches time out after 15 s with one retry, so a scale-to-zero engine's cold boot reads as one slow request instead of a 500.
 - **Hazard feedback loop (decision record)**: evaluated 2026-09. The engine stays OSRM — it cannot exclude dynamic edges, so blocking is enforced at our API layer (409 + zones) rather than inside the router; Valhalla `exclude_polygons` was weighed and deferred (would abandon the custom motorbike profile/`width_bucket` work and needs a new Cloud Run service). Hazards reuse the flag pipeline (all three types + `"2"`/`"3"`, per-type TTL decay, admin lock) instead of a new domain; impact radii default per type (`FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m, overridable per flag via `radiusMeters`); unflag is creator-retract hard-delete (`"3"` protected) so both flag expiry and unflag unblock routes on the next request.
-- **Hazard push (decision record)**: evaluated 2026-09. Direct-to-token FCM (no topics): clients register tokens (`fcm_tokens`, cap 5/user), every `POST /routes` 200 records the live geometry (`active_routes`, 30-min TTL), and flag transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job (`hazard-push` queue, deterministic name `hazard-<flagId>-<status>` so retries dedupe, OIDC to `POST /push/deliver`). Delivery re-resolves recipients live — active routes near the flag whose geometry still crosses it — then `sendEach`s notification + data payloads in ≤500-token chunks and prunes dead tokens (`UNREGISTERED`/`INVALID`). The deliver endpoint is guarded by `X-CloudTasks-QueueName` and mounted before the rate limiter; everything is env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`, default off) since there are no Tasks/FCM emulators — integration tests cover the routes with the gates off, unit tests mock `@google-cloud/tasks` (pinned v4: last CJS-compatible release) and `messaging.sendEach`. Queue ops: `npm run push:setup` with `GCLOUD_PROJECT` set (creates `hazard-push`, grants `roles/cloudtasks.enqueuer` to the runtime SA and `roles/cloudfunctions.invoker` to the invoker SA — same SA by default), `npm run push:check` to verify, then set `PUSH_DELIVER_URL` (+ `TASK_INVOKER_EMAIL` only for a separate invoker identity). Only bindings are ever added — the public `allUsers` invoker stays untouched.
+- **Hazard push (decision record)**: evaluated 2026-09. Direct-to-token FCM (no topics): clients register tokens (`fcm_tokens`, cap 5/user), every `POST /routes` 200 records the live geometry (`active_routes`, 30-min TTL), and flag transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job (`hazard-push` queue, deterministic name `hazard-<flagId>-<status>` so retries dedupe, OIDC to `POST /push/deliver`). Delivery re-resolves recipients live and prunes dead tokens; everything is env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`, default off) since there are no Tasks/FCM emulators. Full flow, ops, and tests in [PIPELINE.md](./PIPELINE.md).
 - **Routing engine economics (decision record)**: evaluated 2026-09. The engine runs scale-to-zero (no `min-instances`) — cost-per-request ≈ $0–4/mo at trial scale instead of ~$15–20/mo always-on. Cold starts are absorbed by two layers: the durable 30-day `routing_cache` means the engine is only touched on cache misses (OD pairs saturate fast at low user counts), and the single OSRM retry covers the residual cold-boot race. Prod recommendation: `ROUTING_CACHE_TTL_SECONDS=7776000` (90 d) to stretch cache warmth. Valhalla (`exclude_polygons`) and GraphHopper (`block_area`) were both evaluated as native-avoidance replacements for the stitch workaround and **tabled until traffic justifies always-on**; if that day comes, GraphHopper is the recorded pick (native request-time area blocking + flexible custom model, same ~$17–20/mo self-hosted bracket), and its free-tier Directions API (500 routes/day, non-commercial) is the $0 validation path.
 - **Landmark matching**: candidates come from the cached near-search; best cosine similarity wins with a 0.7 acceptance threshold, otherwise `{landmark: null, confidence}`.
 - **XeAssist stubs**: shop, diagnostic, and dispatch modules are minimal CRUD + one state machine (dispatch statuses `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved, plus `"5"` Cancelled); HẻmNav (user, vehicleProfile, alleySegment, flag, landmark, routingCache) is the real surface.
@@ -102,7 +155,7 @@ functions/
 │   └── validate.ts             # Joi body validation
 ├── validation/
 │   └── schemas.ts              # All request schemas
-├── routes/                     # Route definitions (10 files)
+├── routes/                     # Route definitions (12 files)
 │   ├── userRoutes.ts
 │   ├── roleRoutes.ts
 │   ├── vehicleProfileRoutes.ts
@@ -112,20 +165,24 @@ functions/
 │   ├── routingRoutes.ts
 │   ├── shopRoutes.ts
 │   ├── diagnosticRoutes.ts
-│   └── dispatchRoutes.ts
-├── controller/                 # HTTP handlers (11 files, same names)
-├── service/                    # Business logic (11 files + routingService)
-├── repository/                 # Data access (11 files + routingCacheRepository)
+│   ├── dispatchRoutes.ts
+│   ├── statusRoutes.ts
+│   └── pushRoutes.ts
+├── controller/                 # HTTP handlers (12 files, same names)
+├── service/                    # Business logic (14 files, incl. routing/closure/push/taskQueue)
+├── repository/                 # Data access (13 files, incl. routingCache/fcmToken/activeRoute)
 ├── constants/
 │   ├── roles.ts                # ROLE_ADMIN/ROLE_RIDER + ROLES seed definitions
 │   └── status.ts               # STATUS_USER/FLAGS/DISPATCH + seed definitions
 ├── scripts/
-│   └── db.init.ts              # Seeds roles + statuses (npm run db:init)
+│   ├── db.init.ts              # Seeds roles + statuses (npm run db:init)
+│   ├── createTaskQueue.ts      # Creates hazard-push queue (npm run queue:init)
+│   └── setupPush.ts            # Queue + IAM ensure/verify (npm run push:setup / push:check)
 ├── test/                       # Jest harness (see TESTING.md)
 │   ├── setup/                  # unit.ts (firebase mock), integration.ts (emulator env)
 │   ├── utils/                  # stubs.ts, app.ts (route builders), seed.ts
-│   ├── unit/                   # 15 suites: validation, utils, services
-│   ├── integration/            # 11 suites: one per domain + validation
+│   ├── unit/                   # 21 suites: validation, utils, services
+│   ├── integration/            # 14 suites: one per domain + validation + push
 │   └── reporters/
 │       └── markdownReporter.js # writes test-report/latest-result.md
 └── utils/

@@ -113,7 +113,7 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup
 GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if anything is missing
 ```
 
-`TASK_INVOKER_EMAIL` defaults to the `api` function's runtime service account — set it explicitly only if you ever want a separate invoker identity. Then set `FCM_ENABLED=true`, `CLOUD_TASKS_ENABLED=true`, `PUSH_DELIVER_URL` (the deployed `/push/deliver` URL), and optionally `TASK_QUEUE_LOCATION` / `FUNCTION_REGION` (both default `asia-southeast1`). Whoever runs setup needs IAM-grant rights on the project. See [API → Push](./documentation/API.md#push).
+`TASK_INVOKER_EMAIL` defaults to the `api` function's runtime service account — set it explicitly only if you ever want a separate invoker identity. Then set `FCM_ENABLED=true`, `CLOUD_TASKS_ENABLED=true`, `PUSH_DELIVER_URL` (the deployed `/push/deliver` URL), and optionally `TASK_QUEUE_LOCATION` / `FUNCTION_REGION` (both default `asia-southeast1`). Whoever runs setup needs IAM-grant rights on the project. Full pipeline mechanics, config reference, and tests: [Pipeline](./documentation/PIPELINE.md). Endpoint shapes: [API → Push](./documentation/API.md#push).
 
 ## Full Documentation
 
@@ -122,4 +122,5 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if
 - [Request Schemas](./documentation/SCHEMA.md) — Per-endpoint validation rules
 - [Status Codes](./documentation/STATUS.md) — Numeric status codes, the statuses collection, POST /statuses
 - [Caching](./documentation/CACHE.md) — In-process LRU namespaces + Firestore route cache
+- [Pipeline](./documentation/PIPELINE.md) — Hazard push pipeline (Cloud Tasks + FCM)
 - [Testing](./documentation/TESTING.md) — Jest unit/integration harness
