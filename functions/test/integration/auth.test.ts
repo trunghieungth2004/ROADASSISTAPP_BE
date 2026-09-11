@@ -1,6 +1,6 @@
 import express, {Request, Response} from "express";
 import request from "supertest";
-import {auth} from "../../config/firebase";
+import {auth, db} from "../../config/firebase";
 import {
   requireAuth,
   requireRole,
@@ -124,5 +124,21 @@ describe("token authentication", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .send({});
     expect(res.status).toBe(200);
+  });
+
+  it("auto-provisions user documents for new verified accounts", async () => {
+    const fresh = await auth.createUser({
+      email: `${PREFIX}-fresh@example.com`,
+      password: PASSWORD,
+    });
+    const token = await mintToken(`${PREFIX}-fresh@example.com`);
+    const res = await request(app)
+      .post("/whoami")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({uid: fresh.uid, role: "2"});
+    const probe = await db.collection("users").doc(fresh.uid).get();
+    expect(probe.exists).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ import {
   BASE_LAT,
   BASE_LNG,
 } from "../utils/seed";
+import {valhallaRoute} from "../utils/valhalla";
 
 const app = buildIntegrationApp();
 const bearer = (uid: string) => `Bearer ${uid}`;
@@ -89,17 +90,15 @@ describe("push endpoints", () => {
   it("POST /routes records the active route for push matching", async () => {
     jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
-      json: async () => ({
-        code: "Ok",
-        routes: [{
-          distance: 2450,
-          duration: 512,
-          geometry: {
+      json: async () =>
+        valhallaRoute(
+          {
             type: "LineString",
             coordinates: [[106.66, 10.76]],
           },
-        }],
-      }),
+          2450,
+          512,
+        ),
     } as unknown as Response);
     const res = await request(app)
       .post("/routes")

@@ -1,7 +1,7 @@
 import * as flagRepository from "../repository/flagRepository";
 import * as userRepository from "../repository/userRepository";
 import {STATUS_FLAGS} from "../constants/status";
-import {boundsForRadiusMeters, cellsForBounds} from "../utils/geo";
+import {boundsForRadiusMeters, cellsCoveringBounds} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 import {enqueueHazardPush} from "./taskQueueService";
 
@@ -33,6 +33,8 @@ interface FlagRecord {
   status: string;
   voteCount?: number;
   reporterTrust?: number;
+  voters?: string[];
+  alreadyVoted?: boolean;
   [key: string]: unknown;
 }
 
@@ -79,14 +81,27 @@ const createFlag = async ({
   return flag;
 };
 
-const confirmFlag = async (flagId: string): Promise<FlagRecord | null> => {
+const confirmFlag = async (
+  flagId: string,
+  userId: string,
+): Promise<FlagRecord | null> => {
   const flag = await flagRepository.findById(flagId);
   if (!flag) return null;
-  if (flag.status === STATUS_FLAGS.LOCKED) return flag;
+  if ((flag.reporterUid as string) === userId) {
+    throw new ForbiddenError("You cannot confirm your own report");
+  }
+  if (flag.status === STATUS_FLAGS.LOCKED) {
+    return {...flag, alreadyVoted: false};
+  }
   const voteWeight = 1 + ((flag.reporterTrust as number) >= 50 ? 0.5 : 0);
-  const newCount = (flag.voteCount as number) + voteWeight;
-  await flagRepository.incrementVote(flagId);
-  if (newCount >= CONSENSUS_THRESHOLD) {
+  const cast = await flagRepository.castVote(flagId, userId, voteWeight);
+  if (!cast) return null;
+  if (cast.duplicate) return {...cast.flag, alreadyVoted: true};
+  const newCount = cast.flag.voteCount as number;
+  if (
+    newCount >= CONSENSUS_THRESHOLD &&
+    cast.flag.status !== STATUS_FLAGS.CONFIRMED
+  ) {
     await flagRepository.updateStatus(flagId, STATUS_FLAGS.CONFIRMED);
     cacheManager.del(NS, flagId);
     await enqueueHazardPush(
@@ -95,13 +110,20 @@ const confirmFlag = async (flagId: string): Promise<FlagRecord | null> => {
       STATUS_FLAGS.CONFIRMED,
     );
     return {
-      ...flag,
+      ...cast.flag,
       voteCount: newCount,
       status: STATUS_FLAGS.CONFIRMED,
+      alreadyVoted: false,
     };
   }
   cacheManager.del(NS, flagId);
-  return {...flag, voteCount: newCount};
+  return {...cast.flag, voteCount: newCount, alreadyVoted: false};
+};
+
+const stripVoters = (flag: FlagRecord): FlagRecord => {
+  const rest = {...flag};
+  delete rest.voters;
+  return rest;
 };
 
 const getNear = cacheManager.wrap(
@@ -115,13 +137,15 @@ const getNear = cacheManager.wrap(
     radiusMeters?: number;
   }) => {
     const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
-    const unique = cellsForBounds(bounds);
+    const unique = cellsCoveringBounds(bounds);
     const active = await flagRepository.findByGeohashPrefixes(unique);
-    return active.filter(
-      (f) =>
-        f.status !== STATUS_FLAGS.EXPIRED &&
-        f.status !== STATUS_FLAGS.REJECTED,
-    );
+    return active
+      .filter(
+        (f) =>
+          f.status !== STATUS_FLAGS.EXPIRED &&
+          f.status !== STATUS_FLAGS.REJECTED,
+      )
+      .map(stripVoters);
   },
   {
     namespace: NS,
@@ -140,6 +164,17 @@ const getNear = cacheManager.wrap(
   lng: number;
   radiusMeters?: number;
 }) => Promise<FlagRecord[]>;
+
+const getMine = async (userId: string): Promise<FlagRecord[]> => {
+  const flags = await flagRepository.findByReporterUid(userId);
+  return flags
+    .filter(
+      (f) =>
+        f.status !== STATUS_FLAGS.EXPIRED &&
+        f.status !== STATUS_FLAGS.REJECTED,
+    )
+    .map(stripVoters);
+};
 
 const moderateFlag = async ({
   flagId,
@@ -200,6 +235,7 @@ export {
   createFlag,
   confirmFlag,
   getNear,
+  getMine,
   moderateFlag,
   unflagFlag,
   expireFlags,

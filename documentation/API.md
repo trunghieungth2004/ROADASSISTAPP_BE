@@ -17,7 +17,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > ```
 > - `status` is `"SUCCESS"` or `"ERROR"`. `statusCode` mirrors the HTTP status. `data` is present on read/query/created responses; `message` is present on action responses. `errors` (an array of strings) appears on `400` validation failures.
 > - Success status codes: `200` (OK), `201` (created).
-> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by hazards), `500` (unexpected, e.g. Auth create failure, OSRM outage).
+> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by hazards), `500` (unexpected, e.g. Auth create failure, Valhalla outage).
 
 > **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
@@ -596,7 +596,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted OSRM (`source: "osrm"`) and persisted (geometry stored JSON-stringified). The OSRM fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine).
+Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometry stored JSON-stringified). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ROUTING_ENGINE.md](./ROUTING_ENGINE.md).
 
 **Request:**
 ```json
@@ -627,12 +627,12 @@ Route between two points for the caller's vehicle width. Served from the `routin
     "distanceMeters": 2450.5,
     "durationSeconds": 512.3,
     "geometry": { "type": "LineString", "coordinates": [] },
-    "source": "osrm"
+    "source": "valhalla"
   }
 }
 ```
 
-Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service stitches a bypass: it offsets a waypoint outside the nearest zone (margins 20 → 60 → 120 m, up to 3 attempts), re-solves through OSRM, and re-validates the new geometry. With `stops`, the bypass is inserted at the blocked leg so every stop is preserved (origin → … → stop → via → … → destination); if a stop cannot be located on the route the request is refused instead. See `200 (detour)` below.
+Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service re-solves through Valhalla with every blocking circle passed as `exclude_polygons`, so the detour grows natively around the closure; stops are sent as Valhalla `locations` in order, so every stop is preserved. See `200 (detour)` below.
 
 **Response `200` (detour):**
 ```json
@@ -645,7 +645,6 @@ Every request (cache hit or fresh) is re-validated against active hazard flags �
     "durationSeconds": 560.0,
     "geometry": { "type": "LineString", "coordinates": [] },
     "source": "detour",
-    "via": { "lat": 10.7712, "lng": 106.6821 },
     "hazards": [
       { "flagId": "flag1", "type": "FLOOD", "lat": 10.77, "lng": 106.68, "radiusMeters": 200, "note": null, "distanceMeters": 0 }
     ]
@@ -653,7 +652,7 @@ Every request (cache hit or fresh) is re-validated against active hazard flags �
 }
 ```
 
-Detours are never written to `routing_cache`. If every bypass attempt still crosses a hazard (or an endpoint sits inside a zone, where no bypass exists), the route is refused:
+Detours are never written to `routing_cache`. If the re-solve still crosses a hazard after the widened retry (or an endpoint sits inside a zone, where no avoidance exists), the route is refused:
 
 **Response `409` (blocked):**
 ```json
@@ -667,7 +666,7 @@ Detours are never written to `routing_cache`. If every bypass attempt still cros
 }
 ```
 
-Separately, when `width` is provided the resolved route is checked against measured alley widths (`alley_segments`): any segment narrower than the vehicle within 20 m of the route refuses it — hazard blocks take precedence, and there is no bypass for width:
+Separately, when `width` is provided the resolved route is checked against measured alley widths (`alley_segments`): any segment narrower than the vehicle within 20 m of the route joins the avoidance polygons, so the detour routes around it too — hazard blocks take precedence, and the request is refused only when avoidance is impossible:
 
 **Response `409` (impassable width):**
 ```json
@@ -879,4 +878,4 @@ Validation failures include an `errors` array:
 | `403` | Inactive user / insufficient permissions (e.g. unflag by a non-reporter) |
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
 | `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`) or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
-| `500` | Internal server error (e.g. Auth create failure, OSRM outage) |
+| `500` | Internal server error (e.g. Auth create failure, Valhalla outage) |

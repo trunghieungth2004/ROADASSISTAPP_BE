@@ -102,6 +102,7 @@ const schemas = {
       .required(),
   }),
   getFlagsNear: locationBody().append({radiusMeters: numOpt()}),
+  getMyFlags: emptyBody(),
   confirmFlag: Joi.object({
     flagId: strReq(),
   }),
@@ -127,6 +128,32 @@ const schemas = {
     destLng: langAttr(),
     stops: Joi.array().items(locationBody()).max(MAX_STOPS).optional(),
     width: numOpt(),
+  }),
+  saveRoute: Joi.object({
+    name: Joi.string().max(120).allow("", null).optional(),
+    originLat: latAttr(),
+    originLng: langAttr(),
+    destLat: latAttr(),
+    destLng: langAttr(),
+    stops: Joi.array().items(locationBody()).max(MAX_STOPS).optional(),
+    width: numOpt(),
+    distanceMeters: numOpt(),
+    durationSeconds: numOpt(),
+    source: Joi.string().max(32).allow("", null).optional(),
+    geometry: Joi.object().unknown(true).required(),
+    via: locationBody().allow(null).optional(),
+    hazards: Joi.array().items(Joi.object().unknown(true)).optional(),
+  }),
+  listSavedRoutes: emptyBody(),
+  getSavedRoute: Joi.object({
+    routeId: strReq(),
+  }),
+  renameSavedRoute: Joi.object({
+    routeId: strReq(),
+    name: Joi.string().trim().min(1).max(120).required(),
+  }),
+  deleteSavedRoute: Joi.object({
+    routeId: strReq(),
   }),
   registerPush: Joi.object({
     token: Joi.string().min(1).max(4096).required(),

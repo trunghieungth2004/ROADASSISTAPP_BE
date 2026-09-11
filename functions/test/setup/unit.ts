@@ -62,5 +62,5 @@ jest.mock("../../config/firebase", () => {
 
 process.env.ALLOWED_ORIGINS = "";
 process.env.GCLOUD_PROJECT = "test-project";
-process.env.OSRM_URL = "http://localhost:5000";
+process.env.VALHALLA_URL = "http://localhost:8002";
 process.env.CACHE_ENABLED = "false";

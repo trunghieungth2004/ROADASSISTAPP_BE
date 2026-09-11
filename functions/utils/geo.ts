@@ -252,3 +252,70 @@ export const cellsForBounds = (
   }
   return Array.from(new Set(prefixes));
 };
+
+const geohashCellBounds = (
+  hash: string,
+): { minLat: number; maxLat: number; minLng: number; maxLng: number } => {
+  let latMin = -90;
+  let latMax = 90;
+  let lngMin = -180;
+  let lngMax = 180;
+  let even = true;
+  for (const char of hash) {
+    const i = BASE32.indexOf(char);
+    if (i === -1) throw new Error(`Invalid geohash character: ${char}`);
+    for (let bit = 4; bit >= 0; bit--) {
+      const b = (i >> bit) & 1;
+      if (even) {
+        const mid = (lngMin + lngMax) / 2;
+        if (b === 1) lngMin = mid;
+        else lngMax = mid;
+      } else {
+        const mid = (latMin + latMax) / 2;
+        if (b === 1) latMin = mid;
+        else latMax = mid;
+      }
+      even = !even;
+    }
+  }
+  return {minLat: latMin, maxLat: latMax, minLng: lngMin, maxLng: lngMax};
+};
+
+const CELLS_COVER_MAX = 520;
+
+export const cellsCoveringBounds = (
+  bounds: LatLngBounds,
+  precision = 5,
+  maxCells = CELLS_COVER_MAX,
+): string[] => {
+  let p = Math.max(1, Math.min(12, Math.floor(precision)));
+  for (;;) {
+    const sw = encodeGeohash(bounds.minLat, bounds.minLng, p);
+    const cell = geohashCellBounds(sw);
+    const latStep = cell.maxLat - cell.minLat;
+    const lngStep = cell.maxLng - cell.minLng;
+    if (latStep <= 0 || lngStep <= 0) return [sw.slice(0, p)];
+    const startLat = (cell.minLat + cell.maxLat) / 2;
+    const startLng = (cell.minLng + cell.maxLng) / 2;
+    const rows = Math.max(
+      1,
+      Math.ceil((bounds.maxLat - cell.minLat) / latStep),
+    );
+    const cols = Math.max(
+      1,
+      Math.ceil((bounds.maxLng - cell.minLng) / lngStep),
+    );
+    if (rows * cols <= maxCells || p <= 2) {
+      const cells = new Set<string>();
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          cells.add(
+            encodeGeohash(startLat + r * latStep, startLng + c * lngStep, p),
+          );
+        }
+      }
+      return Array.from(cells);
+    }
+    p -= 1;
+  }
+};

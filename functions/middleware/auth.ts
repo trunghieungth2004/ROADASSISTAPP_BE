@@ -1,6 +1,8 @@
 import {NextFunction, Request, Response} from "express";
 import {auth, db} from "../config/firebase";
+import * as userRepository from "../repository/userRepository";
 import {STATUS_USER} from "../constants/status";
+import {ROLE_RIDER} from "../constants/roles";
 import * as cacheManager from "../utils/cacheManager";
 
 const USER_NS = "user";
@@ -58,14 +60,17 @@ export const requireAuth = async (
       return;
     }
 
-    const userData = await loadUser(uid);
+    let userData = await loadUser(uid);
     if (!userData) {
-      res.status(404).json({
-        statusCode: 404,
-        status: "ERROR",
-        message: "User not found",
-      });
-      return;
+      await userRepository.create(uid, {role: ROLE_RIDER});
+      userData = {
+        id: uid,
+        role: ROLE_RIDER,
+        status: STATUS_USER.ACTIVE,
+        trustScore: 0,
+      };
+      cacheManager.set(USER_NS, uid, userData);
+      console.info("Auth middleware: auto-provisioned user", uid);
     }
 
     if (userData.status !== STATUS_USER.ACTIVE) {

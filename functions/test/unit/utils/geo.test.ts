@@ -7,6 +7,7 @@ import {
   pointToSegmentMeters,
   lineStringHitsCircles,
   cellsForBounds,
+  cellsCoveringBounds,
 } from "../../../utils/geo";
 
 describe("encodeGeohash / decodeGeohash", () => {
@@ -181,5 +182,87 @@ describe("cellsForBounds", () => {
     expect(cells).toContain(
       encodeGeohash(10.7626, 106.6602, 5),
     );
+  });
+});
+
+describe("cellsCoveringBounds", () => {
+  it("contains the cells of the bounds corners and center", () => {
+    const bounds = {
+      minLat: 10.7,
+      maxLat: 10.9,
+      minLng: 106.6,
+      maxLng: 106.8,
+    };
+    const cells = cellsCoveringBounds(bounds);
+    const probes: Array<[number, number]> = [
+      [bounds.minLat, bounds.minLng],
+      [bounds.minLat, bounds.maxLng],
+      [bounds.maxLat, bounds.minLng],
+      [bounds.maxLat, bounds.maxLng],
+      [
+        (bounds.minLat + bounds.maxLat) / 2,
+        (bounds.minLng + bounds.maxLng) / 2,
+      ],
+      // interleave between old 9-sample gaps
+      [10.75, 106.68],
+      [10.83, 106.74],
+    ];
+    for (const [lat, lng] of probes) {
+      expect(cells).toContain(encodeGeohash(lat, lng, 5));
+    }
+  });
+
+  it("returns unique 5-char cells", () => {
+    const cells = cellsCoveringBounds({
+      minLat: 10.75,
+      maxLat: 10.78,
+      minLng: 106.69,
+      maxLng: 106.71,
+    });
+    for (const cell of cells) expect(cell).toHaveLength(5);
+    expect(new Set(cells).size).toBe(cells.length);
+  });
+
+  it("covers a degenerate point", () => {
+    const cells = cellsCoveringBounds({
+      minLat: 10.7626,
+      maxLat: 10.7626,
+      minLng: 106.6602,
+      maxLng: 106.6602,
+    });
+    expect(cells).toContain(encodeGeohash(10.7626, 106.6602, 5));
+  });
+
+  it("coarsens precision for giant bounds within a sane query count", () => {
+    const cells = cellsCoveringBounds(
+      {minLat: -60, maxLat: 60, minLng: -120, maxLng: 120},
+      5,
+      200,
+    );
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.length).toBeLessThanOrEqual(600);
+    for (const cell of cells) {
+      expect(cell.length).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("covers cells along a long route that 9-sample lookup can miss", () => {
+    const bounds = {
+      minLat: 10.65,
+      maxLat: 10.75,
+      minLng: 106.55,
+      maxLng: 106.95,
+    };
+    const legacy = new Set(cellsForBounds(bounds));
+    const full = new Set(cellsCoveringBounds(bounds));
+    const misses: string[] = [];
+    for (let lng = 106.56; lng <= 106.94; lng += 0.005) {
+      const cell = encodeGeohash(10.7, lng, 5);
+      if (!legacy.has(cell)) misses.push(cell);
+    }
+    expect(misses.length).toBeGreaterThan(0);
+    for (const cell of misses) {
+      expect(full.has(cell)).toBe(true);
+    }
   });
 });

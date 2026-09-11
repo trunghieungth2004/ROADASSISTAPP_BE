@@ -24,6 +24,12 @@ export default (
     validate({body: schemas.getFlagsNear}),
     flagController.getNear,
   );
+  app.post(
+    "/flags/mine",
+    requireAuth,
+    validate({body: schemas.getMyFlags}),
+    flagController.getMine,
+  );
   app.put(
     "/flags/moderate",
     requireAuth,

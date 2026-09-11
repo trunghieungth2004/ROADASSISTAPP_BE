@@ -77,7 +77,7 @@ functions/
 
 | File | Purpose |
 |------|---------|
-| `unit.ts` | `jest.mock('../../config/firebase')` — chainable Firestore stub (`db` proxy, `auth` with `createUser`/`updateUser`/`verifyIdToken`, `Timestamp`, `FieldValue`). Sets `GCLOUD_PROJECT`, `ALLOWED_ORIGINS`, `OSRM_URL`, and `CACHE_ENABLED=false` (disables the in-memory cache so mock-call assertions stay deterministic). Loaded as `setupFiles` by the unit Jest config. |
+| `unit.ts` | `jest.mock('../../config/firebase')` — chainable Firestore stub (`db` proxy, `auth` with `createUser`/`updateUser`/`verifyIdToken`, `Timestamp`, `FieldValue`). Sets `GCLOUD_PROJECT`, `ALLOWED_ORIGINS`, `VALHALLA_URL`, and `CACHE_ENABLED=false` (disables the in-memory cache so mock-call assertions stay deterministic). Loaded as `setupFiles` by the unit Jest config. |
 | `integration.ts` | Sets `FIRESTORE_EMULATOR_HOST=localhost:8080`, `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099` (**bare host, no scheme** — the Admin SDK misparses a full URL), `STORAGE_EMULATOR_HOST`, `GCLOUD_PROJECT=test-project`, and `CACHE_ENABLED=false` (fresh seeded data must never be served from cache) so `firebase-admin` connects to the local emulators instead of production. Loaded as `setupFiles` by the integration Jest config. |
 
 ### test/utils/
@@ -105,7 +105,7 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
-| `service/routingService.test.ts` | Bucket mapping, bucket → `exclude=` URL param (none / `narrowonly` / both), stops in OSRM coordinates + stops-aware cache key (legacy key when empty), multi-stop detour preserves stop order, unlocatable stop → 409, width gate (narrow segment → 409, compatible/unknown/far pass, skipped without width, hazard wins), cache-hit short-circuit (no fetch), hazard block → detour (`source: "detour"` + `via`/`hazards`, detour never cached) → 409 after 3 blocked attempts (4 fetches), OSRM retry-once then success, unreachable-twice → 500, OSRM error → `ServiceError`, empty routes → 404, `active_routes` touch on every 200 (never on 409). |
+| `service/routingService.test.ts` | Bucket mapping, engine request shape (ordered locations, no exclusions on clean routes, no width params), stops-aware cache key (legacy key when empty), multi-stop detour preserves stop order, stop inside a zone → 409, width gate (narrow segment → 409 after 2 attempts, width polygons in the detour request, compatible/unknown/far pass, skipped without width, hazard wins), cache-hit short-circuit (engine untouched), hazard block → detour (`source: "detour"` + `hazards`, no `via`, detour never cached) → 409 after the widened retry, engine 500/404 propagation, over-distance detour → 409, `active_routes` touch on every 200 (never on 409). `postRoute` is module-mocked; wire behavior lives in `utils/valhalla.test.ts`. |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
 | `utils/detour.test.ts` | Margin schedule `[20, 60, 120]`, bypass lands outside the zone, margin escalation pushes farther, endpoint-inside → null, degenerate geometry → null, invalid zone/margin → null, nearest-segment index, leg ordinal mapping + unlocatable-stop → null. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
@@ -119,7 +119,7 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 
 Each file is **self-contained** — owns its own `beforeAll`/`afterAll` that cleans Firestore and seeds exactly the data it needs. Tests within a file are sequential (create → read → update). Files run independently with no cross-file state dependencies.
 
-Run against the Firestore + Auth emulators. Requests carry `Authorization: Bearer <uid>` (the stub resolves identity/role from the seeded `users` doc; bodies carry only resource fields — identity comes from the header). Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no OSRM in CI).
+Run against the Firestore + Auth emulators. Requests carry `Authorization: Bearer <uid>` (the stub resolves identity/role from the seeded `users` doc; bodies carry only resource fields — identity comes from the header). Each test file imports `buildIntegrationApp` from `test/utils/app.ts` and seed functions from `test/utils/seed.ts`. `POST /routes` tests mock `fetch` (no Valhalla in CI).
 
 | File | Tests |
 |------|-------|
@@ -131,7 +131,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
 | `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
-| `routing.test.ts` | POST route miss → `source: osrm` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, fresh blockage → `source: detour` + `via`/`hazards`, flood removed → 200 again, stops routed in order, >10 stops → 400, narrower segment + width → 409 width-block, OSRM down → 500 |
+| `routing.test.ts` | POST route miss → `source: valhalla` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, fresh blockage → `source: detour` + `hazards` (no `via`), flood removed → 200 again, stops routed in order as `locations`, >10 stops → 400, narrower segment + width → 409 width-block, Valhalla down → 500 |
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
 | `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |

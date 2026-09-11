@@ -15,7 +15,7 @@
         "npm --prefix \"$RESOURCE_DIR\" run lint",
         "npm --prefix \"$RESOURCE_DIR\" run build",
         "npm --prefix \"$RESOURCE_DIR\" run test:all",
-        "bash infra/osrm/setup.sh"
+        "bash infra/valhalla/setup.sh"
       ]
     }
   ],

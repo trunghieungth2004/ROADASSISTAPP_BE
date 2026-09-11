@@ -16,7 +16,7 @@ import * as serviceAccount from "./serviceAccountKey.json";
 
 const useEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 initAdmin(
-  useEmulator ? {credential: cert(serviceAccount as ServiceAccount)} : {},
+  useEmulator ? {credential: cert({...serviceAccount} as ServiceAccount)} : {},
 );
 const db = getFirestore();
 const auth = getAuth();

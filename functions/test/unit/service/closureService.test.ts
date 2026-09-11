@@ -1,5 +1,9 @@
 import * as flagRepository from "../../../repository/flagRepository";
-import {findBlocking} from "../../../service/closureService";
+import {
+  analyzeRoute,
+  findBlocking,
+  findWarnings,
+} from "../../../service/closureService";
 
 jest.mock("../../../repository/flagRepository");
 
@@ -19,6 +23,7 @@ const flood = (overrides: Record<string, unknown> = {}) => ({
   lng: 106.68,
   radiusMeters: null,
   note: null,
+  reporterUid: "someone-else",
   ...overrides,
 });
 
@@ -56,6 +61,32 @@ describe("closureService.findBlocking", () => {
     ] as never);
     const zones = await findBlocking(line);
     expect(zones.map((z) => z.flagId)).toEqual(["wide"]);
+  });
+
+  it("floors tiny per-flag radii at the type minimum", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({
+        id: "accident-50",
+        type: "ACCIDENT",
+        lat: 10.77061,
+        lng: 106.67969,
+        radiusMeters: 50,
+      }),
+      flood({
+        id: "flood-50",
+        lat: 10.77121,
+        lng: 106.67938,
+        radiusMeters: 50,
+      }),
+    ] as never);
+    const zones = await findBlocking(line);
+    expect(zones.map((z) => z.flagId).sort()).toEqual([
+      "accident-50",
+      "flood-50",
+    ]);
+    const byId = new Map(zones.map((z) => [z.flagId, z]));
+    expect(byId.get("accident-50")).toMatchObject({radiusMeters: 100});
+    expect(byId.get("flood-50")).toMatchObject({radiusMeters: 200});
   });
 
   it("blocks obstruction/accident flags with 100 m defaults", async () => {
@@ -98,5 +129,68 @@ describe("closureService.findBlocking", () => {
     ] as never);
     const zones = await findBlocking(line);
     expect(zones.map((z) => z.flagId)).toEqual(["center", "edge"]);
+  });
+
+  it("blocks the reporter's own suggested flag", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "own", status: "1", reporterUid: "u1"}),
+    ] as never);
+    const zones = await findBlocking(line, "u1");
+    expect(zones.map((z) => z.flagId)).toEqual(["own"]);
+  });
+
+  it("does not block another user's suggested flag", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "theirs", status: "1", reporterUid: "u2"}),
+    ] as never);
+    await expect(findBlocking(line, "u1")).resolves.toEqual([]);
+  });
+});
+
+describe("closureService.analyzeRoute", () => {
+  it("returns empty partitions without touching the repo", async () => {
+    await expect(analyzeRoute(null)).resolves.toEqual({
+      blocking: [],
+      warnings: [],
+    });
+    expect(flagRepository.findByGeohashPrefixes).not.toHaveBeenCalled();
+  });
+
+  it("partitions blocking and warning zones", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "confirmed"}),
+      flood({id: "own", status: "1", reporterUid: "u1"}),
+      flood({id: "theirs", status: "1", reporterUid: "u2"}),
+      flood({id: "expired", status: "4"}),
+    ] as never);
+    const {blocking, warnings} = await analyzeRoute(line, "u1");
+    expect(blocking.map((z) => z.flagId).sort()).toEqual([
+      "confirmed",
+      "own",
+    ]);
+    expect(warnings.map((z) => z.flagId)).toEqual(["theirs"]);
+    expect(warnings[0]).toMatchObject({
+      type: "FLOOD",
+      radiusMeters: 200,
+      distanceMeters: expect.any(Number),
+    });
+  });
+});
+
+describe("closureService.findWarnings", () => {
+  it("warns about others' suggested flags on the route", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "theirs", status: "1", reporterUid: "u2"}),
+      flood({id: "confirmed"}),
+    ] as never);
+    const zones = await findWarnings(line, "u1");
+    expect(zones.map((z) => z.flagId)).toEqual(["theirs"]);
+  });
+
+  it("excludes the reporter's own suggested flags", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "own", status: "1", reporterUid: "u1"}),
+    ] as never);
+    await expect(findWarnings(line, "u1")).resolves.toEqual([]);
   });
 });

@@ -10,6 +10,7 @@ interface FlagRecord {
   lat: number;
   lng: number;
   voteCount: number;
+  voters?: string[];
   radiusMeters?: number;
   ttlExpiresAt: Date;
   reporterUid: string;
@@ -22,6 +23,19 @@ const findById = async (flagId: string): Promise<FlagRecord | null> => {
   const doc = await db.collection("flags").doc(flagId).get();
   if (!doc.exists) return null;
   return {id: doc.id, ...doc.data()} as FlagRecord;
+};
+
+const findByReporterUid = async (uid: string): Promise<FlagRecord[]> => {
+  const snapshot = await db
+    .collection("flags")
+    .where("reporterUid", "==", uid)
+    .orderBy("createdAt", "desc")
+    .get();
+  const results: FlagRecord[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as FlagRecord),
+  );
+  return results;
 };
 
 const findByGeohashPrefixes = async (
@@ -82,6 +96,33 @@ const incrementVote = async (flagId: string): Promise<void> => {
     .update({voteCount: FieldValue.increment(1)});
 };
 
+const castVote = async (
+  flagId: string,
+  uid: string,
+  weight: number,
+): Promise<{flag: FlagRecord; duplicate: boolean} | null> => {
+  const ref = db.collection("flags").doc(flagId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const data = {id: snap.id, ...(snap.data() ?? {})} as FlagRecord;
+    const voters = Array.isArray(data.voters) ? data.voters : [];
+    if (voters.includes(uid)) return {flag: data, duplicate: true};
+    tx.update(ref, {
+      voters: FieldValue.arrayUnion(uid),
+      voteCount: FieldValue.increment(weight),
+    });
+    return {
+      flag: {
+        ...data,
+        voters: [...voters, uid],
+        voteCount: (data.voteCount ?? 0) + weight,
+      },
+      duplicate: false,
+    };
+  });
+};
+
 const updateStatus = async (flagId: string, status: string): Promise<void> => {
   await db.collection("flags").doc(flagId).update({status});
 };
@@ -111,9 +152,11 @@ const findExpired = async (): Promise<FlagRecord[]> => {
 
 export {
   findById,
+  findByReporterUid,
   findByGeohashPrefixes,
   create,
   incrementVote,
+  castVote,
   updateStatus,
   deleteById,
   findExpired,

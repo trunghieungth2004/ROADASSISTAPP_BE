@@ -23,8 +23,9 @@ const createFlag = async (req: Request, res: Response) => {
 
 const confirmFlag = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {flagId} = req.body;
-    const result = await flagService.confirmFlag(flagId);
+    const result = await flagService.confirmFlag(flagId, userId);
     if (!result) {
       sendSuccess(res, null, {message: "Flag not found", statusCode: 404});
       return;
@@ -40,6 +41,16 @@ const getNear = async (req: Request, res: Response) => {
     const {lat, lng} = req.body;
     const radiusMeters = req.body.radiusMeters ?? 2000;
     const result = await flagService.getNear({lat, lng, radiusMeters});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const getMine = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await flagService.getMine(userId);
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -88,6 +99,7 @@ export {
   createFlag,
   confirmFlag,
   getNear,
+  getMine,
   moderateFlag,
   unflagFlag,
   expireFlags,

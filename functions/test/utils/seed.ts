@@ -17,6 +17,7 @@ const ALL_COLLECTIONS = [
   "diagnostics",
   "dispatch_tickets",
   "routing_cache",
+  "saved_routes",
 ];
 
 const cleanCollection = async (name: string): Promise<void> => {

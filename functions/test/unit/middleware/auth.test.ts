@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import {requireAuth, requireRole} from "../../../middleware/auth";
+import {ROLE_RIDER} from "../../../constants/roles";
 
 const mockRes = () => {
   const res = {} as Response & {
@@ -32,16 +33,17 @@ describe("requireAuth", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the token uid has no user document", async () => {
+  it("auto-provisions verified tokens without a user document", async () => {
     const res = mockRes();
     const next = jest.fn();
-    await requireAuth(
-      {headers: {authorization: "Bearer any-token"}} as Request,
-      res,
-      next,
-    );
-    expect(res.status).toHaveBeenCalledWith(404);
-    expect(next).not.toHaveBeenCalled();
+    const authed = {
+      headers: {authorization: "Bearer any-token"},
+    } as Request & {uid?: string; userRole?: string};
+    await requireAuth(authed, res, next);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
+    expect(authed.uid).toBe("mock-uid");
+    expect(authed.userRole).toBe(ROLE_RIDER);
   });
 });
 

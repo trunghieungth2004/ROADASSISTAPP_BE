@@ -1,6 +1,6 @@
 # RoadAssist Backend
 
-Firebase Cloud Functions backend powering the RoadAssist app (HẻmNav alley navigation for riders + XeAssist roadside-assistance stubs). Express.js + TypeScript on Node 22, Firestore database, self-hosted OSRM routing.
+Firebase Cloud Functions backend powering the RoadAssist app (HẻmNav alley navigation for riders + XeAssist roadside-assistance stubs). Express.js + TypeScript on Node 22, Firestore database, self-hosted Valhalla routing.
 
 ## Quick Start
 
@@ -96,9 +96,9 @@ See [Architecture → Firestore Indexes](./documentation/ARCHITECTURE.md#firesto
 
 ## Routing Engine Ops
 
-`POST /routes` solves via a self-hosted OSRM instance and is designed for a **scale-to-zero** engine — cost-per-request (~$0.5–1.5/mo at trial scale, storage included) instead of an always-on instance (~$190/mo at 8Gi/2vCPU). The engine is **provisioned by deploy, not by hand**: `infra/osrm/` holds the `motorbike.lua` profile (scooter speeds + request-time width classes) and the `Dockerfile` (Vietnam graph baked in); `bash infra/osrm/setup.sh` — wired as the last functions `predeploy` hook — builds the image via Cloud Build only when the profile changes, deploys Cloud Run `osrm` (`--min-instances=0 --max-instances=2`), writes `OSRM_URL` into `functions/.env`, and smoke-tests the live engine. Standalone: `npm run osrm:setup` from `functions/`.
+`POST /routes` solves via a self-hosted Valhalla instance (`motor_scooter` costing, hazard/width closures passed per request as `exclude_polygons`) and is designed for a **scale-to-zero** engine — cost-per-request (~$0.5–1.5/mo at trial scale, storage included) instead of an always-on instance (~$190/mo at 8Gi/2vCPU). The engine is **provisioned by deploy, not by hand**: `infra/valhalla/` holds the `Dockerfile` (Vietnam tiles baked in as `tiles.tar`); `bash infra/valhalla/setup.sh` — wired as the last functions `predeploy` hook — builds the image via Cloud Build only when the Dockerfile changes, deploys Cloud Run `valhalla` (`--min-instances=0 --max-instances=2`), writes `VALHALLA_URL` into `functions/.env`, and smoke-tests the live engine (route + polygons). Standalone: `npm run valhalla:setup` from `functions/`. Engine mode is picked by `VALHALLA_MODE`: `cloud` (default, non-interactive safe), `local` (local docker build + push, skips the Cloud Build bill), or `dev` (local build + local `valhalla_service` container at `http://localhost:8002`, emulator-only) — unset + TTY prompts for a choice. `npm run valhalla:remove` tears the engine down (service + images + local container + `VALHALLA_URL`).
 
-Relevant functions env vars: `OSRM_URL` (deploy-managed), `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Infrastructure](./documentation/INFRASTRUCTURE.md), [Deploy](./documentation/DEPLOY.md), [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md#engine-economics-cost-per-request-posture).
+Relevant functions env vars: `VALHALLA_URL` (deploy-managed), `ROUTING_CACHE_TTL_SECONDS` (route-cache TTL; prod recommendation `7776000` = 90 d for cache warmth). The service tolerates cold boots with a 15 s fetch timeout + one retry. See [Infrastructure](./documentation/INFRASTRUCTURE.md), [Deploy](./documentation/DEPLOY.md), [Architecture](./documentation/ARCHITECTURE.md) (engine-economics decision record) and [Caching](./documentation/CACHE.md).
 
 Hazard push (FCM + Cloud Tasks) is env-gated and idle unless enabled. One-time setup creates the queue and grants the two IAM bindings (queue-enqueue + function-invoke, single service account by default):
 

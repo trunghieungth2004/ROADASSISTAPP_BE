@@ -15,7 +15,7 @@ if (getApps().length === 0) {
   if (useEmulator) {
     initializeApp({projectId: process.env.GCLOUD_PROJECT ?? "demo"});
   } else {
-    initializeApp({credential: cert(serviceAccount as ServiceAccount)});
+    initializeApp({credential: cert({...serviceAccount} as ServiceAccount)});
   }
 }
 

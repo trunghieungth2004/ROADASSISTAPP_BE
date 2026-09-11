@@ -1,6 +1,6 @@
 # Caching
 
-The backend uses two caching layers: **per-namespace in-process LRU caches** (`utils/cacheManager`, disabled during tests) for hot reads, and a **persistent Firestore route cache** (`routing_cache` collection) for OSRM results. Both are keyed deterministically; all caches start empty on cold start, and the LRU layer is not shared across function instances.
+The backend uses two caching layers: **per-namespace in-process LRU caches** (`utils/cacheManager`, disabled during tests) for hot reads, and a **persistent Firestore route cache** (`routing_cache` collection) for Valhalla results. Both are keyed deterministically; all caches start empty on cold start, and the LRU layer is not shared across function instances.
 
 ## Mechanics
 
@@ -52,20 +52,20 @@ Notable behaviors:
 `POST /routes` does not use the in-process LRU. It uses the `routing_cache` collection as a durable cache (`repository/routingCacheRepository.ts`, consumed by `service/routingService.ts`):
 
 - Key: origin/dest rounded to 5 decimals plus width bucket, e.g. `10.76262,106.66017:10.77584,106.70194:MEDIUM`.
-- Hit returns the full payload `{cached: true, distanceMeters, durationSeconds, geometry, source: "cache"}` without touching OSRM.
-- Miss calls OSRM, persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, distanceMeters, durationSeconds, cachedAt, expiresAt}`, and returns `{cached: false, ..., source: "osrm"}`. The fetch also carries an inverted `exclude=` for the bucket (`narrowonly` / `narrowonly,mediumonly` / none), so each cached bucket is a genuinely different route.
+- Hit returns the full payload `{cached: true, distanceMeters, durationSeconds, geometry, source: "cache"}` without touching Valhalla.
+- Miss calls Valhalla (`motor_scooter` costing, no width params — the engine is width-agnostic), persists `{originLat/Lng, destLat/Lng, widthBucket, geometry, distanceMeters, durationSeconds, cachedAt, expiresAt}`, and returns `{cached: false, ..., source: "valhalla"}`. The bucket only scopes the width gate that runs after the solve, so different buckets may share the same base geometry.
 - Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
 - TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
 
 ### Hazard feedback loop
 
-`POST /routes` never serves a route that crosses an active road hazard, on cache hit *or* miss: after resolving the geometry, `service/closureService.findBlocking` checks it against `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` flags in `"2"` (Confirmed) / `"3"` (Locked) status near the route's bounding box (same 9-cell `geoCell` near-search as flags; polyline-vs-circle hit test in `utils/geo`). A hit returns `409` with the blocking zones instead of the route.
+`POST /routes` never serves a route that crosses an active road hazard, on cache hit *or* miss: after resolving the geometry, `service/closureService.findBlocking` checks it against `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` flags in `"2"` (Confirmed) / `"3"` (Locked) status near the route's bounding box (same 9-cell `geoCell` near-search as flags; polyline-vs-circle hit test in `utils/geo`). A hit re-solves through Valhalla with the blocking circles as `exclude_polygons` and returns `source: "detour"`; only an unavoidable block (endpoint inside a zone, still-blocked after the widened retry) returns `409` with the blocking zones instead of the route.
 
 Because the check runs live on every request, **no cache invalidation is needed**: confirming a hazard blocks the next request, and removing it — `POST /flags/unflag` by the reporter, admin moderation, or the per-type TTL sweep (ACCIDENT 1h, FLOOD 6h, OBSTRUCTION 3h) — unblocks the next request automatically. Impact radius defaults per type (`FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m; overridable per flag via `radiusMeters` at creation).
 
 ### Engine economics: cost-per-request posture
 
-The routing engine (self-hosted OSRM) runs **scale-to-zero** — no `min-instances`, billed per request (~$0.5–1.5/mo at trial scale, Artifact Registry storage included). The cache is what makes this viable: the engine is only touched on `routing_cache` misses, and OD pairs saturate quickly at low user counts, so cold boots are rare. Two knobs support the posture: `ROUTING_CACHE_TTL_SECONDS` (default 30 d; prod recommendation 90 d to stretch warmth) and the single retry on OSRM fetch (15 s timeout), which absorbs the cold-boot race so a waking engine reads as one slow request instead of a 500. Detour re-solves also hit the engine but stay uncached by design — negligible at this volume. Revisit always-on (or a native-avoidance engine) only when traffic justifies it; see the engine-economics decision record in [ARCHITECTURE.md](./ARCHITECTURE.md).
+The routing engine (self-hosted Valhalla) runs **scale-to-zero** — no `min-instances`, billed per request (~$0.5–1.5/mo at trial scale, Artifact Registry storage included). The cache is what makes this viable: the engine is only touched on `routing_cache` misses, and OD pairs saturate quickly at low user counts, so cold boots are rare. Two knobs support the posture: `ROUTING_CACHE_TTL_SECONDS` (default 30 d; prod recommendation 90 d to stretch warmth) and the single retry on Valhalla fetch (15 s timeout), which absorbs the cold-boot race so a waking engine reads as one slow request instead of a 500. Detour re-solves also hit the engine but stay uncached by design — negligible at this volume; natively-grown detours replaced the old multi-call via-probing loop, so per-incident engine calls dropped from ~10–20 to ≤3.
 
 ### Decision record: why Firestore, not Redis (option A)
 

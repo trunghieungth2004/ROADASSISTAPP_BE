@@ -5,6 +5,7 @@ import {
   createFlag,
   confirmFlag,
   getNear,
+  getMine,
   moderateFlag,
   unflagFlag,
   expireFlags,
@@ -62,15 +63,31 @@ describe("flagService.createFlag", () => {
 describe("flagService.confirmFlag", () => {
   it("returns null for an unknown flag", async () => {
     jest.mocked(flagRepository.findById).mockResolvedValue(null);
-    await expect(confirmFlag("ghost")).resolves.toBeNull();
-    expect(flagRepository.incrementVote).not.toHaveBeenCalled();
+    await expect(confirmFlag("ghost", "u9")).resolves.toBeNull();
+    expect(flagRepository.castVote).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 when the reporter confirms their own flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      status: "1",
+      voteCount: 0,
+      reporterUid: "u1",
+    } as never);
+    await expect(confirmFlag("f1", "u1")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    expect(flagRepository.castVote).not.toHaveBeenCalled();
   });
 
   it("short-circuits locked flags", async () => {
-    const flag = {id: "f1", status: "3", voteCount: 5};
+    const flag = {id: "f1", status: "3", voteCount: 5, reporterUid: "u1"};
     jest.mocked(flagRepository.findById).mockResolvedValue(flag as never);
-    await expect(confirmFlag("f1")).resolves.toBe(flag);
-    expect(flagRepository.incrementVote).not.toHaveBeenCalled();
+    await expect(confirmFlag("f1", "u2")).resolves.toMatchObject({
+      id: "f1",
+      alreadyVoted: false,
+    });
+    expect(flagRepository.castVote).not.toHaveBeenCalled();
   });
 
   it("flips to CONFIRMED at the threshold", async () => {
@@ -79,12 +96,24 @@ describe("flagService.confirmFlag", () => {
       status: "1",
       voteCount: 2,
       reporterTrust: 0,
+      reporterUid: "u1",
     } as never);
-    await expect(confirmFlag("f1")).resolves.toMatchObject({
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag: {
+        id: "f1",
+        status: "1",
+        voteCount: 3,
+        reporterTrust: 0,
+        reporterUid: "u1",
+      },
+      duplicate: false,
+    } as never);
+    await expect(confirmFlag("f1", "u2")).resolves.toMatchObject({
       voteCount: 3,
       status: "2",
+      alreadyVoted: false,
     });
-    expect(flagRepository.incrementVote).toHaveBeenCalledWith("f1");
+    expect(flagRepository.castVote).toHaveBeenCalledWith("f1", "u2", 1);
     expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "2");
   });
 
@@ -94,11 +123,23 @@ describe("flagService.confirmFlag", () => {
       status: "1",
       voteCount: 1,
       reporterTrust: 60,
+      reporterUid: "u1",
     } as never);
-    await expect(confirmFlag("f1")).resolves.toMatchObject({
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag: {
+        id: "f1",
+        status: "1",
+        voteCount: 2.5,
+        reporterTrust: 60,
+        reporterUid: "u1",
+      },
+      duplicate: false,
+    } as never);
+    await expect(confirmFlag("f1", "u2")).resolves.toMatchObject({
       voteCount: 2.5,
       status: "1",
     });
+    expect(flagRepository.castVote).toHaveBeenCalledWith("f1", "u2", 1.5);
     expect(flagRepository.updateStatus).not.toHaveBeenCalled();
   });
 
@@ -109,8 +150,20 @@ describe("flagService.confirmFlag", () => {
       status: "1",
       voteCount: 2,
       reporterTrust: 0,
+      reporterUid: "u1",
     } as never);
-    await confirmFlag("f1");
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag: {
+        id: "f1",
+        type: "FLOOD",
+        status: "1",
+        voteCount: 3,
+        reporterTrust: 0,
+        reporterUid: "u1",
+      },
+      duplicate: false,
+    } as never);
+    await confirmFlag("f1", "u2");
     expect(taskQueueService.enqueueHazardPush).toHaveBeenCalledWith(
       "f1",
       "FLOOD",
@@ -125,8 +178,71 @@ describe("flagService.confirmFlag", () => {
       status: "1",
       voteCount: 1,
       reporterTrust: 0,
+      reporterUid: "u1",
     } as never);
-    await confirmFlag("f1");
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag: {
+        id: "f1",
+        type: "FLOOD",
+        status: "1",
+        voteCount: 2,
+        reporterTrust: 0,
+        reporterUid: "u1",
+      },
+      duplicate: false,
+    } as never);
+    await confirmFlag("f1", "u2");
+    expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
+  });
+
+  it("returns idempotent alreadyVoted on a repeat vote", async () => {
+    const flag = {
+      id: "f1",
+      status: "1",
+      voteCount: 1,
+      reporterTrust: 0,
+      reporterUid: "u1",
+      voters: ["u2"],
+    };
+    jest.mocked(flagRepository.findById).mockResolvedValue(flag as never);
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag,
+      duplicate: true,
+    } as never);
+    await expect(confirmFlag("f1", "u2")).resolves.toMatchObject({
+      alreadyVoted: true,
+      voteCount: 1,
+    });
+    expect(flagRepository.updateStatus).not.toHaveBeenCalled();
+    expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
+  });
+
+  it("records a fresh vote on a confirmed flag", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "FLOOD",
+      status: "2",
+      voteCount: 3,
+      reporterTrust: 0,
+      reporterUid: "u1",
+    } as never);
+    jest.mocked(flagRepository.castVote).mockResolvedValue({
+      flag: {
+        id: "f1",
+        type: "FLOOD",
+        status: "2",
+        voteCount: 4,
+        reporterTrust: 0,
+        reporterUid: "u1",
+      },
+      duplicate: false,
+    } as never);
+    await expect(confirmFlag("f1", "u4")).resolves.toMatchObject({
+      voteCount: 4,
+      status: "2",
+      alreadyVoted: false,
+    });
+    expect(flagRepository.updateStatus).not.toHaveBeenCalled();
     expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
   });
 });
@@ -143,6 +259,23 @@ describe("flagService.getNear", () => {
     expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
       "a",
       "d",
+    ]);
+  });
+});
+
+describe("flagService.getMine", () => {
+  it("returns only the reporter's active flags", async () => {
+    jest.mocked(flagRepository.findByReporterUid).mockResolvedValue([
+      {id: "a", status: "1"},
+      {id: "b", status: "2"},
+      {id: "c", status: "4"},
+      {id: "d", status: "5"},
+    ] as never);
+    const result = await getMine("u1");
+    expect(flagRepository.findByReporterUid).toHaveBeenCalledWith("u1");
+    expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
+      "a",
+      "b",
     ]);
   });
 });

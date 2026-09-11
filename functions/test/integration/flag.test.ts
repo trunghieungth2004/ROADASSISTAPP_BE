@@ -15,11 +15,19 @@ const bearer = (uid: string) => `Bearer ${uid}`;
 
 const USER = `${PREFIX}-user-1`;
 const ADMIN = `${PREFIX}-admin`;
+const VOTER_A = `${PREFIX}-voter-a`;
+const VOTER_B = `${PREFIX}-voter-b`;
+const VOTER_C = `${PREFIX}-voter-c`;
+const VOTER_D = `${PREFIX}-voter-d`;
 
 beforeAll(async () => {
   await cleanAll();
   await seedUser(USER, "2");
   await seedUser(ADMIN, "1");
+  await seedUser(VOTER_A, "2");
+  await seedUser(VOTER_B, "2");
+  await seedUser(VOTER_C, "2");
+  await seedUser(VOTER_D, "2");
 });
 
 afterAll(async () => {
@@ -39,24 +47,77 @@ describe("flag endpoints", () => {
     flagId = res.body.data.id as string;
   });
 
+  it("POST /flags/confirm rejects the reporter's own vote", async () => {
+    const res = await request(app)
+      .post("/flags/confirm")
+      .set("Authorization", bearer(USER))
+      .send({flagId});
+    expect(res.status).toBe(403);
+  });
+
   it("POST /flags/confirm flips to confirmed at three votes", async () => {
     await request(app)
       .post("/flags/confirm")
-      .set("Authorization", bearer(USER))
+      .set("Authorization", bearer(VOTER_A))
       .send({flagId});
     await request(app)
       .post("/flags/confirm")
-      .set("Authorization", bearer(USER))
+      .set("Authorization", bearer(VOTER_B))
       .send({flagId});
     const third = await request(app)
       .post("/flags/confirm")
-      .set("Authorization", bearer(USER))
+      .set("Authorization", bearer(VOTER_C))
       .send({flagId});
     expect(third.status).toBe(200);
     expect(third.body.data).toMatchObject({
       voteCount: 3,
       status: "2",
     });
+  });
+
+  it("POST /flags/confirm is idempotent for repeat voters", async () => {
+    const again = await request(app)
+      .post("/flags/confirm")
+      .set("Authorization", bearer(VOTER_A))
+      .send({flagId});
+    expect(again.status).toBe(200);
+    expect(again.body.data).toMatchObject({
+      voteCount: 3,
+      status: "2",
+      alreadyVoted: true,
+    });
+  });
+
+  it("POST /flags/confirm records a fresh vote after consensus", async () => {
+    const fourth = await request(app)
+      .post("/flags/confirm")
+      .set("Authorization", bearer(VOTER_D))
+      .send({flagId});
+    expect(fourth.status).toBe(200);
+    expect(fourth.body.data).toMatchObject({
+      voteCount: 4,
+      status: "2",
+      alreadyVoted: false,
+    });
+  });
+
+  it("POST /flags/mine lists only the reporter's flags", async () => {
+    const mine = await request(app)
+      .post("/flags/mine")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(mine.status).toBe(200);
+    const mineIds = (mine.body.data as {id: string}[]).map((f) => f.id);
+    expect(mineIds).toContain(flagId);
+    const stranger = await request(app)
+      .post("/flags/mine")
+      .set("Authorization", bearer(VOTER_A))
+      .send({});
+    expect(stranger.status).toBe(200);
+    const strangerIds = (stranger.body.data as {id: string}[]).map(
+      (f) => f.id,
+    );
+    expect(strangerIds).not.toContain(flagId);
   });
 
   it("POST /flags/near excludes expired flags", async () => {

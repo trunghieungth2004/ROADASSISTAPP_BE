@@ -7,24 +7,20 @@ import * as userRepository from "../repository/userRepository";
 import * as alleySegmentRepository from
   "../repository/alleySegmentRepository";
 import {computePassability} from "../service/alleySegmentService";
-import {cellsForBounds, extractLineCoords, pointToSegmentMeters} from
-  "../utils/geo";
-import {buildBypassPoint, DETOUR_MARGINS_METERS, nearestSegmentIndex,
-  legOrdinalForZone} from "../utils/detour";
-import type {LatLng} from "../utils/detour";
+import {
+  cellsForBounds,
+  extractLineCoords,
+  haversineMeters,
+  pointToSegmentMeters,
+} from "../utils/geo";
+import {circleToRing, postRoute} from "../utils/valhalla";
+import type {LatLng} from "../utils/valhalla";
 
 class NotFoundError extends Error {
   statusCode: number;
   constructor(message: string) {
     super(message);
     this.statusCode = 404;
-  }
-}
-class ServiceError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 500) {
-    super(message);
-    this.statusCode = statusCode;
   }
 }
 class RouteBlockedError extends Error {
@@ -46,15 +42,7 @@ class WidthBlockedError extends Error {
   }
 }
 
-const OSRM_URL = process.env.OSRM_URL || "http://localhost:5000";
-const OSRM_TIMEOUT_MS = 15000;
 const WIDTH_GATE_RADIUS_METERS = 20;
-
-const EXCLUDE_BY_BUCKET: Record<string, string | null> = {
-  NARROW: null,
-  MEDIUM: "narrowonly",
-  WIDE: "narrowonly,mediumonly",
-};
 
 interface RouteResult {
   cached: boolean;
@@ -64,142 +52,163 @@ interface RouteResult {
   source: string;
   via?: {lat: number; lng: number};
   hazards?: unknown;
+  warnings?: unknown;
 }
 
-interface OsrmRoute {
-  distance?: number;
-  duration?: number;
-  geometry?: unknown;
-}
+const MAX_EXTRA_DISTANCE_METERS = 15000;
+const WIDTH_PSEUDO_RADIUS_METERS = 20;
+const DETOUR_ATTEMPTS = 2;
+const DETOUR_RADIUS_GROWTH = 1.5;
 
-const fetchOsrm = async (url: string): Promise<Response> => {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await fetch(url, {signal: AbortSignal.timeout(OSRM_TIMEOUT_MS)});
-    } catch {
-      if (attempt === 1) {
-        throw new ServiceError("Routing service unreachable");
-      }
-    }
-  }
-  throw new ServiceError("Routing service unreachable");
-};
+const toWidthZone = (block: WidthBlock): closureService.BlockingZone => ({
+  flagId: `width:${block.segmentId}`,
+  type: "WIDTH",
+  lat: block.lat,
+  lng: block.lng,
+  radiusMeters: WIDTH_PSEUDO_RADIUS_METERS,
+  note: null,
+  distanceMeters: 0,
+  raw: block,
+});
 
-const solveOsrm = async (
-  coordinates: string,
-  widthBucket: string,
-): Promise<OsrmRoute> => {
-  const exclude = EXCLUDE_BY_BUCKET[widthBucket] ?? null;
-  const url =
-    `${OSRM_URL}/route/v1/motorbike/${coordinates}` +
-    "?overview=full&geometries=geojson" +
-    (exclude === null ? "" : `&exclude=${exclude}`);
-  const response = await fetchOsrm(url);
-  if (!response.ok) {
-    throw new ServiceError(`Routing service returned ${response.status}`);
-  }
-  const body = (await response.json()) as {
-    code?: string;
-    routes?: OsrmRoute[];
-  };
-  if (body.code !== "Ok" || !body.routes || body.routes.length === 0) {
-    throw new ServiceError("No route found", 404);
-  }
-  return body.routes[0];
-};
-
-const tryDetour = async ({
+const routeSafely = async ({
   originLat,
   originLng,
   destLat,
   destLng,
   stops,
-  widthBucket,
-  geometry,
-  zones,
+  width,
+  key,
+  userId,
+  baseGeometry,
+  baseDistance,
+  baseDuration,
+  baseSource,
+  baseCached,
+  blocking,
+  warnings,
 }: {
   originLat: number;
   originLng: number;
   destLat: number;
   destLng: number;
   stops: LatLng[];
-  widthBucket: string;
-  geometry: unknown;
-  zones: closureService.BlockingZone[];
-}): Promise<{
-  via: {lat: number; lng: number};
-  geometry: unknown;
-  distanceMeters?: number;
-  durationSeconds?: number;
-} | null> => {
-  const zone = zones[0];
-  if (!zone) return null;
-  for (const margin of DETOUR_MARGINS_METERS) {
-    const via = buildBypassPoint(
-      geometry,
-      zone,
-      margin,
-      {lat: originLat, lng: originLng},
-      {lat: destLat, lng: destLng},
-    );
-    if (!via) break;
-    const ordered = orderedControls(
-      originLat,
-      originLng,
-      destLat,
-      destLng,
-      stops,
-      geometry,
-      zone,
-      via,
-    );
-    if (!ordered) return null;
-    const coordinates = ordered
-      .map((p) => `${p.lng},${p.lat}`)
-      .join(";");
-    const solved = await solveOsrm(coordinates, widthBucket);
-    const remaining = await closureService.findBlocking(
-      solved.geometry ?? null,
-    );
-    if (remaining.length === 0) {
-      return {
-        via,
-        geometry: solved.geometry ?? null,
-        distanceMeters: solved.distance,
-        durationSeconds: solved.duration,
-      };
-    }
-  }
-  return null;
-};
-
-const orderedControls = (
-  originLat: number,
-  originLng: number,
-  destLat: number,
-  destLng: number,
-  stops: LatLng[],
-  geometry: unknown,
-  zone: closureService.BlockingZone,
-  via: LatLng,
-): LatLng[] | null => {
+  width: number | undefined;
+  key: string;
+  userId: string;
+  baseGeometry: unknown;
+  baseDistance: number | undefined;
+  baseDuration: number | undefined;
+  baseSource: string;
+  baseCached: boolean;
+  blocking: closureService.BlockingZone[];
+  warnings: unknown;
+}): Promise<RouteResult> => {
+  const queueError = (
+    hazards: closureService.BlockingZone[],
+    widthBlocks: WidthBlock[],
+  ): RouteBlockedError | WidthBlockedError =>
+    hazards.length > 0 ?
+      new RouteBlockedError(hazards) :
+      new WidthBlockedError(widthBlocks);
+  const queueFor = async (
+    geometry: unknown,
+    provided: closureService.BlockingZone[] | null,
+  ): Promise<{
+    hazards: closureService.BlockingZone[];
+    widthBlocks: WidthBlock[];
+  }> => {
+    const hazards =
+      provided ?? (await closureService.findBlocking(geometry, userId)) ?? [];
+    const widthBlocks =
+      width !== undefined ? await findWidthBlocks(geometry, width) : [];
+    return {hazards, widthBlocks};
+  };
   const controls: LatLng[] = [
     {lat: originLat, lng: originLng},
     ...stops,
     {lat: destLat, lng: destLng},
   ];
-  if (stops.length === 0) {
-    return [controls[0], via, controls[1]];
-  }
-  const segIndex = nearestSegmentIndex(geometry, zone);
-  const ordinal =
-    segIndex === null ? null : legOrdinalForZone(geometry, stops, segIndex);
-  if (ordinal === null) return null;
-  return [
-    ...controls.slice(0, ordinal + 1),
-    via,
-    ...controls.slice(ordinal + 1),
+  const {widthBlocks: baseWidthBlocks} = await queueFor(
+    baseGeometry,
+    blocking,
+  );
+  const queue: closureService.BlockingZone[] = [
+    ...blocking,
+    ...baseWidthBlocks.map(toWidthZone),
   ];
+  const hasCoords = (zone: closureService.BlockingZone): boolean =>
+    Number.isFinite(zone.lat) &&
+    Number.isFinite(zone.lng) &&
+    Number.isFinite(zone.radiusMeters) &&
+    zone.radiusMeters > 0;
+  if (queue.length === 0) {
+    await recordActiveRoute(key, userId, baseGeometry);
+    return {
+      cached: baseCached,
+      distanceMeters: baseDistance,
+      durationSeconds: baseDuration,
+      geometry: baseGeometry,
+      source: baseSource,
+      warnings,
+    };
+  }
+  if (!queue.every(hasCoords)) {
+    throw queueError(blocking, baseWidthBlocks);
+  }
+  for (const point of controls) {
+    for (const zone of queue) {
+      if (
+        haversineMeters(point.lat, point.lng, zone.lat, zone.lng) <=
+        zone.radiusMeters
+      ) {
+        throw queueError(blocking, baseWidthBlocks);
+      }
+    }
+  }
+  let geometry = baseGeometry;
+  let distanceMeters = baseDistance;
+  let durationSeconds = baseDuration;
+  let lastWidthBlocks = baseWidthBlocks;
+  for (let attempt = 0; attempt < DETOUR_ATTEMPTS; attempt++) {
+    const scale = attempt === 0 ? 1 : DETOUR_RADIUS_GROWTH;
+    const solved = await postRoute(
+      controls,
+      queue.map((zone) =>
+        circleToRing(zone.lat, zone.lng, zone.radiusMeters * scale),
+      ),
+    );
+    const recheck = await queueFor(solved.geometry, null);
+    lastWidthBlocks = recheck.widthBlocks;
+    if (recheck.hazards.length + recheck.widthBlocks.length === 0) {
+      geometry = solved.geometry;
+      distanceMeters = solved.distanceMeters;
+      durationSeconds = solved.durationSeconds;
+      break;
+    }
+    if (attempt === DETOUR_ATTEMPTS - 1) {
+      throw queueError(recheck.hazards, recheck.widthBlocks);
+    }
+  }
+  if (
+    baseDistance !== undefined &&
+    distanceMeters !== undefined &&
+    distanceMeters - baseDistance > MAX_EXTRA_DISTANCE_METERS
+  ) {
+    if (blocking.length > 0) throw new RouteBlockedError(blocking);
+    throw new WidthBlockedError(lastWidthBlocks);
+  }
+  const outWarnings = await closureService.findWarnings(geometry, userId);
+  await recordActiveRoute(key, userId, geometry);
+  return {
+    cached: baseCached,
+    distanceMeters,
+    durationSeconds,
+    geometry,
+    source: "detour",
+    hazards: blocking,
+    warnings: outWarnings,
+  };
 };
 
 const widthToBucket = (width?: number): string => {
@@ -256,6 +265,8 @@ interface WidthBlock {
   segmentId: string;
   baseWidth: number;
   distanceMeters: number;
+  lat: number;
+  lng: number;
 }
 
 const findWidthBlocks = async (
@@ -309,6 +320,8 @@ const findWidthBlocks = async (
         segmentId: segment.id,
         baseWidth,
         distanceMeters: Math.round(nearest * 10) / 10,
+        lat,
+        lng,
       });
     }
   }
@@ -359,15 +372,17 @@ const getRoute = async ({
     cached = true;
     source = "cache";
   } else {
-    const controls = [
-      `${originLng},${originLat}`,
-      ...stopList.map((s) => `${s.lng},${s.lat}`),
-      `${destLng},${destLat}`,
-    ];
-    const route = await solveOsrm(controls.join(";"), widthBucket);
-    geometry = route.geometry ?? null;
-    distanceMeters = route.distance;
-    durationSeconds = route.duration;
+    const route = await postRoute(
+      [
+        {lat: originLat, lng: originLng},
+        ...stopList,
+        {lat: destLat, lng: destLng},
+      ],
+      [],
+    );
+    geometry = route.geometry;
+    distanceMeters = route.distanceMeters;
+    durationSeconds = route.durationSeconds;
     await routingCacheRepository.save(key, {
       originLat,
       originLng,
@@ -375,20 +390,19 @@ const getRoute = async ({
       destLng,
       stops: stopList,
       widthBucket,
-      geometry: route.geometry ?? null,
-      distanceMeters: route.distance,
-      durationSeconds: route.duration,
+      geometry: route.geometry,
+      distanceMeters: route.distanceMeters,
+      durationSeconds: route.durationSeconds,
     });
     cached = false;
-    source = "osrm";
+    source = "valhalla";
   }
 
-  const zones = await closureService.findBlocking(geometry);
-  if (zones.length === 0) {
-    if (width !== undefined) {
-      const blocks = await findWidthBlocks(geometry, width);
-      if (blocks.length > 0) throw new WidthBlockedError(blocks);
-    }
+  const {blocking: zones, warnings} = await closureService.analyzeRoute(
+    geometry,
+    userId,
+  );
+  if (zones.length === 0 && width === undefined) {
     await recordActiveRoute(key, userId, geometry);
     return {
       cached,
@@ -396,38 +410,33 @@ const getRoute = async ({
       durationSeconds,
       geometry,
       source,
+      warnings,
     };
   }
-  const detoured = await tryDetour({
+  return await routeSafely({
     originLat,
     originLng,
     destLat,
     destLng,
     stops: stopList,
-    widthBucket,
-    geometry,
-    zones,
+    width,
+    key,
+    userId,
+    baseGeometry: geometry,
+    baseDistance: distanceMeters,
+    baseDuration: durationSeconds,
+    baseSource: source,
+    baseCached: cached,
+    blocking: zones,
+    warnings,
   });
-  if (detoured) {
-    await recordActiveRoute(key, userId, detoured.geometry);
-    return {
-      cached: false,
-      distanceMeters: detoured.distanceMeters,
-      durationSeconds: detoured.durationSeconds,
-      geometry: detoured.geometry,
-      source: "detour",
-      via: detoured.via,
-      hazards: zones,
-    };
-  }
-  throw new RouteBlockedError(zones);
 };
 
 export {
   getRoute,
   widthToBucket,
+  MAX_EXTRA_DISTANCE_METERS,
   NotFoundError,
-  ServiceError,
   RouteBlockedError,
   WidthBlockedError,
 };
