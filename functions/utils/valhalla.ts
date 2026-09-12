@@ -83,27 +83,74 @@ const circleToRing = (
 };
 
 const readErrorMessage = async (response: Response): Promise<string> => {
-  try {
-    const body = (await response.json()) as {
-      error?: unknown;
-      error_code?: unknown;
-    };
-    if (typeof body.error === "string") return body.error;
-    if (typeof body.error_code === "number") return String(body.error_code);
-  } catch {
-    // fall through to the status-based error below
-  }
+  const body = (await response.json().catch(() => null)) as {
+    error?: unknown;
+    error_code?: unknown;
+  } | null;
+  if (typeof body?.error === "string") return body.error;
+  if (typeof body?.error_code === "number") return String(body.error_code);
   return "";
 };
 
-const postRoute = async (
+const parseTrip = (trip: unknown): ValhallaRoute => {
+  const legs = (trip as {legs?: unknown})?.legs;
+  if (!Array.isArray(legs) || legs.length === 0) {
+    throw new ServiceError("No route found", 404);
+  }
+  const coords: Array<[number, number]> = [];
+  for (const leg of legs) {
+    const shape = (leg as {shape?: unknown})?.shape;
+    if (typeof shape !== "string" || shape.length === 0) {
+      throw new ServiceError("No route found", 404);
+    }
+    for (const pt of decodePolyline6(shape)) {
+      const prev = coords[coords.length - 1];
+      if (
+        prev &&
+        Math.abs(prev[0] - pt[0]) < 1e-9 &&
+        Math.abs(prev[1] - pt[1]) < 1e-9
+      ) {
+        continue;
+      }
+      coords.push(pt);
+    }
+  }
+  if (coords.length === 0) {
+    throw new ServiceError("No route found", 404);
+  }
+  const summary = (trip as {summary?: unknown})?.summary ?? {};
+  const length = (summary as {length?: unknown})?.length;
+  const time = (summary as {time?: unknown})?.time;
+  const distanceMeters = typeof length === "number" ? length * 1000 : NaN;
+  const durationSeconds = typeof time === "number" ? time : NaN;
+  if (!Number.isFinite(distanceMeters) || !Number.isFinite(durationSeconds)) {
+    throw new ServiceError("No route found", 404);
+  }
+  return {
+    geometry: {type: "LineString", coordinates: coords},
+    distanceMeters,
+    durationSeconds,
+  };
+};
+
+const MAX_ALTERNATES = 2;
+
+const postRoutes = async (
   locations: LatLng[],
   excludePolygons: Ring[] = [],
-): Promise<ValhallaRoute> => {
+  maxAlternates = 1,
+): Promise<ValhallaRoute[]> => {
+  const want = Math.max(
+    1,
+    Math.min(maxAlternates, MAX_ALTERNATES + 1),
+  );
   const body: Record<string, unknown> = {
     locations: locations.map((p) => ({lat: p.lat, lon: p.lng})),
     costing: VALHALLA_COSTING,
   };
+  if (want > 1 && locations.length === 2) {
+    body.alternates = want - 1;
+  }
   const rings = excludePolygons.filter((ring) => ring.length >= 4);
   if (rings.length > 0) body.exclude_polygons = rings;
   let response: Response | null = null;
@@ -137,53 +184,31 @@ const postRoute = async (
     throw new ServiceError(`Routing service returned ${response.status}`);
   }
   const data = (await response.json()) as {
-    trip?: {
-      legs?: Array<{shape?: unknown}>;
-      summary?: {length?: unknown; time?: unknown};
-    };
+    trip?: unknown;
+    alternates?: Array<{trip?: unknown}>;
   };
-  const legs = data?.trip?.legs;
-  if (!Array.isArray(legs) || legs.length === 0) {
-    throw new ServiceError("No route found", 404);
-  }
-  const coords: Array<[number, number]> = [];
-  for (const leg of legs) {
-    const shape = (leg as {shape?: unknown})?.shape;
-    if (typeof shape !== "string" || shape.length === 0) {
-      throw new ServiceError("No route found", 404);
-    }
-    for (const pt of decodePolyline6(shape)) {
-      const prev = coords[coords.length - 1];
-      if (
-        prev &&
-        Math.abs(prev[0] - pt[0]) < 1e-9 &&
-        Math.abs(prev[1] - pt[1]) < 1e-9
-      ) {
-        continue;
-      }
-      coords.push(pt);
+  const routes = [parseTrip(data?.trip)];
+  for (const alt of data?.alternates ?? []) {
+    try {
+      routes.push(parseTrip(alt?.trip));
+    } catch {
+      continue;
     }
   }
-  if (coords.length === 0) {
-    throw new ServiceError("No route found", 404);
-  }
-  const summary = data.trip?.summary ?? {};
-  const distanceMeters =
-    typeof summary.length === "number" ? summary.length * 1000 : NaN;
-  const durationSeconds =
-    typeof summary.time === "number" ? summary.time : NaN;
-  if (!Number.isFinite(distanceMeters) || !Number.isFinite(durationSeconds)) {
-    throw new ServiceError("No route found", 404);
-  }
-  return {
-    geometry: {type: "LineString", coordinates: coords},
-    distanceMeters,
-    durationSeconds,
-  };
+  return routes;
+};
+
+const postRoute = async (
+  locations: LatLng[],
+  excludePolygons: Ring[] = [],
+): Promise<ValhallaRoute> => {
+  const routes = await postRoutes(locations, excludePolygons, 1);
+  return routes[0];
 };
 
 export {
   postRoute,
+  postRoutes,
   decodePolyline6,
   circleToRing,
   VALHALLA_URL,

@@ -596,7 +596,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Served from the `routing_cache` collection on key hit (`source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometry stored JSON-stringified). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ROUTING_ENGINE.md](./ROUTING_ENGINE.md).
+Route between two points for the caller's vehicle width. Returns up to 3 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometries stored JSON-stringified). Stop-less requests ask Valhalla for `alternates: 2` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ROUTING_ENGINE.md](./ROUTING_ENGINE.md).
 
 **Request:**
 ```json
@@ -624,15 +624,21 @@ Route between two points for the caller's vehicle width. Served from the `routin
   "status": "SUCCESS",
   "data": {
     "cached": false,
-    "distanceMeters": 2450.5,
-    "durationSeconds": 512.3,
-    "geometry": { "type": "LineString", "coordinates": [] },
-    "source": "valhalla"
+    "routes": [
+      {
+        "distanceMeters": 2450.5,
+        "durationSeconds": 512.3,
+        "geometry": { "type": "LineString", "coordinates": [] },
+        "source": "valhalla"
+      }
+    ]
   }
 }
 ```
 
-Every request (cache hit or fresh) is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service re-solves through Valhalla with every blocking circle passed as `exclude_polygons`, so the detour grows natively around the closure; stops are sent as Valhalla `locations` in order, so every stop is preserved. See `200 (detour)` below.
+Stop-less requests return up to 3 options in `routes` (same per-option shape); requests with `stops` return exactly 1.
+
+Every option — primary first, then each alternative — is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service re-solves through Valhalla with every blocking circle passed as `exclude_polygons`, so the detour grows natively around the closure; stops are sent as Valhalla `locations` in order, so every stop is preserved. See `200 (detour)` below. A blocked primary falls back to the first safe alternative; alternatives that are themselves hazard- or width-blocked are dropped. Only when no option is safe is the request refused (see `409` below).
 
 **Response `200` (detour):**
 ```json
@@ -641,12 +647,16 @@ Every request (cache hit or fresh) is re-validated against active hazard flags �
   "status": "SUCCESS",
   "data": {
     "cached": false,
-    "distanceMeters": 2600.1,
-    "durationSeconds": 560.0,
-    "geometry": { "type": "LineString", "coordinates": [] },
-    "source": "detour",
-    "hazards": [
-      { "flagId": "flag1", "type": "FLOOD", "lat": 10.77, "lng": 106.68, "radiusMeters": 200, "note": null, "distanceMeters": 0 }
+    "routes": [
+      {
+        "distanceMeters": 2600.1,
+        "durationSeconds": 560.0,
+        "geometry": { "type": "LineString", "coordinates": [] },
+        "source": "detour",
+        "hazards": [
+          { "flagId": "flag1", "type": "FLOOD", "lat": 10.77, "lng": 106.68, "radiusMeters": 200, "note": null, "distanceMeters": 0 }
+        ]
+      }
     ]
   }
 }
@@ -753,6 +763,55 @@ List shops near a point with computed `distance`, optionally filtered by `type`.
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
+
+---
+
+### `POST /places/search` **(Auth)**
+
+Prefix-search the directory (shops, then landmarks) by name. Matching is accent-sensitive on lowercased names (`q` 2–80 chars, `limit` 1–10 per collection, default 5).
+
+**Request:**
+```json
+{ "q": "demo moto", "limit": 5 }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ { "kind": "shop", "id": "...", "label": "Demo Moto Repair Ben Thanh", "lat": 10.7725, "lng": 106.698, "type": "SHOP" } ] }`
+
+---
+
+### `POST /places/save` **(Auth)**
+
+Save a place for the current user. Same coordinates dedupe to one entry (the label is updated); capped at 50 saved places per user.
+
+**Request:**
+```json
+{ "label": "Home", "lat": 10.7626, "lng": 106.6602 }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "userId": "...", ... } }`
+
+---
+
+### `POST /places/saved` **(Auth)**
+
+List the current user's saved places, newest first.
+
+**Request:** `{}`
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...saved places... ] }`
+
+---
+
+### `POST /places/unsave` **(Auth)**
+
+Delete one of the current user's saved places (`403` when it belongs to someone else, `404` when unknown).
+
+**Request:**
+```json
+{ "placeId": "..." }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "deleted": 1 } }`
 
 ---
 

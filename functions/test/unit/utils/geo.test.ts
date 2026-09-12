@@ -203,7 +203,6 @@ describe("cellsCoveringBounds", () => {
         (bounds.minLat + bounds.maxLat) / 2,
         (bounds.minLng + bounds.maxLng) / 2,
       ],
-      // interleave between old 9-sample gaps
       [10.75, 106.68],
       [10.83, 106.74],
     ];

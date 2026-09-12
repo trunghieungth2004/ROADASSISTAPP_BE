@@ -16,6 +16,8 @@ import vehicleProfileRoutes from "../../routes/vehicleProfileRoutes";
 import alleySegmentRoutes from "../../routes/alleySegmentRoutes";
 import flagRoutes from "../../routes/flagRoutes";
 import landmarkRoutes from "../../routes/landmarkRoutes";
+import placesRoutes from "../../routes/placesRoutes";
+import savedPlaceRoutes from "../../routes/savedPlaceRoutes";
 import routingRoutes from "../../routes/routingRoutes";
 import shopRoutes from "../../routes/shopRoutes";
 import diagnosticRoutes from "../../routes/diagnosticRoutes";
@@ -31,6 +33,8 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   alleySegmentRoutes(app, deps);
   flagRoutes(app, deps);
   landmarkRoutes(app, deps);
+  placesRoutes(app, deps);
+  savedPlaceRoutes(app, deps);
   routingRoutes(app, deps);
   shopRoutes(app, deps);
   diagnosticRoutes(app, deps);

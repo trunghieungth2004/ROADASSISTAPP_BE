@@ -21,15 +21,27 @@ const encodePolyline = (coords: Array<Array<number>>): string => {
   return out;
 };
 
+type RouteSpec = {
+  geometry: {type: string; coordinates: Array<Array<number>>};
+  distanceMeters: number;
+  durationSeconds: number;
+};
+
+const tripOf = (spec: RouteSpec): Record<string, unknown> => ({
+  legs: [{shape: encodePolyline(spec.geometry.coordinates)}],
+  summary: {length: spec.distanceMeters / 1000, time: spec.durationSeconds},
+});
+
 const valhallaRoute = (
   geometry: {type: string; coordinates: Array<Array<number>>},
   distanceMeters: number,
   durationSeconds: number,
+  alternates: RouteSpec[] = [],
 ): Record<string, unknown> => ({
-  trip: {
-    legs: [{shape: encodePolyline(geometry.coordinates)}],
-    summary: {length: distanceMeters / 1000, time: durationSeconds},
-  },
+  trip: tripOf({geometry, distanceMeters, durationSeconds}),
+  ...(alternates.length > 0 ?
+    {alternates: alternates.map((spec) => ({trip: tripOf(spec)}))} :
+    {}),
 });
 
-export {encodePolyline, valhallaRoute};
+export {encodePolyline, valhallaRoute, RouteSpec};

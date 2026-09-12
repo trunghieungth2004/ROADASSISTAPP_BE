@@ -181,10 +181,13 @@ const seedLandmark = async (
   const ref = db.collection("landmarks").doc();
   const lat = (overrides.lat as number) ?? BASE_LAT;
   const lng = (overrides.lng as number) ?? BASE_LNG;
+  const displayLabel =
+    (overrides.displayLabel as string) ?? `Landmark ${ref.id}`;
   await ref.set({
     lat,
     lng,
-    displayLabel: `Landmark ${ref.id}`,
+    displayLabel,
+    displayLabelLower: displayLabel.trim().toLowerCase(),
     geoHash: encodeGeohash(lat, lng, 8),
     geoCell: encodeGeohash(lat, lng, 6),
     createdAt: new Date().toISOString(),
@@ -199,8 +202,10 @@ const seedShop = async (
   const ref = db.collection("shops").doc();
   const lat = (overrides.lat as number) ?? BASE_LAT;
   const lng = (overrides.lng as number) ?? BASE_LNG;
+  const name = (overrides.name as string) ?? `Shop ${ref.id}`;
   await ref.set({
-    name: `Shop ${ref.id}`,
+    name,
+    nameLower: name.trim().toLowerCase(),
     lat,
     lng,
     type: "SHOP",

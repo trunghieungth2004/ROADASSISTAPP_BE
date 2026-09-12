@@ -3,6 +3,7 @@ import {
   circleToRing,
   decodePolyline6,
   postRoute,
+  postRoutes,
   ServiceError,
 } from "../../../utils/valhalla";
 
@@ -189,5 +190,75 @@ describe("postRoute", () => {
       message: "Routing service unreachable",
     });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("postRoutes", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("requests and parses up to 3 routes for two locations", async () => {
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+      okResponse({
+        ...tripBody([SHAPE_A], 2.45, 512),
+        alternates: [
+          {trip: tripBody([SHAPE_B], 2.6, 560).trip},
+          {trip: tripBody([SHAPE_B], 2.8, 610).trip},
+        ],
+      }),
+    );
+    const res = await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      3,
+    );
+    expect(res).toHaveLength(3);
+    expect(res[0].distanceMeters).toBeCloseTo(2450, 6);
+    expect(res[1].distanceMeters).toBeCloseTo(2600, 6);
+    expect(res[2].durationSeconds).toBe(610);
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(sent.alternates).toBe(2);
+  });
+
+  it("omits alternates for multi-point requests", async () => {
+    const fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(okResponse(tripBody([SHAPE_A])));
+    const res = await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.77, lng: 106.68},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      3,
+    );
+    expect(res).toHaveLength(1);
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(sent.alternates).toBeUndefined();
+  });
+
+  it("skips alternates without a usable shape", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      okResponse({
+        ...tripBody([SHAPE_A], 2.45, 512),
+        alternates: [{trip: {legs: [], summary: {length: 1, time: 1}}}],
+      }),
+    );
+    const res = await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      3,
+    );
+    expect(res).toHaveLength(1);
   });
 });

@@ -23,6 +23,26 @@ snapping + per-via re-solves) and stitched the winner in as a `via`
 waypoint, which produced the backtrack-loop artifacts. The new flow makes
 at most 3 engine calls and has no waypoints to stitch.
 
+## Route alternatives
+
+Stop-less requests send `alternates: 2` (want = `MAX_ROUTE_OPTIONS` = 3)
+in the single Valhalla call; Valhalla returns extras at top-level
+`alternates[].trip`, parsed by `utils/valhalla.postRoutes` (entries without
+a usable shape are skipped). Requests with `stops` omit `alternates` and
+return one route. Cache entries store the routes array; pre-alternatives
+single-route entries are still readable (legacy read).
+
+Per option, in order: the primary goes through the full hazard +
+width-gate pipeline (detour on block, `409` on unavoidable); each
+alternative gets a lighter check (`buildAlternative`) and is dropped when
+hazard- or width-blocked. A blocked primary falls back to the first safe
+alternative; `409` is returned only when no option is safe.
+`active_routes` records the returned primary geometry.
+
+Cost: still one engine HTTP call; measured live at ~34–48 ms for 3 routes
+vs ~24–39 ms for 1 (≈10–15 ms delta — the engine is self-hosted, so no
+per-call cost change).
+
 ## What changed in app usage
 
 | Behavior | Before (OSRM) | Now (Valhalla) |
@@ -42,6 +62,7 @@ at most 3 engine calls and has no waypoints to stitch.
 | Limit | Value | Notes |
 |---|---|---|
 | Stops per request | 10 (app validation) | engine allows 50 locations; app stays the binding constraint |
+| Route options | up to 3 (`MAX_ROUTE_OPTIONS`), stop-less requests only | `alternates: 2` in the one Valhalla call; ~10–15 ms over a single route; `409` only when no option is safe |
 | Route distance | 500 km (engine `max_distance`, `motor_scooter`) | **new**: OSRM had no cap — intercity routes (e.g. HCMC → Hanoi) are refused by the engine and surface as `500`, not `404`/`409` |
 | Avoidance budget | 100 km total `exclude_polygons` circumference (raised from the 10 km default in our image) | ~79 simultaneous 200 m flood circles; past it the engine 400s and the API returns `500` |
 | Detour attempts | 1 solve + 1 widened (1.5×) retry, then `409` | was up to 3 via-probing passes |

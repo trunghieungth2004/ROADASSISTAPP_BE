@@ -1,215 +1,24 @@
 import * as routingCacheRepository from
   "../repository/routingCacheRepository";
-import * as activeRouteRepository from
-  "../repository/activeRouteRepository";
-import * as closureService from "../service/closureService";
 import * as userRepository from "../repository/userRepository";
-import * as alleySegmentRepository from
-  "../repository/alleySegmentRepository";
-import {computePassability} from "../service/alleySegmentService";
-import {
-  cellsForBounds,
-  extractLineCoords,
-  haversineMeters,
-  pointToSegmentMeters,
-} from "../utils/geo";
-import {circleToRing, postRoute} from "../utils/valhalla";
+import * as closureService from "./closureService";
+import {postRoutes} from "../utils/valhalla";
 import type {LatLng} from "../utils/valhalla";
+import {
+  NotFoundError,
+  RouteBlockedError,
+  WidthBlockedError,
+  isConflictError,
+} from "./routing/errors";
+import type {BaseRoute, RouteList, RouteOption} from "./routing/types";
+import {
+  routeSafely,
+  recordActiveRoute,
+  MAX_EXTRA_DISTANCE_METERS,
+} from "./routing/detour";
+import {probeWidth, withTightZones} from "./routing/widthGate";
 
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 404;
-  }
-}
-class RouteBlockedError extends Error {
-  statusCode: number;
-  errors: unknown;
-  constructor(zones: unknown) {
-    super("Route is blocked by active road hazards");
-    this.statusCode = 409;
-    this.errors = zones;
-  }
-}
-class WidthBlockedError extends Error {
-  statusCode: number;
-  errors: unknown;
-  constructor(segments: unknown) {
-    super("Route is impassable for this vehicle width");
-    this.statusCode = 409;
-    this.errors = segments;
-  }
-}
-
-const WIDTH_GATE_RADIUS_METERS = 20;
-
-interface RouteResult {
-  cached: boolean;
-  distanceMeters?: number;
-  durationSeconds?: number;
-  geometry?: unknown;
-  source: string;
-  via?: {lat: number; lng: number};
-  hazards?: unknown;
-  warnings?: unknown;
-}
-
-const MAX_EXTRA_DISTANCE_METERS = 15000;
-const WIDTH_PSEUDO_RADIUS_METERS = 20;
-const DETOUR_ATTEMPTS = 2;
-const DETOUR_RADIUS_GROWTH = 1.5;
-
-const toWidthZone = (block: WidthBlock): closureService.BlockingZone => ({
-  flagId: `width:${block.segmentId}`,
-  type: "WIDTH",
-  lat: block.lat,
-  lng: block.lng,
-  radiusMeters: WIDTH_PSEUDO_RADIUS_METERS,
-  note: null,
-  distanceMeters: 0,
-  raw: block,
-});
-
-const routeSafely = async ({
-  originLat,
-  originLng,
-  destLat,
-  destLng,
-  stops,
-  width,
-  key,
-  userId,
-  baseGeometry,
-  baseDistance,
-  baseDuration,
-  baseSource,
-  baseCached,
-  blocking,
-  warnings,
-}: {
-  originLat: number;
-  originLng: number;
-  destLat: number;
-  destLng: number;
-  stops: LatLng[];
-  width: number | undefined;
-  key: string;
-  userId: string;
-  baseGeometry: unknown;
-  baseDistance: number | undefined;
-  baseDuration: number | undefined;
-  baseSource: string;
-  baseCached: boolean;
-  blocking: closureService.BlockingZone[];
-  warnings: unknown;
-}): Promise<RouteResult> => {
-  const queueError = (
-    hazards: closureService.BlockingZone[],
-    widthBlocks: WidthBlock[],
-  ): RouteBlockedError | WidthBlockedError =>
-    hazards.length > 0 ?
-      new RouteBlockedError(hazards) :
-      new WidthBlockedError(widthBlocks);
-  const queueFor = async (
-    geometry: unknown,
-    provided: closureService.BlockingZone[] | null,
-  ): Promise<{
-    hazards: closureService.BlockingZone[];
-    widthBlocks: WidthBlock[];
-  }> => {
-    const hazards =
-      provided ?? (await closureService.findBlocking(geometry, userId)) ?? [];
-    const widthBlocks =
-      width !== undefined ? await findWidthBlocks(geometry, width) : [];
-    return {hazards, widthBlocks};
-  };
-  const controls: LatLng[] = [
-    {lat: originLat, lng: originLng},
-    ...stops,
-    {lat: destLat, lng: destLng},
-  ];
-  const {widthBlocks: baseWidthBlocks} = await queueFor(
-    baseGeometry,
-    blocking,
-  );
-  const queue: closureService.BlockingZone[] = [
-    ...blocking,
-    ...baseWidthBlocks.map(toWidthZone),
-  ];
-  const hasCoords = (zone: closureService.BlockingZone): boolean =>
-    Number.isFinite(zone.lat) &&
-    Number.isFinite(zone.lng) &&
-    Number.isFinite(zone.radiusMeters) &&
-    zone.radiusMeters > 0;
-  if (queue.length === 0) {
-    await recordActiveRoute(key, userId, baseGeometry);
-    return {
-      cached: baseCached,
-      distanceMeters: baseDistance,
-      durationSeconds: baseDuration,
-      geometry: baseGeometry,
-      source: baseSource,
-      warnings,
-    };
-  }
-  if (!queue.every(hasCoords)) {
-    throw queueError(blocking, baseWidthBlocks);
-  }
-  for (const point of controls) {
-    for (const zone of queue) {
-      if (
-        haversineMeters(point.lat, point.lng, zone.lat, zone.lng) <=
-        zone.radiusMeters
-      ) {
-        throw queueError(blocking, baseWidthBlocks);
-      }
-    }
-  }
-  let geometry = baseGeometry;
-  let distanceMeters = baseDistance;
-  let durationSeconds = baseDuration;
-  let lastWidthBlocks = baseWidthBlocks;
-  for (let attempt = 0; attempt < DETOUR_ATTEMPTS; attempt++) {
-    const scale = attempt === 0 ? 1 : DETOUR_RADIUS_GROWTH;
-    const solved = await postRoute(
-      controls,
-      queue.map((zone) =>
-        circleToRing(zone.lat, zone.lng, zone.radiusMeters * scale),
-      ),
-    );
-    const recheck = await queueFor(solved.geometry, null);
-    lastWidthBlocks = recheck.widthBlocks;
-    if (recheck.hazards.length + recheck.widthBlocks.length === 0) {
-      geometry = solved.geometry;
-      distanceMeters = solved.distanceMeters;
-      durationSeconds = solved.durationSeconds;
-      break;
-    }
-    if (attempt === DETOUR_ATTEMPTS - 1) {
-      throw queueError(recheck.hazards, recheck.widthBlocks);
-    }
-  }
-  if (
-    baseDistance !== undefined &&
-    distanceMeters !== undefined &&
-    distanceMeters - baseDistance > MAX_EXTRA_DISTANCE_METERS
-  ) {
-    if (blocking.length > 0) throw new RouteBlockedError(blocking);
-    throw new WidthBlockedError(lastWidthBlocks);
-  }
-  const outWarnings = await closureService.findWarnings(geometry, userId);
-  await recordActiveRoute(key, userId, geometry);
-  return {
-    cached: baseCached,
-    distanceMeters,
-    durationSeconds,
-    geometry,
-    source: "detour",
-    hazards: blocking,
-    warnings: outWarnings,
-  };
-};
+const MAX_ROUTE_OPTIONS = 3;
 
 const widthToBucket = (width?: number): string => {
   if (width === undefined) return "MEDIUM";
@@ -251,81 +60,130 @@ const parseGeometry = (stored: unknown): unknown => {
   }
 };
 
-const recordActiveRoute = async (
-  routeKey: string,
-  userId: string,
-  geometry: unknown,
-): Promise<void> => {
-  await activeRouteRepository
-    .touch(routeKey, userId, geometry)
-    .catch(() => undefined);
+const readCachedRoutes = (entry: {
+  routes?: unknown;
+  geometry?: unknown;
+  distanceMeters?: number;
+  durationSeconds?: number;
+}): BaseRoute[] => {
+  const stored = parseGeometry(entry.routes) as
+    | Array<{
+        geometry?: unknown;
+        distanceMeters?: number;
+        durationSeconds?: number;
+      }>
+    | null;
+  if (Array.isArray(stored)) {
+    return stored.map((r) => ({
+      geometry: parseGeometry(r.geometry),
+      distanceMeters: r.distanceMeters,
+      durationSeconds: r.durationSeconds,
+    }));
+  }
+  return [];
 };
 
-interface WidthBlock {
-  segmentId: string;
-  baseWidth: number;
-  distanceMeters: number;
-  lat: number;
-  lng: number;
-}
+const legacyCachedRoute = (entry: {
+  geometry?: unknown;
+  distanceMeters?: number;
+  durationSeconds?: number;
+}): BaseRoute | null => {
+  if (entry.geometry === undefined) return null;
+  return {
+    geometry: parseGeometry(entry.geometry),
+    distanceMeters: entry.distanceMeters,
+    durationSeconds: entry.durationSeconds,
+  };
+};
 
-const findWidthBlocks = async (
-  geometry: unknown,
-  width: number,
-): Promise<WidthBlock[]> => {
-  const coords = extractLineCoords(geometry);
-  if (coords.length === 0) return [];
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLng = Infinity;
-  let maxLng = -Infinity;
-  for (const [lng, lat] of coords) {
-    minLat = Math.min(minLat, lat);
-    maxLat = Math.max(maxLat, lat);
-    minLng = Math.min(minLng, lng);
-    maxLng = Math.max(maxLng, lng);
-  }
-  const segments = await alleySegmentRepository.findByGeohashPrefixes(
-    cellsForBounds({minLat, maxLat, minLng, maxLng}, 4),
+const buildPrimary = async ({
+  base,
+  originLat,
+  originLng,
+  destLat,
+  destLng,
+  stops,
+  width,
+  key,
+  userId,
+  source,
+}: {
+  base: BaseRoute;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  stops: LatLng[];
+  width: number | undefined;
+  key: string;
+  userId: string;
+  source: string;
+}): Promise<RouteOption> => {
+  const {blocking: zones, warnings} = await closureService.analyzeRoute(
+    base.geometry,
+    userId,
   );
-  const blocks: WidthBlock[] = [];
-  for (const segment of segments) {
-    const lat = (segment as {lat?: unknown}).lat;
-    const lng = (segment as {lng?: unknown}).lng;
-    const baseWidth = segment.baseWidth;
-    if (
-      typeof lat !== "number" ||
-      typeof lng !== "number" ||
-      typeof baseWidth !== "number"
-    ) {
-      continue;
-    }
-    if (computePassability(segment, width).compatible) continue;
-    let nearest = Infinity;
-    for (let i = 0; i + 1 < coords.length; i++) {
-      nearest = Math.min(
-        nearest,
-        pointToSegmentMeters(
-          lat,
-          lng,
-          coords[i][1],
-          coords[i][0],
-          coords[i + 1][1],
-          coords[i + 1][0],
-        ),
-      );
-    }
-    if (Number.isFinite(nearest) && nearest <= WIDTH_GATE_RADIUS_METERS) {
-      blocks.push({
-        segmentId: segment.id,
-        baseWidth,
-        distanceMeters: Math.round(nearest * 10) / 10,
-        lat,
-        lng,
-      });
-    }
+  if (zones.length === 0 && width === undefined) {
+    return {
+      distanceMeters: base.distanceMeters,
+      durationSeconds: base.durationSeconds,
+      geometry: base.geometry,
+      source,
+      warnings,
+    };
   }
-  return blocks;
+  return await routeSafely({
+    originLat,
+    originLng,
+    destLat,
+    destLng,
+    stops,
+    width,
+    key,
+    userId,
+    baseGeometry: base.geometry,
+    baseDistance: base.distanceMeters,
+    baseDuration: base.durationSeconds,
+    baseSource: source,
+    blocking: zones,
+    warnings,
+  });
+};
+
+const buildAlternative = async ({
+  base,
+  width,
+  userId,
+  source,
+}: {
+  base: BaseRoute;
+  width: number | undefined;
+  userId: string;
+  source: string;
+}): Promise<RouteOption | null> => {
+  const {blocking: zones, warnings} = await closureService.analyzeRoute(
+    base.geometry,
+    userId,
+  );
+  if (zones.length > 0) return null;
+  if (width === undefined) {
+    return {
+      distanceMeters: base.distanceMeters,
+      durationSeconds: base.durationSeconds,
+      geometry: base.geometry,
+      source,
+      warnings,
+    };
+  }
+  const probe = await probeWidth(base.geometry, width);
+  if (probe.blocks.length > 0) return null;
+  return {
+    distanceMeters: base.distanceMeters,
+    durationSeconds: base.durationSeconds,
+    geometry: base.geometry,
+    source,
+    warnings: withTightZones(width, probe.tight, warnings),
+  };
 };
 
 const getRoute = async ({
@@ -344,7 +202,7 @@ const getRoute = async ({
   destLng: number;
   stops?: LatLng[];
   width?: number;
-}): Promise<RouteResult> => {
+}): Promise<RouteList> => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
 
@@ -360,29 +218,35 @@ const getRoute = async ({
   );
 
   const existing = await routingCacheRepository.findExisting(key);
-  let geometry: unknown;
-  let distanceMeters: number | undefined;
-  let durationSeconds: number | undefined;
-  let cached: boolean;
-  let source: string;
+  let bases: BaseRoute[] = [];
+  let cached = false;
+  let source = "valhalla";
   if (existing) {
-    geometry = parseGeometry(existing.geometry);
-    distanceMeters = existing.distanceMeters;
-    durationSeconds = existing.durationSeconds;
-    cached = true;
-    source = "cache";
-  } else {
-    const route = await postRoute(
-      [
-        {lat: originLat, lng: originLng},
-        ...stopList,
-        {lat: destLat, lng: destLng},
-      ],
-      [],
-    );
-    geometry = route.geometry;
-    distanceMeters = route.distanceMeters;
-    durationSeconds = route.durationSeconds;
+    bases = readCachedRoutes(existing);
+    if (bases.length === 0) {
+      const legacy = legacyCachedRoute(existing);
+      if (legacy) bases = [legacy];
+    }
+    if (bases.length > 0) {
+      cached = true;
+      source = "cache";
+    }
+  }
+  if (!cached) {
+    const controls: LatLng[] = [
+      {lat: originLat, lng: originLng},
+      ...stopList,
+      {lat: destLat, lng: destLng},
+    ];
+    const raw =
+      stopList.length === 0 ?
+        await postRoutes(controls, [], MAX_ROUTE_OPTIONS) :
+        await postRoutes(controls, [], 1);
+    bases = raw.map((r) => ({
+      geometry: r.geometry,
+      distanceMeters: r.distanceMeters,
+      durationSeconds: r.durationSeconds,
+    }));
     await routingCacheRepository.save(key, {
       originLat,
       originLng,
@@ -390,30 +254,14 @@ const getRoute = async ({
       destLng,
       stops: stopList,
       widthBucket,
-      geometry: route.geometry,
-      distanceMeters: route.distanceMeters,
-      durationSeconds: route.durationSeconds,
+      routes: bases,
     });
-    cached = false;
-    source = "valhalla";
   }
 
-  const {blocking: zones, warnings} = await closureService.analyzeRoute(
-    geometry,
-    userId,
-  );
-  if (zones.length === 0 && width === undefined) {
-    await recordActiveRoute(key, userId, geometry);
-    return {
-      cached,
-      distanceMeters,
-      durationSeconds,
-      geometry,
-      source,
-      warnings,
-    };
-  }
-  return await routeSafely({
+  const options: RouteOption[] = [];
+  let firstError: unknown = null;
+  const primary = await buildPrimary({
+    base: bases[0],
     originLat,
     originLng,
     destLat,
@@ -422,21 +270,34 @@ const getRoute = async ({
     width,
     key,
     userId,
-    baseGeometry: geometry,
-    baseDistance: distanceMeters,
-    baseDuration: durationSeconds,
-    baseSource: source,
-    baseCached: cached,
-    blocking: zones,
-    warnings,
+    source,
+  }).catch((err: unknown) => {
+    if (!isConflictError(err)) throw err;
+    firstError = err;
+    return null;
   });
+  if (primary) options.push(primary);
+  for (const base of bases.slice(1)) {
+    const option = await buildAlternative({base, width, userId, source});
+    if (option) options.push(option);
+  }
+  if (options.length === 0) {
+    if (firstError) throw firstError;
+    throw new RouteBlockedError([]);
+  }
+  await recordActiveRoute(key, userId, options[0].geometry);
+  return {cached, routes: options};
 };
 
 export {
   getRoute,
   widthToBucket,
   MAX_EXTRA_DISTANCE_METERS,
+  MAX_ROUTE_OPTIONS,
   NotFoundError,
   RouteBlockedError,
   WidthBlockedError,
+  RouteList,
+  RouteOption,
+  BaseRoute,
 };

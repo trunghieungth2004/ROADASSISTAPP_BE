@@ -25,6 +25,7 @@ const create = async (data: {
     lat: data.lat,
     lng: data.lng,
     displayLabel: data.displayLabel,
+    displayLabelLower: data.displayLabel.trim().toLowerCase(),
     embedding: data.embedding ?? null,
     geoHash: encodeGeohash(data.lat, data.lng, 8),
     geoCell: encodeGeohash(data.lat, data.lng, 6),
@@ -57,4 +58,23 @@ const findById = async (landmarkId: string): Promise<Landmark | null> => {
   return {id: doc.id, ...doc.data()} as Landmark;
 };
 
-export {create, findByGeohashPrefixes, findById};
+const findByLabelPrefix = async (
+  prefix: string,
+  limit = 5,
+): Promise<Landmark[]> => {
+  const q = prefix.trim().toLowerCase();
+  if (!q) return [];
+  const snapshot = await db
+    .collection("landmarks")
+    .where("displayLabelLower", ">=", q)
+    .where("displayLabelLower", "<", `${q}\uf8ff`)
+    .limit(limit)
+    .get();
+  const results: Landmark[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Landmark),
+  );
+  return results;
+};
+
+export {create, findByGeohashPrefixes, findById, findByLabelPrefix};

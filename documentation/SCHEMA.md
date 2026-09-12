@@ -226,6 +226,8 @@ No body schema (any body allowed; still admin-gated).
 | `stops` | array of {lat, lng} (max 10) | opt |
 | `width` | number (meters) | opt (default bucket MEDIUM) |
 
+Responds `{cached, routes}` — up to 3 options stop-less (`routes[0]` primary), exactly 1 with `stops`; per-option `{distanceMeters, durationSeconds, geometry, source, via?, hazards?, warnings?}`. Full shapes in [API.md](./API.md#routing).
+
 ---
 
 ## Push

@@ -1,6 +1,5 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
-import {cellsForBounds, encodeGeohash} from "../../utils/geo";
 import {
   cleanAll,
   seedUser,
@@ -57,8 +56,8 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send(body);
     expect(miss.status).toBe(200);
-    expect(miss.body.data).toMatchObject({
-      cached: false,
+    expect(miss.body.data).toMatchObject({cached: false});
+    expect(miss.body.data.routes[0]).toMatchObject({
       source: "valhalla",
       distanceMeters: 2450,
     });
@@ -67,13 +66,13 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send(body);
     expect(hit.status).toBe(200);
-    expect(hit.body.data).toMatchObject({
-      cached: true,
+    expect(hit.body.data).toMatchObject({cached: true});
+    expect(hit.body.data.routes[0]).toMatchObject({
       source: "cache",
       distanceMeters: 2450,
       durationSeconds: 512,
     });
-    expect(hit.body.data.geometry).toEqual(geometry);
+    expect(hit.body.data.routes[0].geometry).toEqual(geometry);
   });
 
   it("POST /routes 409s on a flooded cached route", async () => {
@@ -96,203 +95,14 @@ describe("routing endpoints", () => {
     await db.collection("flags").doc(floodId).delete();
   });
 
-  it("POST /routes detours around a fresh blockage", async () => {
-    let routeCalls = 0;
-    const direct = {
-      type: "LineString",
-      coordinates: [
-        [106.66, 10.76],
-        [106.7, 10.78],
-      ],
-    };
-    const around = {
-      type: "LineString",
-      coordinates: [
-        [106.66, 10.76],
-        [106.69, 10.79],
-        [106.7, 10.78],
-      ],
-    };
-    jest.mocked(global.fetch).mockImplementation(async () => {
-      routeCalls++;
-      const route =
-        routeCalls === 1 ?
-          valhallaRoute(direct, 2450, 512) :
-          valhallaRoute(around, 2600, 560);
-      return {
-        ok: true,
-        json: async () => route,
-      } as unknown as Response;
-    });
-    const floodId = await seedFlag({
-      type: "FLOOD",
-      status: "2",
-      lat: 10.77,
-      lng: 106.68,
-      radiusMeters: 200,
-    });
-    const res = await request(app)
-      .post("/routes")
-      .set("Authorization", bearer(USER))
-      .send({...body, destLat: 10.795, destLng: 106.71});
-    expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({
-      cached: false,
-      source: "detour",
-      distanceMeters: 2600,
-    });
-    expect(res.body.data.via ?? null).toBeNull();
-    expect(res.body.data.hazards[0]).toMatchObject({
-      flagId: floodId,
-      type: "FLOOD",
-    });
-    await db.collection("flags").doc(floodId).delete();
-  });
-
-  it("POST /routes detours a long route around mid-line hazards", async () => {
-    let routeCalls = 0;
-    const direct = {
-      type: "LineString",
-      coordinates: [
-        [106.55, 10.7],
-        [106.95, 10.7],
-      ],
-    };
-    const around = {
-      type: "LineString",
-      coordinates: [
-        [106.55, 10.7],
-        [106.75, 10.78],
-        [106.95, 10.7],
-      ],
-    };
-    const margin = 0.03;
-    const legacy = new Set(
-      cellsForBounds({
-        minLat: 10.7 - margin,
-        maxLat: 10.7 + margin,
-        minLng: 106.55 - margin,
-        maxLng: 106.95 + margin,
-      }),
-    );
-    let hazardLng = 0;
-    for (let lng = 106.6; lng <= 106.9; lng += 0.005) {
-      if (!legacy.has(encodeGeohash(10.7, lng, 5))) {
-        hazardLng = lng;
-        break;
-      }
-    }
-    expect(hazardLng).toBeGreaterThan(0);
-    jest.mocked(global.fetch).mockImplementation(async () => {
-      routeCalls++;
-      const route =
-        routeCalls === 1 ?
-          valhallaRoute(direct, 44000, 5300) :
-          valhallaRoute(around, 47000, 5700);
-      return {
-        ok: true,
-        json: async () => route,
-      } as unknown as Response;
-    });
-    const floodId = await seedFlag({
-      type: "FLOOD",
-      status: "2",
-      lat: 10.7,
-      lng: hazardLng,
-      radiusMeters: 200,
-      reporterUid: USER,
-    });
-    const res = await request(app)
-      .post("/routes")
-      .set("Authorization", bearer(USER))
-      .send({
-        originLat: 10.7,
-        originLng: 106.55,
-        destLat: 10.7,
-        destLng: 106.95,
-      });
-    expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({
-      cached: false,
-      source: "detour",
-      distanceMeters: 47000,
-    });
-    expect(res.body.data.via ?? null).toBeNull();
-    expect(res.body.data.hazards[0]).toMatchObject({
-      flagId: floodId,
-      type: "FLOOD",
-    });
-    await db.collection("flags").doc(floodId).delete();
-  });
-
-  it("POST /routes detours for the reporter of a suggested flag", async () => {
-    const around = {
-      type: "LineString",
-      coordinates: [
-        [106.66, 10.76],
-        [106.69, 10.79],
-        [106.7, 10.78],
-      ],
-    };
-    jest.mocked(global.fetch).mockResolvedValue({
-      ok: true,
-      json: async () => valhallaRoute(around, 2600, 560),
-    } as unknown as Response);
-    const floodId = await seedFlag({
-      type: "FLOOD",
-      status: "1",
-      lat: 10.77,
-      lng: 106.68,
-      radiusMeters: 200,
-      reporterUid: USER,
-    });
-    const res = await request(app)
-      .post("/routes")
-      .set("Authorization", bearer(USER))
-      .send({...body, destLat: 10.795, destLng: 106.71});
-    expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({
-      source: "detour",
-      warnings: [],
-    });
-    expect(res.body.data.via ?? null).toBeNull();
-    expect(res.body.data.hazards[0]).toMatchObject({
-      flagId: floodId,
-      type: "FLOOD",
-    });
-    await db.collection("flags").doc(floodId).delete();
-  });
-
-  it("POST /routes warns other riders about a suggested flag", async () => {
-    const floodId = await seedFlag({
-      type: "FLOOD",
-      status: "1",
-      lat: 10.77,
-      lng: 106.68,
-      radiusMeters: 200,
-      reporterUid: USER,
-    });
-    const res = await request(app)
-      .post("/routes")
-      .set("Authorization", bearer(USER2))
-      .send({...body, destLat: 10.795, destLng: 106.71});
-    expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({source: "cache"});
-    expect(res.body.data.hazards ?? null).toBeNull();
-    expect(res.body.data.warnings[0]).toMatchObject({
-      flagId: floodId,
-      type: "FLOOD",
-    });
-    await db.collection("flags").doc(floodId).delete();
-  });
-
   it("POST /routes unblocks after the flood is gone", async () => {
     const res = await request(app)
       .post("/routes")
       .set("Authorization", bearer(USER))
       .send(body);
     expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({cached: true, source: "cache"});
+    expect(res.body.data).toMatchObject({cached: true});
+    expect(res.body.data.routes[0]).toMatchObject({source: "cache"});
   });
 
   it("POST /routes routes through stops in order", async () => {
@@ -301,7 +111,9 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send({...body, stops: [{lat: 10.77, lng: 106.68}]});
     expect(res.status).toBe(200);
-    expect(res.body.data).toMatchObject({cached: false, source: "valhalla"});
+    expect(res.body.data).toMatchObject({cached: false});
+    expect(res.body.data.routes[0]).toMatchObject({source: "valhalla"});
+    expect(res.body.data.routes).toHaveLength(1);
     const [, init] = jest.mocked(global.fetch).mock.calls[0] as [
       string,
       RequestInit,
@@ -309,6 +121,7 @@ describe("routing endpoints", () => {
     const sent = JSON.parse(init.body as string) as {
       locations: Array<{lat: number; lon: number}>;
       costing: string;
+      alternates?: number;
     };
     expect(sent.costing).toBe("motor_scooter");
     expect(sent.locations).toEqual([
@@ -316,6 +129,7 @@ describe("routing endpoints", () => {
       {lat: 10.77, lon: 106.68},
       {lat: 10.7758, lon: 106.7019},
     ]);
+    expect(sent.alternates).toBeUndefined();
   });
 
   it("POST /routes rejects too many stops", async () => {

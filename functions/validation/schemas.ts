@@ -175,6 +175,19 @@ const schemas = {
     radiusMeters: numOpt(),
     type: Joi.string().valid("SHOP", "PUMP").optional(),
   }),
+  searchPlaces: Joi.object({
+    q: Joi.string().trim().min(2).max(80).required(),
+    limit: Joi.number().integer().min(1).max(10).optional(),
+  }),
+  savePlace: Joi.object({
+    label: Joi.string().trim().min(1).max(120).required(),
+    lat: latAttr(),
+    lng: langAttr(),
+  }),
+  listSavedPlaces: emptyBody(),
+  unsavePlace: Joi.object({
+    placeId: strReq(),
+  }),
   createDiagnostic: Joi.object({
     category: Joi.string()
       .valid("FLAT_TIRE", "FLUID_LEAK", "CHAIN_SLACK", "SPARK_CAP")

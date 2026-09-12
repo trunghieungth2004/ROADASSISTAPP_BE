@@ -8,6 +8,12 @@ const ttlSeconds = (): number => {
   return raw;
 };
 
+interface CachedRoute {
+  geometry: unknown;
+  distanceMeters?: number;
+  durationSeconds?: number;
+}
+
 interface RouteCacheEntry {
   id: string;
   originLat: number;
@@ -16,7 +22,8 @@ interface RouteCacheEntry {
   destLng: number;
   stops?: {lat: number; lng: number}[];
   widthBucket: string;
-  geometry: unknown;
+  routes?: unknown;
+  geometry?: unknown;
   distanceMeters?: number;
   durationSeconds?: number;
   cachedAt: string;
@@ -51,9 +58,7 @@ const save = async (
     destLng: number;
     stops?: {lat: number; lng: number}[];
     widthBucket: string;
-    geometry: unknown;
-    distanceMeters?: number;
-    durationSeconds?: number;
+    routes: CachedRoute[];
   },
 ): Promise<void> => {
   const now = new Date();
@@ -62,10 +67,17 @@ const save = async (
     .doc(key)
     .set({
       ...entry,
-      geometry: JSON.stringify(entry.geometry ?? null),
+      routes: JSON.stringify(entry.routes ?? []),
       cachedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + ttlSeconds() * 1000).toISOString(),
     });
 };
 
-export {findExisting, save, isExpired, ttlSeconds, DEFAULT_TTL_SECONDS};
+export {
+  findExisting,
+  save,
+  isExpired,
+  ttlSeconds,
+  DEFAULT_TTL_SECONDS,
+  CachedRoute,
+};
