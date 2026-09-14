@@ -119,7 +119,7 @@ describe("routingService detours", () => {
     expect(mockPostRoutes.mock.calls[0]).toEqual([
       [originStop, destStop],
       [],
-      3,
+      5,
     ]);
     const polygons = mockPostRoutes.mock.calls[1][1] ?? [];
     expect(polygons).toHaveLength(1);
@@ -135,7 +135,7 @@ describe("routingService detours", () => {
     );
   });
 
-  it("retries the detour with wider polygons when still blocked", async () => {
+  it("retries the detour with true radii when still blocked", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -209,10 +209,211 @@ describe("routingService detours", () => {
         | undefined;
       return polys?.[0]?.[0]?.[1] ?? NaN;
     };
-    expect(ringLat(2)).toBeGreaterThan(ringLat(1));
+    expect(ringLat(2)).toBeCloseTo(ringLat(1), 10);
+    expect(ringLat(1)).toBeCloseTo(10.77 + 200 / 111320, 6);
   });
 
-  it("throws 409 after detour attempts stay blocked", async () => {
+  it("chains zones found on the re-solve into the exclusion set", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const direct: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    const mid: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.68, 10.77],
+        [106.7, 10.78],
+      ],
+    };
+    const around: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.685, 10.785],
+        [106.7, 10.78],
+      ],
+    };
+    mockPostRoutes
+      .mockResolvedValueOnce([
+        {geometry: direct, distanceMeters: 2450, durationSeconds: 512},
+      ])
+      .mockResolvedValueOnce([
+        {geometry: mid, distanceMeters: 2500, durationSeconds: 530},
+      ])
+      .mockResolvedValue([
+        {geometry: around, distanceMeters: 2700, durationSeconds: 580},
+      ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const z1 = {
+      flagId: "flood-1",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
+    const z2 = {
+      flagId: "obstruction-2",
+      lat: 10.775,
+      lng: 106.687,
+      radiusMeters: 100,
+      distanceMeters: 0,
+    };
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [z1],
+      warnings: [],
+    } as never);
+    jest.mocked(closureService.findBlocking)
+      .mockResolvedValueOnce([z1, z2] as never)
+      .mockResolvedValue([]);
+    jest.mocked(closureService.findWarnings).mockResolvedValue([]);
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      routes: [
+        {
+          source: "detour",
+          hazards: [z1],
+          distanceMeters: 2700,
+          geometry: around,
+        },
+      ],
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(3);
+    const polys = mockPostRoutes.mock.calls[2][1] as Array<
+      Array<[number, number]>
+    >;
+    expect(polys).toHaveLength(2);
+    const centers = polys.map((ring) => [ring[0][0], ring[0][1]]);
+    expect(centers.map((c) => c[0])).toContainEqual(
+      expect.closeTo(106.687, 6),
+    );
+    const z2ring = centers.find((c) => Math.abs(c[0] - 106.687) < 1e-6);
+    expect(z2ring?.[1]).toBeCloseTo(10.775 + 100 / 111320, 6);
+    expect(activeRouteRepository.touch).toHaveBeenCalledWith(
+      expect.any(String),
+      "u1",
+      around,
+    );
+  });
+
+  it("steers a cascading two-point detour", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const direct: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    const mid: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.68, 10.77],
+        [106.7, 10.78],
+      ],
+    };
+    const steerSlow: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.67, 10.765],
+        [106.7, 10.78],
+      ],
+    };
+    const steerFast: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.675, 10.768],
+        [106.7, 10.78],
+      ],
+    };
+    const steerMid: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.672, 10.766],
+        [106.7, 10.78],
+      ],
+    };
+    mockPostRoutes
+      .mockResolvedValueOnce([
+        {geometry: direct, distanceMeters: 2450, durationSeconds: 512},
+      ])
+      .mockResolvedValueOnce([
+        {geometry: mid, distanceMeters: 2500, durationSeconds: 530},
+      ])
+      .mockResolvedValueOnce([
+        {geometry: steerSlow, distanceMeters: 2600, durationSeconds: 300},
+      ])
+      .mockResolvedValueOnce([
+        {geometry: steerFast, distanceMeters: 2400, durationSeconds: 250},
+      ])
+      .mockResolvedValue([
+        {geometry: steerMid, distanceMeters: 2500, durationSeconds: 270},
+      ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const z1 = {
+      flagId: "flood-1",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
+    const z2 = {
+      flagId: "obstruction-2",
+      lat: 10.775,
+      lng: 106.687,
+      radiusMeters: 100,
+      distanceMeters: 0,
+    };
+    const z3 = {
+      flagId: "accident-3",
+      lat: 10.772,
+      lng: 106.683,
+      radiusMeters: 150,
+      distanceMeters: 0,
+    };
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [z1],
+      warnings: [],
+    } as never);
+    jest.mocked(closureService.findBlocking)
+      .mockResolvedValueOnce([z1, z2, z3] as never)
+      .mockResolvedValue([]);
+    jest.mocked(closureService.findWarnings).mockResolvedValue([]);
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      routes: [
+        {
+          source: "detour",
+          hazards: [z1],
+          distanceMeters: 2400,
+          durationSeconds: 250,
+          geometry: steerFast,
+        },
+      ],
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(5);
+    const steeredCall = mockPostRoutes.mock.calls[2];
+    expect(steeredCall[0]).toHaveLength(3);
+    expect(steeredCall[0][0]).toEqual(originStop);
+    expect(steeredCall[0][2]).toEqual(destStop);
+    expect(steeredCall[1]).toHaveLength(1);
+  });
+
+  it("returns the blocked route with hazards on detour failure", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -244,11 +445,19 @@ describe("routingService detours", () => {
     jest.mocked(closureService.findBlocking).mockResolvedValue(
       zones as never,
     );
-    await expect(getRoute(base)).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      cached: false,
+      routes: [
+        {
+          source: "valhalla",
+          geometry,
+          hazards: zones,
+          distanceMeters: 2450,
+        },
+      ],
     });
-    expect(mockPostRoutes).toHaveBeenCalledTimes(3);
+    expect(mockPostRoutes).toHaveBeenCalledTimes(5);
   });
 
   it("detours a multi-stop route through the blocked leg", async () => {
@@ -316,7 +525,72 @@ describe("routingService detours", () => {
     ]);
   });
 
-  it("409s when a stop sits inside a blocking zone", async () => {
+  it("collapses alternatives whose detours converge", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const directA: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.68, 10.77],
+      ],
+    };
+    const directB: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.685, 10.775],
+      ],
+    };
+    const around: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.69, 10.79],
+        [106.7, 10.78],
+      ],
+    };
+    mockPostRoutes
+      .mockResolvedValueOnce([
+        {geometry: directA, distanceMeters: 2450, durationSeconds: 512},
+        {geometry: directB, distanceMeters: 2500, durationSeconds: 530},
+      ])
+      .mockResolvedValue([
+        {geometry: around, distanceMeters: 2600, durationSeconds: 560},
+      ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const z1 = {
+      flagId: "flood-1",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
+    const z2 = {
+      flagId: "obstruction-2",
+      lat: 10.775,
+      lng: 106.69,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
+    jest.mocked(closureService.analyzeRoute).mockImplementation(
+      async (geometry: unknown) => ({
+        blocking: geometry === directA ? [z1] : [z2],
+        warnings: [],
+      }) as never,
+    );
+    jest.mocked(closureService.findBlocking).mockResolvedValue([]);
+    jest.mocked(closureService.findWarnings).mockResolvedValue([]);
+    const res = await getRoute(base);
+    expect(res.routes).toHaveLength(1);
+    expect(res).toMatchObject({
+      routes: [{source: "detour", geometry: around}],
+    });
+  });
+
+  it("rejects a stop sitting in a blocking zone", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -332,26 +606,63 @@ describe("routingService detours", () => {
       {geometry, distanceMeters: 2450, durationSeconds: 512},
     ]);
     jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
-    const zones = [
-      {
-        flagId: "flood-1",
-        lat: 10.77,
-        lng: 106.68,
-        radiusMeters: 200,
-        distanceMeters: 0,
-      },
-    ];
+    const zone = {
+      flagId: "flood-1",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
     jest.mocked(closureService.analyzeRoute).mockResolvedValue({
-      blocking: zones,
+      blocking: [zone],
       warnings: [],
     } as never);
     await expect(
       getRoute({...base, stops: [{lat: 10.77, lng: 106.68}]}),
-    ).rejects.toMatchObject({statusCode: 409, errors: zones});
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: "Stop 1 is inside an active road hazard zone",
+      errors: {control: "stop 1", zone},
+    });
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
   });
 
-  it("409s when the detour exceeds the extra-distance cap", async () => {
+  it("rejects a destination sitting in a flag", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    mockPostRoutes.mockResolvedValue([
+      {geometry, distanceMeters: 2450, durationSeconds: 512},
+    ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    const zone = {
+      flagId: "acc-1",
+      type: "ACCIDENT",
+      lat: 10.7758,
+      lng: 106.7019,
+      radiusMeters: 200,
+      distanceMeters: 0,
+    };
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [zone],
+      warnings: [],
+    } as never);
+    await expect(getRoute(base)).rejects.toMatchObject({
+      statusCode: 409,
+      message: "Destination is inside an active ACCIDENT zone",
+      errors: {control: "destination", zone},
+    });
+  });
+
+  it("returns hazards when the detour exceeds the distance cap", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -394,9 +705,9 @@ describe("routingService detours", () => {
     } as never);
     jest.mocked(closureService.findBlocking).mockResolvedValue([]);
     jest.mocked(closureService.findWarnings).mockResolvedValue([]);
-    await expect(getRoute(base)).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      routes: [{source: "valhalla", geometry: direct, hazards: zones}],
     });
     expect(closureService.findWarnings).not.toHaveBeenCalled();
   });

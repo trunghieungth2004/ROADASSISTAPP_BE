@@ -100,6 +100,42 @@ describe("routingService.getRoute", () => {
     expect(mockPostRoutes).not.toHaveBeenCalled();
   });
 
+  it("collapses identical geometries stored in the cache", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    const dup = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
+      routes: JSON.stringify([
+        {geometry: dup, distanceMeters: 2450, durationSeconds: 512},
+        {geometry: dup, distanceMeters: 2450, durationSeconds: 512},
+      ]),
+    } as never);
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [],
+      warnings: [],
+    });
+    await expect(getRoute(base)).resolves.toEqual({
+      cached: true,
+      routes: [
+        {
+          distanceMeters: 2450,
+          durationSeconds: 512,
+          geometry: dup,
+          source: "cache",
+          warnings: [],
+        },
+      ],
+    });
+    expect(mockPostRoutes).not.toHaveBeenCalled();
+  });
+
   it("calls Valhalla on a miss and persists the result", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
@@ -127,7 +163,7 @@ describe("routingService.getRoute", () => {
       ],
     });
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
-    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 3);
+    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 5);
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -142,7 +178,7 @@ describe("routingService.getRoute", () => {
     );
   });
 
-  it("throws 409 with zones when a fresh route crosses a flood", async () => {
+  it("returns the blocked route with hazards instead of 409ing", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -157,16 +193,30 @@ describe("routingService.getRoute", () => {
       blocking: zones,
       warnings: [],
     } as never);
-    await expect(getRoute(base)).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      cached: false,
+      routes: [
+        {
+          distanceMeters: 100,
+          durationSeconds: 50,
+          geometry,
+          source: "valhalla",
+          hazards: zones,
+          warnings: [],
+        },
+      ],
     });
     expect(routingCacheRepository.save).toHaveBeenCalled();
-    expect(activeRouteRepository.touch).not.toHaveBeenCalled();
+    expect(activeRouteRepository.touch).toHaveBeenCalledWith(
+      expect.any(String),
+      "u1",
+      geometry,
+    );
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
   });
 
-  it("throws 409 with zones on a cache hit crossing a flood", async () => {
+  it("returns hazards on a cache hit crossing a flood", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -179,9 +229,17 @@ describe("routingService.getRoute", () => {
       blocking: zones,
       warnings: [],
     } as never);
-    await expect(getRoute(base)).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    const res = await getRoute(base);
+    expect(res).toMatchObject({
+      cached: true,
+      routes: [
+        {
+          geometry,
+          source: "cache",
+          hazards: zones,
+          warnings: [],
+        },
+      ],
     });
     expect(mockPostRoutes).not.toHaveBeenCalled();
   });
@@ -226,7 +284,7 @@ describe("routingService.getRoute", () => {
     });
     await getRoute({...base, width: 0.9});
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
-    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 3);
+    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 5);
   });
 
   it("keeps width buckets out of the engine request", async () => {

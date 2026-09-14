@@ -18,8 +18,6 @@ const saveRoute = async (req: Request, res: Response) => {
       durationSeconds,
       source,
       geometry,
-      via,
-      hazards,
     } = req.body;
     const result = await savedRouteService.saveRoute({
       userId,
@@ -34,8 +32,6 @@ const saveRoute = async (req: Request, res: Response) => {
       durationSeconds,
       source,
       geometry,
-      via,
-      hazards,
     });
     sendSuccess(res, result, {message: "Route saved", statusCode: 201});
   } catch (error) {

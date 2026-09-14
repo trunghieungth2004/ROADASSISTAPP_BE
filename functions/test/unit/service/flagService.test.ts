@@ -1,5 +1,9 @@
 import * as flagRepository from "../../../repository/flagRepository";
 import * as userRepository from "../../../repository/userRepository";
+import * as savedRouteRepository from
+  "../../../repository/savedRouteRepository";
+import * as savedPlaceRepository from
+  "../../../repository/savedPlaceRepository";
 import * as taskQueueService from "../../../service/taskQueueService";
 import {
   createFlag,
@@ -13,12 +17,16 @@ import {
 
 jest.mock("../../../repository/flagRepository");
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../repository/savedRouteRepository");
+jest.mock("../../../repository/savedPlaceRepository");
 jest.mock("../../../service/taskQueueService", () => ({
   enqueueHazardPush: jest.fn(async () => ({enqueued: false})),
 }));
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(savedRouteRepository.listByUserId).mockResolvedValue([]);
+  jest.mocked(savedPlaceRepository.listByUserId).mockResolvedValue([]);
 });
 
 describe("flagService.createFlag", () => {
@@ -57,6 +65,81 @@ describe("flagService.createFlag", () => {
     expect(flagRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({radiusMeters: 500}),
     );
+  });
+
+  it("rejects a flag covering an own saved route destination", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(savedRouteRepository.listByUserId).mockResolvedValue([
+      {
+        id: "r1",
+        name: "Home run",
+        originLat: 10.0,
+        originLng: 106.0,
+        destLat: 10.841,
+        destLng: 106.809,
+      },
+    ] as never);
+    await expect(
+      createFlag({
+        userId: "u1",
+        type: "ACCIDENT",
+        lat: 10.841,
+        lng: 106.809,
+        radiusMeters: 200,
+      }),
+    ).rejects.toMatchObject({statusCode: 409});
+    expect(flagRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a flag covering an own saved place", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(savedPlaceRepository.listByUserId).mockResolvedValue([
+      {id: "p1", label: "Office", lat: 10.85, lng: 106.78},
+    ] as never);
+    await expect(
+      createFlag({
+        userId: "u1",
+        type: "FLOOD",
+        lat: 10.85,
+        lng: 106.78,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("Office"),
+    });
+    expect(flagRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("allows a flag far from own destinations", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(savedRouteRepository.listByUserId).mockResolvedValue([
+      {
+        id: "r1",
+        name: "Home run",
+        originLat: 10.0,
+        originLng: 106.0,
+        destLat: 10.841,
+        destLng: 106.809,
+      },
+    ] as never);
+    jest.mocked(flagRepository.create).mockResolvedValue({id: "f1"} as never);
+    await createFlag({
+      userId: "u1",
+      type: "ACCIDENT",
+      lat: 11.5,
+      lng: 107.5,
+      radiusMeters: 200,
+    });
+    expect(flagRepository.create).toHaveBeenCalled();
   });
 });
 

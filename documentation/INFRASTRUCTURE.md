@@ -53,7 +53,9 @@ unset in CI). `VALHALLA_MODE=local` builds the same image with local docker
 and pushes it to the same repo before the same `gcloud run deploy`;
 `VALHALLA_MODE=dev` skips Artifact Registry and Cloud Run entirely and runs
 `valhalla_service` in a local `valhalla-local` container (`VALHALLA_URL`
-becomes `http://localhost:8002`, emulator-only). Full mode matrix:
+becomes `http://localhost:8002`, emulator-only). The same modes are
+selectable as `setup.sh` flags — `-cb` (cloud), `-cl` (local), `-ll` (dev);
+an explicit flag beats `VALHALLA_MODE`. Full mode matrix:
 [DEPLOY.md](./DEPLOY.md#what-setupsh-does-idempotent-fast-when-unchanged).
 
 ## Services

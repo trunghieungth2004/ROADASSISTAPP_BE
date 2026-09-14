@@ -4,7 +4,12 @@ import * as closureService from "../closureService";
 import {haversineMeters} from "../../utils/geo";
 import {circleToRing, postRoutes} from "../../utils/valhalla";
 import type {LatLng} from "../../utils/valhalla";
-import {RouteBlockedError, WidthBlockedError} from "./errors";
+import {EndpointBlockedError, RouteBlockedError, WidthBlockedError} from
+  "./errors";
+import {
+  steerThroughCorridor,
+  STEER_MIN_FRESH_ZONES,
+} from "./corridor";
 import type {RouteOption} from "./types";
 import {
   probeWidth,
@@ -14,8 +19,44 @@ import {
 } from "./widthGate";
 
 const MAX_EXTRA_DISTANCE_METERS = 15000;
-const DETOUR_ATTEMPTS = 2;
-const DETOUR_RADIUS_GROWTH = 1.5;
+const DETOUR_ATTEMPTS = 4;
+const DETOUR_MAX_ZONES = 8;
+
+const hasCoords = (zone: closureService.BlockingZone): boolean =>
+  Number.isFinite(zone.lat) &&
+  Number.isFinite(zone.lng) &&
+  Number.isFinite(zone.radiusMeters) &&
+  zone.radiusMeters > 0;
+
+const hasFlagId = (zone: closureService.BlockingZone): boolean =>
+  typeof zone.flagId === "string" && zone.flagId !== "";
+
+const isWidthZone = (zone: closureService.BlockingZone): boolean =>
+  zone.flagId.startsWith("width:");
+
+const controlLabel = (index: number, total: number): string => {
+  if (index === 0) return "Origin";
+  if (index === total - 1) return "Destination";
+  return `Stop ${index}`;
+};
+
+const freshZones = (
+  queue: closureService.BlockingZone[],
+  hazards: closureService.BlockingZone[],
+  widthBlocks: WidthBlock[],
+): {zones: closureService.BlockingZone[]; unusable: boolean} => {
+  const known = new Set(queue.map((z) => z.flagId));
+  const zones: closureService.BlockingZone[] = [];
+  for (const candidate of [...hazards, ...widthBlocks.map(toWidthZone)]) {
+    if (!hasFlagId(candidate) || !hasCoords(candidate)) {
+      return {zones, unusable: true};
+    }
+    if (known.has(candidate.flagId)) continue;
+    known.add(candidate.flagId);
+    zones.push(candidate);
+  }
+  return {zones, unusable: false};
+};
 
 const recordActiveRoute = async (
   routeKey: string,
@@ -94,11 +135,6 @@ const routeSafely = async ({
     ...blocking,
     ...baseWidthBlocks.map(toWidthZone),
   ];
-  const hasCoords = (zone: closureService.BlockingZone): boolean =>
-    Number.isFinite(zone.lat) &&
-    Number.isFinite(zone.lng) &&
-    Number.isFinite(zone.radiusMeters) &&
-    zone.radiusMeters > 0;
   if (queue.length === 0) {
     await recordActiveRoute(key, userId, baseGeometry);
     return {
@@ -112,12 +148,19 @@ const routeSafely = async ({
   if (!queue.every(hasCoords)) {
     throw queueError(blocking, baseWidthBlocks);
   }
-  for (const point of controls) {
+  for (let i = 0; i < controls.length; i++) {
+    const point = controls[i];
     for (const zone of queue) {
       if (
         haversineMeters(point.lat, point.lng, zone.lat, zone.lng) <=
         zone.radiusMeters
       ) {
+        if (hasFlagId(zone) && !isWidthZone(zone)) {
+          throw new EndpointBlockedError(
+            controlLabel(i, controls.length),
+            zone,
+          );
+        }
         throw queueError(blocking, baseWidthBlocks);
       }
     }
@@ -128,12 +171,11 @@ const routeSafely = async ({
   let lastWidthBlocks = baseWidthBlocks;
   let lastTight = baseTight;
   for (let attempt = 0; attempt < DETOUR_ATTEMPTS; attempt++) {
-    const scale = attempt === 0 ? 1 : DETOUR_RADIUS_GROWTH;
     const solved = (
       await postRoutes(
         controls,
         queue.map((zone) =>
-          circleToRing(zone.lat, zone.lng, zone.radiusMeters * scale),
+          circleToRing(zone.lat, zone.lng, zone.radiusMeters),
         ),
         1,
       )
@@ -149,6 +191,50 @@ const routeSafely = async ({
     }
     if (attempt === DETOUR_ATTEMPTS - 1) {
       throw queueError(recheck.hazards, recheck.widthBlocks);
+    }
+    const fresh = freshZones(queue, recheck.hazards, recheck.widthBlocks);
+    const overfull = queue.length + fresh.zones.length > DETOUR_MAX_ZONES;
+    if (fresh.unusable || overfull) {
+      throw queueError(recheck.hazards, recheck.widthBlocks);
+    }
+    if (fresh.zones.length > 0) {
+      if (
+        attempt === 0 &&
+        stops.length === 0 &&
+        fresh.zones.length >= STEER_MIN_FRESH_ZONES
+      ) {
+        const steered = await steerThroughCorridor({
+          origin: {lat: originLat, lng: originLng},
+          destination: {lat: destLat, lng: destLng},
+          rings: queue.map((zone) =>
+            circleToRing(zone.lat, zone.lng, zone.radiusMeters),
+          ),
+          cluster: [...blocking, ...fresh.zones],
+          check: (geometry) => queueFor(geometry, null),
+        });
+        if (steered !== null) {
+          console.warn(
+            `[routing] corridor-steered ${JSON.stringify({
+              key,
+              distanceMeters: steered.distanceMeters,
+            })}`,
+          );
+          geometry = steered.geometry;
+          distanceMeters = steered.distanceMeters;
+          durationSeconds = steered.durationSeconds;
+          lastWidthBlocks = steered.widthBlocks;
+          lastTight = steered.widthTight;
+          break;
+        }
+      }
+      console.warn(
+        `[routing] detour-chained ${JSON.stringify({
+          key,
+          attempt,
+          zones: fresh.zones.map((z) => z.flagId),
+        })}`,
+      );
+      queue.push(...fresh.zones);
     }
   }
   if (
@@ -176,5 +262,5 @@ export {
   recordActiveRoute,
   MAX_EXTRA_DISTANCE_METERS,
   DETOUR_ATTEMPTS,
-  DETOUR_RADIUS_GROWTH,
+  DETOUR_MAX_ZONES,
 };

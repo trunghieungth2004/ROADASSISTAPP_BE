@@ -39,23 +39,27 @@ const toZone = (f: {
   radiusMeters?: number | null;
   note?: unknown;
 }): BlockingZone => {
-  const floor =
-    BLOCKING_RADIUS_METERS[f.type] ?? DEFAULT_RADIUS_METERS;
-  const requested = f.radiusMeters;
   return {
     flagId: f.id,
     type: f.type,
     lat: f.lat,
     lng: f.lng,
-    radiusMeters:
-      typeof requested === "number" &&
-      Number.isFinite(requested) &&
-      requested > 0 ?
-        Math.max(requested, floor) :
-        floor,
+    radiusMeters: effectiveRadiusMeters(f.type, f.radiusMeters),
     note: f.note ?? null,
     distanceMeters: 0,
   };
+};
+
+const effectiveRadiusMeters = (
+  type: string,
+  requested?: number | null,
+): number => {
+  const floor = BLOCKING_RADIUS_METERS[type] ?? DEFAULT_RADIUS_METERS;
+  return typeof requested === "number" &&
+    Number.isFinite(requested) &&
+    requested > 0 ?
+    Math.max(requested, floor) :
+    floor;
 };
 
 const computeCells = (geometry: unknown): string[] | null => {
@@ -134,6 +138,7 @@ export {
   findBlocking,
   findWarnings,
   analyzeRoute,
+  effectiveRadiusMeters,
   BLOCKING_TYPES,
   BLOCKING_STATUSES,
   BLOCKING_RADIUS_METERS,

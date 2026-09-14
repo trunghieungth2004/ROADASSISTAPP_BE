@@ -30,8 +30,6 @@ interface SaveRouteInput {
   durationSeconds?: number;
   source?: string;
   geometry: unknown;
-  via?: {lat: number; lng: number} | null;
-  hazards?: unknown[] | null;
 }
 
 interface SavedRouteSummary {

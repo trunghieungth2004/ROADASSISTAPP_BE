@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 27 unit suites (293 tests) and 19 integration suites (102 tests), all green:
+Backend tested with **Jest** across two tiers — 28 unit suites (311 tests) and 19 integration suites (103 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
@@ -55,8 +55,9 @@ functions/
     │       ├── routing/
     │       │   ├── getRoute.test.ts
     │       │   ├── alternatives.test.ts
-    │       │   ├── detour.test.ts
-    │       │   └── widthGate.test.ts
+│       │   ├── detour.test.ts
+│       │   ├── corridor.test.ts
+│       │   └── widthGate.test.ts
     │       ├── closureService.test.ts
     │       ├── shopService.test.ts
     │       ├── diagnosticService.test.ts
@@ -117,18 +118,19 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
-| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
+| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, flag covering an own saved-route destination/place → 409 (no create), far-away flag allowed, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
 | `service/placesService.test.ts` | Directory search merges shops before landmarks, prefix scoping, short-query rejection. |
 | `service/savedPlaceService.test.ts` | Save create, coord-dedupe label update, per-user list, stranger-unsave rejection. |
 | `service/savedRouteService.test.ts` | Save stores geometry, geometry-less rejection, summaries omit geometry, ownership gating on read/rename/delete. |
-| `service/routing/getRoute.test.ts` | Bucket mapping, engine request shape (ordered locations, no exclusions on clean routes, no width params), stops-aware cache key (legacy key when empty), cache-hit short-circuit (engine untouched), multi-stop single route (no `alternates`), `active_routes` touch on every 200 (never on 409), engine 500/404 propagation. `postRoutes` is module-mocked; wire behavior lives in `utils/valhalla.test.ts`. |
-| `service/routing/alternatives.test.ts` | `alternates: 2` on stop-less requests, top-level `alternates[].trip` parsing, unusable alternates skipped, hazard-/width-blocked alternatives dropped, blocked primary falls back to a safe alternative, 409 only when nothing is safe, legacy single-route cache read. |
-| `service/routing/detour.test.ts` | Margin schedule, bypass lands outside the zone, margin escalation, endpoint-inside → null, degenerate geometry → null, hazard block → detour (`source: "detour"` + `hazards`, detour never cached) → 409 after the widened retry, multi-stop detour preserves stop order, stop inside a zone → 409, over-distance detour → 409. |
+| `service/routing/getRoute.test.ts` | Bucket mapping, engine request shape (ordered locations, no exclusions on clean routes, no width params), stops-aware cache key (legacy key when empty), cache-hit short-circuit (engine untouched), cached duplicate geometries collapsed to one route, multi-stop single route (no `alternates`), blocked routes return soft-blocked with `hazards` instead of 409, `active_routes` touch on every 200, engine 500/404 propagation. `postRoutes` is module-mocked; wire behavior lives in `utils/valhalla.test.ts`. |
+| `service/routing/alternatives.test.ts` | `alternates: 4` on stop-less requests (up to 5 options), top-level `alternates[].trip` parsing, unusable alternates skipped, blocked alternatives get their own detour attempt, failed detours keep the raw route with `hazards`, width-blocked alternatives dropped, blocked primary falls back to a safe alternative then to soft-blocked primary, legacy single-route cache read. |
+| `service/routing/detour.test.ts` | Hazard block → detour (`source: "detour"` + `hazards`, detour never cached), chained retries reuse true reported radii, exhausted detour → soft-blocked with `hazards`, newly crossed zones chained into the exclusion set on the next attempt (up to 4 attempts / 8 zones), cascade of 3 fresh zones on a two-point request → steered shortest-clean win (≤5 engine calls, pre-chain single ring on the steered call), multi-stop detour preserves stop order, stop/destination inside a zone → named 409 (`EndpointBlockedError`), over-distance detour → soft-blocked. |
+| `service/routing/corridor.test.ts` | Shortest-duration clean anchor wins (≤3 candidate solves), every anchor lands outside all zones, >150 m from both controls, and within 0.15–0.85 axis progress, all-dirty candidates → null, empty cluster → null with no engine call. |
 | `service/routing/widthGate.test.ts` | Narrow segment → 409 after 2 attempts, width polygons in the detour request, compatible/unknown/far pass, skipped without width, hazard wins over width. |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
-| `utils/valhalla.test.ts` | `postRoutes` sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
+| `utils/valhalla.test.ts` | `postRoutes` sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, drops alternates with geometry identical to the primary, `dedupeRoutes` keeps first/preserves order/tolerates unparseable geometry, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
 | `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
 | `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open. |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune. |
@@ -154,9 +156,9 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `places.test.ts` | POST search merges shops before landmarks, prefix-scoped, short query 400, missing token 401 |
 | `savedPlace.test.ts` | POST save 201 + coord-dedupe label update, POST saved lists mine, POST unsave deletes mine / rejects strangers' |
-| `savedRoute.test.ts` | POST save stores route, geometry-less 400, POST saved lists summaries without geometry and hides others', POST saved/one + PUT rename + POST unsave are owner-only |
-| `routing.test.ts` | POST route miss → `routes[0].source: valhalla` + persisted, repeat → `cached: true`, confirmed flood → 409 + zones on the cached route, fresh blockage → `source: detour` + `hazards` (no `via`), flood removed → 200 again, stops routed in order as `locations` (single route), >10 stops → 400, narrower segment + width → 409 width-block, Valhalla down → 500 |
-| `routingAlternatives.test.ts` | Clean two-point route → 3 options, hazard-blocked alternative dropped, blocked primary falls back to a safe alternative, 409 when no option is safe |
+| `savedRoute.test.ts` | POST save stores route, geometry-less 400, legacy via/hazards ignored (stripped, not stored), POST saved lists summaries without geometry and hides others', POST saved/one + PUT rename + POST unsave are owner-only |
+| `routing.test.ts` | POST route miss → `routes[0].source: valhalla` + persisted, repeat → `cached: true`, confirmed flood → 200 soft-blocked with `hazards` on the cached route, fresh blockage → `source: detour` + `hazards` (no `via`), flood removed → 200 again, stops routed in order as `locations` (single route), >10 stops → 400, narrower segment + width → 409 width-block, Valhalla down → 500 |
+| `routingAlternatives.test.ts` | Clean two-point route → 3 options (`alternates: 4` on the wire), hazard-blocked alternative gets its own detour, blocked primary falls back to a safe alternative, fully-blocked set returns soft-blocked with `hazards` |
 | `routingDetour.test.ts` | Fresh blockage detoured, long route detoured around mid-line hazards, reporter's own suggested flag detours while other riders get a warning |
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
 | `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |

@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  echo "usage: $(basename "$0") [-cb | -cl | -ll]"
+  echo "  -cb  cloud build: build the engine image on the Cloud, deploy on the Cloud"
+  echo "  -cl  cloud local: build the engine image on this machine, deploy on the Cloud"
+  echo "  -ll  local local: build the engine image on this machine, run it locally"
+}
+
+FLAG_MODE=""
+case "${1:-}" in
+  -cb) FLAG_MODE=cloud;;
+  -cl) FLAG_MODE=local;;
+  -ll) FLAG_MODE=dev;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  -*) echo "[valhalla] unknown option '$1'" >&2; usage; exit 1;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "[valhalla] too many arguments" >&2
+  usage
+  exit 1
+fi
+
 if [ "${SKIP_VALHALLA_SETUP:-}" = "1" ] || [ "${SKIP_OSRM_SETUP:-}" = "1" ]; then
   echo "[valhalla] setup skipped (SKIP_VALHALLA_SETUP/SKIP_OSRM_SETUP=1)"
   exit 0
@@ -15,13 +39,13 @@ OSM_URL="${VALHALLA_OSM_URL:-https://download.geofabrik.de/asia/vietnam-latest.o
 CONTAINER="${VALHALLA_CONTAINER:-valhalla-local}"
 PORT="${VALHALLA_PORT:-8002}"
 
-MODE="${VALHALLA_MODE:-}"
+MODE="${FLAG_MODE:-${VALHALLA_MODE:-}}"
 if [ -z "$MODE" ]; then
   if [ -t 0 ]; then
     echo "[valhalla] select engine mode:"
-    echo "  1) cloud - Cloud Build image + Cloud Run engine (default)"
-    echo "  2) local - local docker build + push + Cloud Run engine"
-    echo "  3) dev   - local docker build + local valhalla container"
+    echo "  1) cloud - Cloud Build image + Cloud Run engine (default, -cb)"
+    echo "  2) local - local docker build + push + Cloud Run engine (-cl)"
+    echo "  3) dev   - local docker build + local valhalla container (-ll)"
     read -rp "[valhalla] mode [1/2/3, default 1]: " CHOICE || CHOICE=""
     case "${CHOICE:-}" in
       2) MODE=local;;

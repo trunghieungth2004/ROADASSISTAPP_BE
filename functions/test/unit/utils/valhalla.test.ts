@@ -2,6 +2,7 @@ import {haversineMeters} from "../../../utils/geo";
 import {
   circleToRing,
   decodePolyline6,
+  dedupeRoutes,
   postRoute,
   postRoutes,
   ServiceError,
@@ -204,7 +205,7 @@ describe("postRoutes", () => {
         ...tripBody([SHAPE_A], 2.45, 512),
         alternates: [
           {trip: tripBody([SHAPE_B], 2.6, 560).trip},
-          {trip: tripBody([SHAPE_B], 2.8, 610).trip},
+          {trip: tripBody([SHAPE_A, SHAPE_B], 2.8, 610).trip},
         ],
       }),
     );
@@ -260,5 +261,54 @@ describe("postRoutes", () => {
       3,
     );
     expect(res).toHaveLength(1);
+  });
+
+  it("drops alternates with geometry identical to the primary", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      okResponse({
+        ...tripBody([SHAPE_A], 2.45, 512),
+        alternates: [
+          {trip: tripBody([SHAPE_A], 2.5, 520).trip},
+          {trip: tripBody([SHAPE_B], 2.6, 560).trip},
+        ],
+      }),
+    );
+    const res = await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      3,
+    );
+    expect(res).toHaveLength(2);
+    expect(res[0].distanceMeters).toBeCloseTo(2450, 6);
+    expect(res[1].distanceMeters).toBeCloseTo(2600, 6);
+  });
+});
+
+describe("dedupeRoutes", () => {
+  const line = (coords: Array<[number, number]>) => ({
+    geometry: {type: "LineString" as const, coordinates: coords},
+    distanceMeters: 100,
+    durationSeconds: 50,
+  });
+
+  it("keeps the first of identical routes and preserves order", () => {
+    const a = line(COORDS_A);
+    const b = line([
+      [106.66, 10.7626],
+      [106.68, 10.77],
+    ]);
+    const dup = line(COORDS_A.map(([lng, lat]) => [lng, lat] as [
+      number,
+      number,
+    ]));
+    expect(dedupeRoutes([a, b, dup])).toEqual([a, b]);
+  });
+
+  it("keeps routes with unparseable geometry", () => {
+    const weird = [{geometry: null, distanceMeters: 1, durationSeconds: 1}];
+    expect(dedupeRoutes(weird)).toEqual(weird);
   });
 });

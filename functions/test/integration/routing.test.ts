@@ -75,7 +75,7 @@ describe("routing endpoints", () => {
     expect(hit.body.data.routes[0].geometry).toEqual(geometry);
   });
 
-  it("POST /routes 409s on a flooded cached route", async () => {
+  it("POST /routes returns the flooded cached route with hazards", async () => {
     const floodId = await seedFlag({
       type: "FLOOD",
       status: "2",
@@ -87,8 +87,10 @@ describe("routing endpoints", () => {
       .post("/routes")
       .set("Authorization", bearer(USER))
       .send(body);
-    expect(res.status).toBe(409);
-    expect(res.body.errors[0]).toMatchObject({
+    expect(res.status).toBe(200);
+    expect(res.body.data.routes).toHaveLength(1);
+    expect(res.body.data.routes[0]).toMatchObject({source: "cache"});
+    expect(res.body.data.routes[0].hazards[0]).toMatchObject({
       flagId: floodId,
       type: "FLOOD",
     });

@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 
 describe("routingService alternatives", () => {
-  it("returns up to 3 routes on a clean two-point route", async () => {
+  it("returns up to 5 routes on a clean two-point route", async () => {
     const primary: Line = {
       type: "LineString",
       coordinates: [
@@ -106,7 +106,7 @@ describe("routingService alternatives", () => {
     expect(mockPostRoutes.mock.calls[0]).toEqual([
       [originStop, destStop],
       [],
-      3,
+      5,
     ]);
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.any(String),
@@ -125,7 +125,70 @@ describe("routingService alternatives", () => {
     );
   });
 
-  it("drops a hazard-blocked alternative and keeps the rest", async () => {
+  it("detours a hazard-blocked alternative", async () => {
+    const primary: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
+    const alt: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.67, 10.79],
+        [106.7, 10.78],
+      ],
+    };
+    const clear: Line = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.65, 10.77],
+        [106.7, 10.78],
+      ],
+    };
+    mockPostRoutes
+      .mockResolvedValueOnce([
+        {geometry: primary, distanceMeters: 2450, durationSeconds: 512},
+        {geometry: alt, distanceMeters: 2600, durationSeconds: 560},
+      ])
+      .mockResolvedValue([
+        {geometry: clear, distanceMeters: 2700, durationSeconds: 590},
+      ]);
+    const zones = [
+      {
+        flagId: "flood-9",
+        lat: 10.78,
+        lng: 106.665,
+        radiusMeters: 200,
+        distanceMeters: 4,
+      },
+    ];
+    jest.mocked(closureService.analyzeRoute).mockImplementation(
+      async (geometry: unknown) => {
+        if (geometry === alt) {
+          return {blocking: zones, warnings: []} as never;
+        }
+        return {blocking: [], warnings: []};
+      },
+    );
+    jest.mocked(closureService.findBlocking).mockResolvedValue([]);
+    jest.mocked(closureService.findWarnings).mockResolvedValue([]);
+    const res = await getRoute(base);
+    expect(res.routes).toHaveLength(2);
+    expect(res.routes[0].geometry).toEqual(primary);
+    expect(res.routes[1]).toMatchObject({
+      source: "detour",
+      geometry: clear,
+      hazards: zones,
+      distanceMeters: 2700,
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a blocked alternative with hazards on detour failure", async () => {
     const primary: Line = {
       type: "LineString",
       coordinates: [
@@ -164,9 +227,15 @@ describe("routingService alternatives", () => {
       },
     );
     const res = await getRoute(base);
-    expect(res.routes).toHaveLength(2);
+    expect(res.routes).toHaveLength(3);
     expect(res.routes[0].geometry).toEqual(primary);
     expect(res.routes[1].geometry).toEqual(alt1);
+    expect(res.routes[2]).toMatchObject({
+      geometry: blocked,
+      hazards: zones,
+      source: "valhalla",
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(1);
     expect(activeRouteRepository.touch).toHaveBeenCalledWith(
       expect.any(String),
       "u1",
@@ -266,10 +335,10 @@ describe("routingService alternatives", () => {
       geometry: alt,
       distanceMeters: 2600,
     });
-    expect(mockPostRoutes).toHaveBeenCalledTimes(3);
+    expect(mockPostRoutes).toHaveBeenCalledTimes(5);
   });
 
-  it("409s with the primary error when nothing is safe", async () => {
+  it("returns the blocked alternative with hazards", async () => {
     const primary: Line = {
       type: "LineString",
       coordinates: [
@@ -314,10 +383,15 @@ describe("routingService alternatives", () => {
     jest.mocked(closureService.findBlocking).mockResolvedValue(
       zones as never,
     );
-    await expect(getRoute(base)).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    const res = await getRoute(base);
+    expect(res.routes).toHaveLength(1);
+    expect(res.routes[0]).toMatchObject({
+      geometry: alt,
+      hazards: altZones,
+      source: "valhalla",
+      distanceMeters: 2600,
     });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(5);
   });
 
   it("caches all options and serves them without the engine", async () => {

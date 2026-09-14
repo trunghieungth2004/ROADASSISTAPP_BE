@@ -141,8 +141,6 @@ const schemas = {
     durationSeconds: numOpt(),
     source: Joi.string().max(32).allow("", null).optional(),
     geometry: Joi.object().unknown(true).required(),
-    via: locationBody().allow(null).optional(),
-    hazards: Joi.array().items(Joi.object().unknown(true)).optional(),
   }),
   listSavedRoutes: emptyBody(),
   getSavedRoute: Joi.object({

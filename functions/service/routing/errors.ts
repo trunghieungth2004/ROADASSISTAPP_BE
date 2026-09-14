@@ -26,7 +26,28 @@ class WidthBlockedError extends Error {
   }
 }
 
+class EndpointBlockedError extends Error {
+  statusCode: number;
+  errors: unknown;
+  constructor(control: string, zone: unknown) {
+    const zoneType = (zone as {type?: unknown})?.type;
+    super(
+      typeof zoneType === "string" && zoneType !== "" ?
+        `${control} is inside an active ${zoneType} zone` :
+        `${control} is inside an active road hazard zone`,
+    );
+    this.statusCode = 409;
+    this.errors = {control: control.toLowerCase(), zone};
+  }
+}
+
 const isConflictError = (err: unknown): boolean =>
   (err as {statusCode?: unknown})?.statusCode === 409;
 
-export {NotFoundError, RouteBlockedError, WidthBlockedError, isConflictError};
+export {
+  NotFoundError,
+  RouteBlockedError,
+  WidthBlockedError,
+  EndpointBlockedError,
+  isConflictError,
+};

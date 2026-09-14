@@ -14,6 +14,8 @@ RUN set -eux; \
     > /data/valhalla.json; \
   sed -i 's/"max_exclude_polygons_length": [0-9][0-9]*/"max_exclude_polygons_length": 100000/' /data/valhalla.json; \
   grep -q '"max_exclude_polygons_length": 100000' /data/valhalla.json; \
+  sed -i 's/"max_alternates": 2/"max_alternates": 6/' /data/valhalla.json; \
+  grep -q '"max_alternates": 6' /data/valhalla.json; \
   valhalla_build_tiles -c /data/valhalla.json /data/region.osm.pbf; \
   valhalla_build_admins -c /data/valhalla.json /data/region.osm.pbf; \
   valhalla_build_extract -c /data/valhalla.json; \

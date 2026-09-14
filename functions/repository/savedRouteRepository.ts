@@ -14,8 +14,6 @@ interface SavedRouteRecord {
   durationSeconds?: number;
   source?: string;
   geometry: unknown;
-  via?: {lat: number; lng: number} | null;
-  hazards?: unknown[] | null;
   createdAt: string;
   updatedAt: string;
   [key: string]: unknown;
@@ -34,8 +32,6 @@ const create = async (data: {
   durationSeconds?: number;
   source?: string;
   geometry: unknown;
-  via?: {lat: number; lng: number} | null;
-  hazards?: unknown[] | null;
 }): Promise<SavedRouteRecord> => {
   const ref = db.collection("saved_routes").doc();
   const now = new Date().toISOString();
@@ -53,8 +49,6 @@ const create = async (data: {
     durationSeconds: data.durationSeconds ?? null,
     source: data.source ?? null,
     geometry: JSON.stringify(data.geometry ?? null),
-    via: data.via ?? null,
-    hazards: data.hazards ?? null,
     createdAt: now,
     updatedAt: now,
   };

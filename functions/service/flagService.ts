@@ -1,8 +1,15 @@
 import * as flagRepository from "../repository/flagRepository";
 import * as userRepository from "../repository/userRepository";
+import * as savedRouteRepository from "../repository/savedRouteRepository";
+import * as savedPlaceRepository from "../repository/savedPlaceRepository";
 import {STATUS_FLAGS} from "../constants/status";
-import {boundsForRadiusMeters, cellsCoveringBounds} from "../utils/geo";
+import {
+  boundsForRadiusMeters,
+  cellsCoveringBounds,
+  haversineMeters,
+} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
+import {effectiveRadiusMeters} from "./closureService";
 import {enqueueHazardPush} from "./taskQueueService";
 
 class ValidationError extends Error {
@@ -10,6 +17,15 @@ class ValidationError extends Error {
   constructor(message: string, statusCode = 400) {
     super(message);
     this.statusCode = statusCode;
+  }
+}
+class ConflictError extends Error {
+  statusCode: number;
+  errors: unknown;
+  constructor(message: string, errors?: unknown) {
+    super(message);
+    this.statusCode = 409;
+    this.errors = errors;
   }
 }
 class NotFoundError extends Error {
@@ -48,6 +64,69 @@ const TTL_MS: Record<string, number> = {
 
 const CONSENSUS_THRESHOLD = 3;
 
+const assertNoCoveredDestination = async ({
+  userId,
+  type,
+  lat,
+  lng,
+  radiusMeters,
+}: {
+  userId: string;
+  type: string;
+  lat: number;
+  lng: number;
+  radiusMeters?: number;
+}): Promise<void> => {
+  const radius = effectiveRadiusMeters(type, radiusMeters);
+  const [routes, places] = await Promise.all([
+    savedRouteRepository.listByUserId(userId),
+    savedPlaceRepository.listByUserId(userId),
+  ]);
+  const points: Array<{
+    kind: string;
+    label: string;
+    lat: number;
+    lng: number;
+  }> = [];
+  for (const route of routes) {
+    const label =
+      typeof route.name === "string" && route.name !== "" ?
+        route.name :
+        route.id;
+    for (const end of [
+      {kind: "destination", lat: route.destLat, lng: route.destLng},
+      {kind: "origin", lat: route.originLat, lng: route.originLng},
+    ]) {
+      if (typeof end.lat === "number" && typeof end.lng === "number") {
+        points.push({
+          kind: `route ${end.kind}`,
+          label,
+          lat: end.lat,
+          lng: end.lng,
+        });
+      }
+    }
+  }
+  for (const place of places) {
+    if (typeof place.lat === "number" && typeof place.lng === "number") {
+      points.push({
+        kind: "saved place",
+        label: place.label,
+        lat: place.lat,
+        lng: place.lng,
+      });
+    }
+  }
+  for (const point of points) {
+    if (haversineMeters(lat, lng, point.lat, point.lng) <= radius) {
+      throw new ConflictError(
+        `Flag covers your ${point.kind} "${point.label}"`,
+        {kind: point.kind, label: point.label},
+      );
+    }
+  }
+};
+
 const createFlag = async ({
   userId,
   type,
@@ -65,6 +144,7 @@ const createFlag = async ({
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
+  await assertNoCoveredDestination({userId, type, lat, lng, radiusMeters});
   const ttlMs = TTL_MS[type] ?? 3 * 60 * 60 * 1000;
   const trustScore = (user.trustScore as number) ?? 0;
   const flag = await flagRepository.create({
@@ -240,6 +320,7 @@ export {
   unflagFlag,
   expireFlags,
   ValidationError,
+  ConflictError,
   ForbiddenError,
   NotFoundError,
 };

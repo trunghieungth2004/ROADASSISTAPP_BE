@@ -17,7 +17,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > ```
 > - `status` is `"SUCCESS"` or `"ERROR"`. `statusCode` mirrors the HTTP status. `data` is present on read/query/created responses; `message` is present on action responses. `errors` (an array of strings) appears on `400` validation failures.
 > - Success status codes: `200` (OK), `201` (created).
-> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route blocked by hazards), `500` (unexpected, e.g. Auth create failure, Valhalla outage).
+> - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route impassable for the vehicle width), `500` (unexpected, e.g. Auth create failure, Valhalla outage).
 
 > **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
@@ -452,6 +452,8 @@ Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-ty
 { "statusCode": 201, "status": "SUCCESS", "message": "Flag submitted", "data": { "id": "flag1", "status": "1", "...": "..." } }
 ```
 
+**Response `409` (flag covers an own destination):** the flag's effective impact circle (requested `radiusMeters`, floored to the per-type routing minimum — `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m) is checked against the reporter's own saved-route origins/destinations and saved places; on overlap the flag is refused, e.g. `{ "statusCode": 409, "status": "ERROR", "message": "Flag covers your route destination \"Home run\"", "errors": { "kind": "route destination", "label": "Home run" } }.
+
 ---
 
 ### `POST /flags/confirm` **(Auth)**
@@ -596,7 +598,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Returns up to 3 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometries stored JSON-stringified). Stop-less requests ask Valhalla for `alternates: 2` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ROUTING_ENGINE.md](./ROUTING_ENGINE.md).
+Route between two points for the caller's vehicle width. Returns up to 5 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometries stored JSON-stringified). Stop-less requests ask Valhalla for `alternates: 4` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ENGINE.md](./ENGINE.md).
 
 **Request:**
 ```json
@@ -636,9 +638,9 @@ Route between two points for the caller's vehicle width. Returns up to 3 route o
 }
 ```
 
-Stop-less requests return up to 3 options in `routes` (same per-option shape); requests with `stops` return exactly 1.
+Stop-less requests return up to 5 options in `routes` (same per-option shape, Valhalla `alternates: 4`); requests with `stops` return exactly 1. Engine alternates with geometry identical to an already-seen route are dropped before caching, so duplicate options never reach the client.
 
-Every option — primary first, then each alternative — is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status. If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service re-solves through Valhalla with every blocking circle passed as `exclude_polygons`, so the detour grows natively around the closure; stops are sent as Valhalla `locations` in order, so every stop is preserved. See `200 (detour)` below. A blocked primary falls back to the first safe alternative; alternatives that are themselves hazard- or width-blocked are dropped. Only when no option is safe is the request refused (see `409` below).
+Every option — primary first, then each alternative — is re-validated against active hazard flags — `FLOOD`, `OBSTRUCTION`, and `ACCIDENT` in `"2"` Confirmed / `"3"` Locked status, plus the caller's own `"1"` Suggested flags (a reporter is never routed through their own report; other riders see Suggested flags as non-blocking warnings only). If the geometry crosses a flag's impact circle (`radiusMeters`, per-type default: `FLOOD` 200 m, `OBSTRUCTION`/`ACCIDENT` 100 m), the service re-solves through Valhalla with every blocking circle passed as `exclude_polygons`, so the detour grows natively around the closure; when that re-solve threads between other flags and discovers 2+ new zones on a two-point request, up to 3 anchored corridor solves are tried and the shortest clean one wins (anchor stays server-side — `via` is absent and `source` stays `"detour"`); stops are sent as Valhalla `locations` in order, so every stop is preserved. See `200 (detour)` below. A blocked primary falls back to the first safe alternative; blocked alternatives get their own detour attempt. When an option still cannot be cleared, it is returned soft-blocked — raw geometry with `hazards` (same shape as the detour response below) — so a route is always shown when the engine has one.
 
 **Response `200` (detour):**
 ```json
@@ -662,19 +664,21 @@ Every option — primary first, then each alternative — is re-validated agains
 }
 ```
 
-Detours are never written to `routing_cache`. If the re-solve still crosses a hazard after the widened retry (or an endpoint sits inside a zone, where no avoidance exists), the route is refused:
+Detours are never written to `routing_cache`. If the re-solve still crosses a hazard after the chained retries, the raw route is returned soft-blocked with `hazards` (same `200` shape as above) instead of an error. An origin, stop, or destination sitting inside a flag's impact circle is different — no avoidance exists, so the request is refused:
 
-**Response `409` (blocked):**
+**Response `409` (endpoint inside a hazard zone):**
 ```json
 {
   "statusCode": 409,
   "status": "ERROR",
-  "message": "Route is blocked by active road hazards",
-  "errors": [
-    { "flagId": "flag1", "type": "FLOOD", "lat": 10.76, "lng": 106.66, "radiusMeters": 300, "note": null, "distanceMeters": 0 }
-  ]
+  "message": "Destination is inside an active ACCIDENT zone",
+  "errors": {
+    "control": "destination",
+    "zone": { "flagId": "flag1", "type": "ACCIDENT", "lat": 10.84, "lng": 106.8, "radiusMeters": 200, "note": null, "distanceMeters": 0 }
+  }
 }
 ```
+(`control` is `"origin"`, `"stop <index>"`, or `"destination"` — the client can highlight the offending point.)
 
 Separately, when `width` is provided the resolved route is checked against measured alley widths (`alley_segments`): any segment narrower than the vehicle within 20 m of the route joins the avoidance polygons, so the detour routes around it too — hazard blocks take precedence, and the request is refused only when avoidance is impossible:
 
@@ -936,5 +940,5 @@ Validation failures include an `errors` array:
 | `401` | Missing or invalid ID token |
 | `403` | Inactive user / insufficient permissions (e.g. unflag by a non-reporter) |
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
-| `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`) or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
+| `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`), endpoint inside a hazard zone (`POST /routes`; `errors.control` + `errors.zone`), flag covering an own saved destination/place (`POST /flags`), or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
 | `500` | Internal server error (e.g. Auth create failure, Valhalla outage) |

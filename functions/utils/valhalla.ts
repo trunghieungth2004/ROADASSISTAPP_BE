@@ -133,7 +133,48 @@ const parseTrip = (trip: unknown): ValhallaRoute => {
   };
 };
 
-const MAX_ALTERNATES = 2;
+const MAX_ALTERNATES = 4;
+const SIGNATURE_SAMPLES = 32;
+const SIGNATURE_PRECISION = 5;
+
+const routeSignature = (geometry: unknown): string => {
+  const coords = (geometry as {coordinates?: unknown})?.coordinates;
+  if (!Array.isArray(coords) || coords.length === 0) return "";
+  const parts: string[] = [String(coords.length)];
+  const step = Math.max(1, Math.floor(coords.length / SIGNATURE_SAMPLES));
+  for (let i = 0; i < coords.length; i += step) {
+    const pt = coords[i] as [number, number] | undefined;
+    if (!Array.isArray(pt)) return "";
+    const [lng, lat] = pt;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return "";
+    parts.push(
+      `${lng.toFixed(SIGNATURE_PRECISION)},` +
+        lat.toFixed(SIGNATURE_PRECISION),
+    );
+  }
+  const last = coords[coords.length - 1] as [number, number];
+  parts.push(
+    `${last[0].toFixed(SIGNATURE_PRECISION)},` +
+      last[1].toFixed(SIGNATURE_PRECISION),
+  );
+  return parts.join("|");
+};
+
+const dedupeRoutes = <T extends {geometry?: unknown}>(routes: T[]): T[] => {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const route of routes) {
+    const signature = routeSignature(route.geometry);
+    if (signature === "") {
+      unique.push(route);
+      continue;
+    }
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    unique.push(route);
+  }
+  return unique;
+};
 
 const postRoutes = async (
   locations: LatLng[],
@@ -195,7 +236,7 @@ const postRoutes = async (
       continue;
     }
   }
-  return routes;
+  return dedupeRoutes(routes);
 };
 
 const postRoute = async (
@@ -211,9 +252,11 @@ export {
   postRoutes,
   decodePolyline6,
   circleToRing,
+  dedupeRoutes,
   VALHALLA_URL,
   VALHALLA_COSTING,
   ServiceError,
   LatLng,
+  Ring,
   ValhallaRoute,
 };

@@ -31,6 +31,13 @@ const valid: Record<string, unknown> = {
     destLat: 10.7758,
     destLng: 106.7019,
   },
+  saveRoute: {
+    originLat: 10.7626,
+    originLng: 106.6602,
+    destLat: 10.7758,
+    destLng: 106.7019,
+    geometry: {type: "LineString", coordinates: [[106.6602, 10.7626]]},
+  },
   createShop: {name: "Shop", lat: 10.7626, lng: 106.6602, type: "SHOP"},
   nearShops: {lat: 10.7626, lng: 106.6602},
   createDiagnostic: {category: "FLAT_TIRE", imagePath: "a.jpg"},
@@ -265,5 +272,23 @@ describe("schemas reject invalid input", () => {
     );
     expect(error).toBeUndefined();
     expect(value).not.toHaveProperty("hacker");
+  });
+
+  it("saveRoute drops legacy via/hazards instead of rejecting them", () => {
+    const {error, value} = table.saveRoute.validate(
+      {
+        originLat: 10.7626,
+        originLng: 106.6602,
+        destLat: 10.7758,
+        destLng: 106.7019,
+        geometry: {type: "LineString", coordinates: [[106.6602, 10.7626]]},
+        via: null,
+        hazards: null,
+      },
+      {stripUnknown: true},
+    );
+    expect(error).toBeUndefined();
+    expect(value).not.toHaveProperty("via");
+    expect(value).not.toHaveProperty("hazards");
   });
 });

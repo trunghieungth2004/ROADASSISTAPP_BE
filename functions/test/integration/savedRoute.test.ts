@@ -135,4 +135,14 @@ describe("saved route endpoints", () => {
       .send({});
     expect(listed.body.data).toEqual([]);
   });
+
+  it("POST /routes/save ignores legacy via/hazards fields", async () => {
+    const res = await request(app)
+      .post("/routes/save")
+      .set("Authorization", bearer(USER))
+      .send({...payload, name: "Legacy fields", via: null, hazards: null});
+    expect(res.status).toBe(201);
+    expect(res.body.data).not.toHaveProperty("via");
+    expect(res.body.data).not.toHaveProperty("hazards");
+  });
 });

@@ -88,7 +88,7 @@ describe("routingService width gate", () => {
       errors: [{segmentId: "s1", baseWidth: 0.5, distanceMeters: 0}],
     });
     expect(activeRouteRepository.touch).not.toHaveBeenCalled();
-    expect(mockPostRoutes).toHaveBeenCalledTimes(3);
+    expect(mockPostRoutes).toHaveBeenCalledTimes(5);
   });
 
   it("includes width-block polygons in the detour request", async () => {
@@ -215,7 +215,7 @@ describe("routingService width gate", () => {
     ]);
   });
 
-  it("treats hazards and width blocks as one clearance queue", async () => {
+  it("falls back with hazards when width shares the queue", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
@@ -235,9 +235,8 @@ describe("routingService width gate", () => {
     ).mockResolvedValue([
       {id: "s1", lat: 10.77, lng: 106.68, baseWidth: 0.4, tier: "TIER2"},
     ] as never);
-    await expect(getRoute({...base, width: 0.9})).rejects.toMatchObject({
-      statusCode: 409,
-      errors: zones,
+    await expect(getRoute({...base, width: 0.9})).resolves.toMatchObject({
+      routes: [{source: "valhalla", geometry, hazards: zones}],
     });
     expect(alleySegmentRepository.findByGeohashPrefixes).toHaveBeenCalled();
   });

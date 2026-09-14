@@ -2,7 +2,7 @@ import * as routingCacheRepository from
   "../repository/routingCacheRepository";
 import * as userRepository from "../repository/userRepository";
 import * as closureService from "./closureService";
-import {postRoutes} from "../utils/valhalla";
+import {postRoutes, dedupeRoutes} from "../utils/valhalla";
 import type {LatLng} from "../utils/valhalla";
 import {
   NotFoundError,
@@ -16,9 +16,26 @@ import {
   recordActiveRoute,
   MAX_EXTRA_DISTANCE_METERS,
 } from "./routing/detour";
-import {probeWidth, withTightZones} from "./routing/widthGate";
+import {probeWidth, toWidthZone, withTightZones} from "./routing/widthGate";
 
-const MAX_ROUTE_OPTIONS = 3;
+const MAX_ROUTE_OPTIONS = 5;
+
+const logBlocked = (reason: string, fields: Record<string, unknown>): void => {
+  console.warn(`[routing] ${reason} ${JSON.stringify(fields)}`);
+};
+
+const withWidthFallback = async (
+  geometry: unknown,
+  width: number | undefined,
+  warnings: unknown,
+): Promise<unknown> => {
+  if (width === undefined) return warnings;
+  const probe = await probeWidth(geometry, width);
+  const merged = withTightZones(width, probe.tight, warnings);
+  if (probe.blocks.length === 0) return merged;
+  const list = Array.isArray(merged) ? merged : [];
+  return [...list, ...probe.blocks.map(toWidthZone)];
+};
 
 const widthToBucket = (width?: number): string => {
   if (width === undefined) return "MEDIUM";
@@ -152,12 +169,24 @@ const buildPrimary = async ({
 
 const buildAlternative = async ({
   base,
+  originLat,
+  originLng,
+  destLat,
+  destLng,
+  stops,
   width,
+  key,
   userId,
   source,
 }: {
   base: BaseRoute;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  stops: LatLng[];
   width: number | undefined;
+  key: string;
   userId: string;
   source: string;
 }): Promise<RouteOption | null> => {
@@ -165,25 +194,64 @@ const buildAlternative = async ({
     base.geometry,
     userId,
   );
-  if (zones.length > 0) return null;
-  if (width === undefined) {
+  if (zones.length === 0) {
+    if (width === undefined) {
+      return {
+        distanceMeters: base.distanceMeters,
+        durationSeconds: base.durationSeconds,
+        geometry: base.geometry,
+        source,
+        warnings,
+      };
+    }
+    const probe = await probeWidth(base.geometry, width);
+    if (probe.blocks.length > 0) {
+      logBlocked("alt-width-drop", {
+        key,
+        userId,
+        segments: probe.blocks.map((b) => b.segmentId),
+      });
+      return null;
+    }
     return {
       distanceMeters: base.distanceMeters,
       durationSeconds: base.durationSeconds,
       geometry: base.geometry,
       source,
-      warnings,
+      warnings: withTightZones(width, probe.tight, warnings),
     };
   }
-  const probe = await probeWidth(base.geometry, width);
-  if (probe.blocks.length > 0) return null;
-  return {
-    distanceMeters: base.distanceMeters,
-    durationSeconds: base.durationSeconds,
-    geometry: base.geometry,
-    source,
-    warnings: withTightZones(width, probe.tight, warnings),
-  };
+  try {
+    return await routeSafely({
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      stops,
+      width,
+      key,
+      userId,
+      baseGeometry: base.geometry,
+      baseDistance: base.distanceMeters,
+      baseDuration: base.durationSeconds,
+      baseSource: source,
+      blocking: zones,
+      warnings,
+    });
+  } catch (err) {
+    if (err instanceof RouteBlockedError) {
+      logBlocked("alt-detour-failed", {key, userId, zones: err.errors});
+      return {
+        distanceMeters: base.distanceMeters,
+        durationSeconds: base.durationSeconds,
+        geometry: base.geometry,
+        source,
+        hazards: zones,
+        warnings: await withWidthFallback(base.geometry, width, warnings),
+      };
+    }
+    throw err;
+  }
 };
 
 const getRoute = async ({
@@ -257,6 +325,7 @@ const getRoute = async ({
       routes: bases,
     });
   }
+  bases = dedupeRoutes(bases);
 
   const options: RouteOption[] = [];
   let firstError: unknown = null;
@@ -273,20 +342,58 @@ const getRoute = async ({
     source,
   }).catch((err: unknown) => {
     if (!isConflictError(err)) throw err;
+    logBlocked("primary-blocked", {
+      key,
+      userId,
+      kind: err instanceof RouteBlockedError ? "hazard" : "width",
+    });
     firstError = err;
     return null;
   });
   if (primary) options.push(primary);
   for (const base of bases.slice(1)) {
-    const option = await buildAlternative({base, width, userId, source});
+    const option = await buildAlternative({
+      base,
+      originLat,
+      originLng,
+      destLat,
+      destLng,
+      stops: stopList,
+      width,
+      key,
+      userId,
+      source,
+    });
     if (option) options.push(option);
   }
   if (options.length === 0) {
-    if (firstError) throw firstError;
-    throw new RouteBlockedError([]);
+    if (firstError instanceof RouteBlockedError && bases.length > 0) {
+      logBlocked("primary-fallback", {
+        key,
+        userId,
+        routes: bases.length,
+      });
+      const raw = bases[0];
+      const analysis = await closureService.analyzeRoute(raw.geometry, userId);
+      options.push({
+        distanceMeters: raw.distanceMeters,
+        durationSeconds: raw.durationSeconds,
+        geometry: raw.geometry,
+        source,
+        hazards: analysis.blocking,
+        warnings: await withWidthFallback(
+          raw.geometry,
+          width,
+          analysis.warnings,
+        ),
+      });
+    } else {
+      if (firstError) throw firstError;
+      throw new RouteBlockedError([]);
+    }
   }
   await recordActiveRoute(key, userId, options[0].geometry);
-  return {cached, routes: options};
+  return {cached, routes: dedupeRoutes<RouteOption>(options)};
 };
 
 export {

@@ -96,10 +96,10 @@ describe("routing alternatives", () => {
       RequestInit,
     ];
     const sent = JSON.parse(init.body as string) as {alternates?: number};
-    expect(sent.alternates).toBe(2);
+    expect(sent.alternates).toBe(4);
   });
 
-  it("POST /routes drops a hazard-blocked alternative", async () => {
+  it("POST /routes detours a hazard-blocked alternative", async () => {
     const floodId = await seedFlag({
       type: "FLOOD",
       status: "2",
@@ -112,9 +112,15 @@ describe("routing alternatives", () => {
       .set("Authorization", bearer(USER))
       .send({...body, destLat: 10.7761, destLng: 106.7021});
     expect(res.status).toBe(200);
-    expect(res.body.data.routes).toHaveLength(2);
+    expect(res.body.data.routes).toHaveLength(3);
     expect(res.body.data.routes[0].geometry).toEqual(primary);
     expect(res.body.data.routes[1].geometry).toEqual(alt1);
+    expect(res.body.data.routes[2]).toMatchObject({source: "detour"});
+    expect(res.body.data.routes[2].geometry).toEqual(primary);
+    expect(res.body.data.routes[2].hazards[0]).toMatchObject({
+      flagId: floodId,
+      type: "FLOOD",
+    });
     await db.collection("flags").doc(floodId).delete();
   });
 
@@ -154,7 +160,7 @@ describe("routing alternatives", () => {
     await db.collection("flags").doc(floodId).delete();
   });
 
-  it("POST /routes 409s when no option is safe", async () => {
+  it("POST /routes returns blocked alternatives with hazards", async () => {
     const floodId = await seedFlag({
       type: "FLOOD",
       status: "2",
@@ -180,9 +186,16 @@ describe("routing alternatives", () => {
       .post("/routes")
       .set("Authorization", bearer(USER))
       .send({...body, destLat: 10.796, destLng: 106.711});
-    expect(res.status).toBe(409);
-    expect(res.body.errors[0]).toMatchObject({
-      flagId: floodId,
+    expect(res.status).toBe(200);
+    expect(res.body.data.routes).toHaveLength(2);
+    expect(res.body.data.routes[0].geometry).toEqual(alt1);
+    expect(res.body.data.routes[0].hazards[0]).toMatchObject({
+      flagId: flood2Id,
+      type: "FLOOD",
+    });
+    expect(res.body.data.routes[1].geometry).toEqual(alt2);
+    expect(res.body.data.routes[1].hazards[0]).toMatchObject({
+      flagId: alt2FloodId,
       type: "FLOOD",
     });
     await db.collection("flags").doc(floodId).delete();

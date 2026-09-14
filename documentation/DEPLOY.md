@@ -31,7 +31,10 @@ The legacy `SKIP_OSRM_SETUP=1` is honored as an alias.
 
 ## What setup.sh does (idempotent, fast when unchanged)
 
-Engine mode is picked by `VALHALLA_MODE` (`cloud` default, `local`, `dev`):
+Engine mode is picked by `VALHALLA_MODE` (`cloud` default, `local`, `dev`),
+or directly by flag — `setup.sh -cb` (cloud build, cloud deploy),
+`-cl` (local build, cloud deploy), `-ll` (local build, local run);
+an explicit flag beats `VALHALLA_MODE`, and `-h` prints usage:
 unset + TTY prompts (`1/2/3`), unset + non-TTY (predeploy hook, CI)
 defaults to `cloud` so deploys never hang on input. `local` builds the
 image with local docker and pushes it to Artifact Registry (skips the
