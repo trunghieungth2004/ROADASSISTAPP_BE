@@ -18,6 +18,24 @@ export default (
     userController.getOneUser,
   );
   app.post(
+    "/users/me",
+    requireAuth,
+    validate({body: schemas.getMe}),
+    userController.getMe,
+  );
+  app.put(
+    "/users/activeVehicle",
+    requireAuth,
+    validate({body: schemas.setActiveVehicle}),
+    userController.setActiveVehicle,
+  );
+  app.put(
+    "/users/onboard",
+    requireAuth,
+    validate({body: schemas.setOnboarded}),
+    userController.setOnboarded,
+  );
+  app.post(
     "/users/all",
     requireAuth,
     requireRole("1"),

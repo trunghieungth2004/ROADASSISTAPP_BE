@@ -119,6 +119,71 @@ List all users. No body schema.
 
 ---
 
+### `POST /users/me` **(Auth)**
+
+Login bootstrap: the authenticated caller's profile plus their registered vehicles and the active (routing) vehicle in one call. No body required. `activeVehicle` is `null` until a vehicle is marked active.
+
+**Response `200`:**
+```json
+{
+  "statusCode": 200,
+  "status": "SUCCESS",
+  "data": {
+    "user": {
+      "id": "abc123",
+      "role": "2",
+      "onboarded": false,
+      "services": ["RIDER"],
+      "volunteerAvailable": true,
+      "capability": "CAR"
+    },
+    "vehicles": [
+      { "id": "v1", "type": "SCOOTER", "baseWidth": 0.7, "baseHeight": 1.1 }
+    ],
+    "activeVehicle": {
+      "id": "v1",
+      "type": "SCOOTER",
+      "baseWidth": 0.7,
+      "baseHeight": 1.1
+    }
+  }
+}
+```
+
+---
+
+### `PUT /users/activeVehicle` **(Auth)**
+
+Mark one of your own vehicle profiles as the active routing vehicle. Send `{ "profileId": null }` to clear. Rejected (`404`) for a profile that is not yours.
+
+**Request:**
+```json
+{ "profileId": "v1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Active vehicle updated", "data": { "updated": 1, "profileId": "v1" } }
+```
+
+---
+
+### `PUT /users/onboard` **(Auth)**
+
+Record an onboarding choice without touching the admin `users.role` field. Sets `onboarded: true` and accumulates the service (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`) into `users.services`.
+
+**Request:**
+```json
+{ "role": "RIDER" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Onboarding updated", "data": { "updated": 1, "onboarded": true, "services": ["RIDER"] } }
+```
+
+---
+
 ### `PUT /users/role` **(Admin)**
 
 Change a user's role. Cannot change your own role (`400`).

@@ -109,10 +109,45 @@ const volunteerHeartbeat = async (req: Request, res: Response) => {
   }
 };
 
+const getMe = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await userService.me(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const setActiveVehicle = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {profileId} = req.body;
+    const result = await userService.setActiveVehicle({userId, profileId});
+    sendSuccess(res, result, {message: "Active vehicle updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const setOnboarded = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {role} = req.body;
+    const result = await userService.setOnboarded({userId, role});
+    sendSuccess(res, result, {message: "Onboarding updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 export {
   register,
   getOneUser,
   getAllUser,
+  setActiveVehicle,
+  setOnboarded,
+  getMe,
   updateRole,
   updateTrustScore,
   updateStatus,

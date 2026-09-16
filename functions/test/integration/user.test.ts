@@ -177,3 +177,86 @@ describe("volunteer capability", () => {
       .send({available: false});
   });
 });
+
+describe("me and onboarding endpoints", () => {
+  let profileId = "";
+
+  it("POST /users/me returns vehicles and null active", async () => {
+    const created = await request(app)
+      .post("/vehicleProfiles")
+      .set("Authorization", bearer(RIDER))
+      .send({type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1});
+    expect(created.status).toBe(201);
+    profileId = created.body.data.id as string;
+    const res = await request(app)
+      .post("/users/me")
+      .set("Authorization", bearer(RIDER))
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.id).toBe(RIDER);
+    expect(res.body.data.user.onboarded).toBe(false);
+    expect(res.body.data.vehicles.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.activeVehicle).toBeNull();
+  });
+
+  it("PUT /users/activeVehicle rejects a foreign profile", async () => {
+    const res = await request(app)
+      .put("/users/activeVehicle")
+      .set("Authorization", bearer(TARGET))
+      .send({profileId});
+    expect(res.status).toBe(404);
+  });
+
+  it("PUT /users/activeVehicle persists and mirrors in /users/me", async () => {
+    const set = await request(app)
+      .put("/users/activeVehicle")
+      .set("Authorization", bearer(RIDER))
+      .send({profileId});
+    expect(set.status).toBe(200);
+    const me = await request(app)
+      .post("/users/me")
+      .set("Authorization", bearer(RIDER))
+      .send({});
+    expect(me.body.data.activeVehicle).toMatchObject({
+      id: profileId,
+      type: "SCOOTER",
+    });
+    const clear = await request(app)
+      .put("/users/activeVehicle")
+      .set("Authorization", bearer(RIDER))
+      .send({profileId: null});
+    expect(clear.status).toBe(200);
+    const again = await request(app)
+      .post("/users/me")
+      .set("Authorization", bearer(RIDER))
+      .send({});
+    expect(again.body.data.activeVehicle).toBeNull();
+  });
+
+  it("PUT /users/onboard marks onboarded and stores services", async () => {
+    const first = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(RIDER))
+      .send({role: "RIDER"});
+    expect(first.status).toBe(200);
+    expect(first.body.data.onboarded).toBe(true);
+    const second = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(RIDER))
+      .send({role: "VOLUNTEER"});
+    expect(second.status).toBe(200);
+    const doc = await db.collection("users").doc(RIDER).get();
+    expect(doc.data()?.onboarded).toBe(true);
+    expect(doc.data()?.services).toEqual(
+      expect.arrayContaining(["RIDER", "VOLUNTEER"]),
+    );
+  });
+
+  it("PUT /users/onboard rejects unknown service roles", async () => {
+    const res = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(RIDER))
+      .send({role: "ADMIN"});
+    expect(res.status).toBe(400);
+  });
+});

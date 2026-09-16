@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 29 unit suites (395 tests) and 20 integration suites (130 tests), all green:
+Backend tested with **Jest** across two tiers — 29 unit suites (406 tests) and 20 integration suites (135 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.

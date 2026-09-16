@@ -3,6 +3,7 @@ import {
   RATING_MAX,
   RATING_MIN,
   RATING_TARGET,
+  SERVICE_ROLE,
   SHOP_SEARCH_MAX_RADIUS,
   STATUS_DISPATCH,
   STATUS_FLAGS,
@@ -44,6 +45,15 @@ const schemas = {
     displayName: Joi.string().allow("", null).optional(),
   }),
   getOneUser: emptyBody(),
+  getMe: emptyBody(),
+  setActiveVehicle: Joi.object({
+    profileId: Joi.string().min(1).allow("", null).optional(),
+  }),
+  setOnboarded: Joi.object({
+    role: Joi.string()
+      .valid(...Object.values(SERVICE_ROLE))
+      .required(),
+  }),
   updateUserRole: Joi.object({
     targetUserId: strReq(),
     role: strReq(),

@@ -72,6 +72,14 @@ const VOLUNTEER_CAPABILITY = {
   CAR: "CAR",
 } as const;
 
+const SERVICE_ROLE = {
+  RIDER: "RIDER",
+  SHOP: "SHOP",
+  MOBILE: "MOBILE",
+  TOW: "TOW",
+  VOLUNTEER: "VOLUNTEER",
+} as const;
+
 interface StatusDefinition {
   domain: string;
   code: string;
@@ -205,6 +213,7 @@ export {
   VEHICLE_DEFAULT_WIDTH,
   TOW_VEHICLE_TYPE,
   VOLUNTEER_CAPABILITY,
+  SERVICE_ROLE,
   USER_STATUSES,
   FLAG_STATUSES,
   DISPATCH_STATUSES,

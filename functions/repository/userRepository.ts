@@ -13,6 +13,9 @@ interface UserRecord {
   capability?: string;
   ratingAvg?: number;
   ratingCount?: number;
+  activeVehicleId?: string | null;
+  onboarded?: boolean;
+  services?: string[];
   [key: string]: unknown;
 }
 
@@ -55,6 +58,9 @@ const create = async (
       volunteerAvailable: false,
       volunteerRadiusKm: 5,
       capability: "SOLO_BIKE",
+      activeVehicleId: null,
+      onboarded: false,
+      services: [],
       ratingAvg: 0,
       ratingCount: 0,
       createdAt: new Date().toISOString(),
@@ -84,6 +90,23 @@ const updateVolunteer = async (
     volunteerRadiusKm?: number;
     capability?: string;
   },
+): Promise<void> => {
+  await db.collection("users").doc(userId).update(fields);
+};
+
+const updateActiveVehicle = async (
+  userId: string,
+  profileId: string | null,
+): Promise<void> => {
+  await db
+    .collection("users")
+    .doc(userId)
+    .update({activeVehicleId: profileId});
+};
+
+const updateOnboarded = async (
+  userId: string,
+  fields: {onboarded: boolean; services: string[]},
 ): Promise<void> => {
   await db.collection("users").doc(userId).update(fields);
 };
@@ -166,6 +189,8 @@ export {
   updateTrustScore,
   updateStatus,
   updateVolunteer,
+  updateActiveVehicle,
+  updateOnboarded,
   updateRating,
   updateRoles,
   updateStatuses,

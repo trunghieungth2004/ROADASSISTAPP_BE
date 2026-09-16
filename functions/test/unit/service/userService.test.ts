@@ -1,4 +1,6 @@
 import * as userRepository from "../../../repository/userRepository";
+import * as vehicleProfileRepository from
+  "../../../repository/vehicleProfileRepository";
 import * as volunteerLocationRepository from
   "../../../repository/volunteerLocationRepository";
 import * as cacheManager from "../../../utils/cacheManager";
@@ -11,9 +13,13 @@ import {
   updateStatus,
   setVolunteerAvailability,
   volunteerHeartbeat,
+  setActiveVehicle,
+  setOnboarded,
+  me,
 } from "../../../service/userService";
 
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../repository/vehicleProfileRepository");
 jest.mock("../../../repository/volunteerLocationRepository");
 
 beforeEach(() => {
@@ -217,5 +223,148 @@ describe("userService.volunteerHeartbeat", () => {
     await expect(
       volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
     ).resolves.toEqual({uid: "u1"});
+  });
+});
+
+describe("userService.me", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(me("ghost")).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("returns user, vehicles and null active vehicle by default", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      activeVehicleId: null,
+      onboarded: false,
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([
+      {id: "v1", type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
+    ] as never);
+    const result = await me("u1");
+    expect(result.user.onboarded).toBe(false);
+    expect(result.vehicles).toHaveLength(1);
+    expect(result.activeVehicle).toBeNull();
+  });
+
+  it("resolves the persisted active vehicle", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      activeVehicleId: "v2",
+      onboarded: true,
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([
+      {id: "v1", type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
+      {id: "v2", type: "CAR", baseWidth: 1.9, baseHeight: 1.5},
+    ] as never);
+    const result = await me("u1");
+    expect(result.activeVehicle).toMatchObject({id: "v2", type: "CAR"});
+    expect(result.user.onboarded).toBe(true);
+    expect(result.user.services).toEqual(["RIDER"]);
+  });
+
+  it("ignores a stale active vehicle id", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      activeVehicleId: "missing",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([]);
+    const result = await me("u1");
+    expect(result.activeVehicle).toBeNull();
+  });
+});
+
+describe("userService.setActiveVehicle", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      setActiveVehicle({userId: "ghost", profileId: "v1"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("throws 404 for a profile that is not the user's", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue(null);
+    await expect(
+      setActiveVehicle({userId: "u1", profileId: "v9"}),
+    ).rejects.toMatchObject({statusCode: 404});
+    expect(userRepository.updateActiveVehicle).not.toHaveBeenCalled();
+  });
+
+  it("persists the active profile", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
+      id: "v1",
+    } as never);
+    await expect(
+      setActiveVehicle({userId: "u1", profileId: "v1"}),
+    ).resolves.toEqual({updated: 1, profileId: "v1"});
+    expect(userRepository.updateActiveVehicle).toHaveBeenCalledWith(
+      "u1",
+      "v1",
+    );
+  });
+
+  it("clears the active vehicle", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
+      setActiveVehicle({userId: "u1", profileId: null}),
+    ).resolves.toEqual({updated: 1, profileId: null});
+    expect(userRepository.updateActiveVehicle).toHaveBeenCalledWith(
+      "u1",
+      null,
+    );
+  });
+});
+
+describe("userService.setOnboarded", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      setOnboarded({userId: "ghost", role: "RIDER"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("marks onboarding and accumulates service roles", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      onboarded: true,
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      setOnboarded({userId: "u1", role: "VOLUNTEER"}),
+    ).resolves.toEqual({
+      updated: 1,
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER"],
+    });
+    expect(userRepository.updateOnboarded).toHaveBeenCalledWith("u1", {
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER"],
+    });
+  });
+
+  it("does not duplicate an existing service role", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      setOnboarded({userId: "u1", role: "RIDER"}),
+    ).resolves.toEqual({
+      updated: 1,
+      onboarded: true,
+      services: ["RIDER"],
+    });
   });
 });
