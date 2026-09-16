@@ -36,6 +36,21 @@ const confirmFlag = async (req: Request, res: Response) => {
   }
 };
 
+const denyFlag = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {flagId} = req.body;
+    const result = await flagService.denyFlag(flagId, userId);
+    if (!result) {
+      sendSuccess(res, null, {message: "Flag not found", statusCode: 404});
+      return;
+    }
+    sendSuccess(res, result, {message: "Flag denial recorded"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const getNear = async (req: Request, res: Response) => {
   try {
     const {lat, lng} = req.body;
@@ -98,6 +113,7 @@ const expireFlags = async (_req: Request, res: Response) => {
 export {
   createFlag,
   confirmFlag,
+  denyFlag,
   getNear,
   getMine,
   moderateFlag,

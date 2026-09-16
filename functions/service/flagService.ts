@@ -50,7 +50,9 @@ interface FlagRecord {
   voteCount?: number;
   reporterTrust?: number;
   voters?: string[];
+  votes?: Record<string, number>;
   alreadyVoted?: boolean;
+  voteDirection?: "up" | "down" | null;
   [key: string]: unknown;
 }
 
@@ -161,48 +163,114 @@ const createFlag = async ({
   return flag;
 };
 
-const confirmFlag = async (
+const voteWeightFor = (flag: FlagRecord): number =>
+  1 + ((flag.reporterTrust as number) >= 50 ? 0.5 : 0);
+
+const voteDirectionOf = (
+  flag: FlagRecord,
+  userId: string,
+  weight: number,
+): "up" | "down" | null => {
+  const stored = flag.votes ?? {};
+  const voters = Array.isArray(flag.voters) ? flag.voters : [];
+  const current =
+    userId in stored ? stored[userId] : voters.includes(userId) ? weight : 0;
+  if (current > 0) return "up";
+  if (current < 0) return "down";
+  return null;
+};
+
+const castSignedFlagVote = async (
   flagId: string,
   userId: string,
+  sign: 1 | -1,
 ): Promise<FlagRecord | null> => {
   const flag = await flagRepository.findById(flagId);
   if (!flag) return null;
   if ((flag.reporterUid as string) === userId) {
-    throw new ForbiddenError("You cannot confirm your own report");
+    throw new ForbiddenError("You cannot vote on your own report");
   }
   if (flag.status === STATUS_FLAGS.LOCKED) {
-    return {...flag, alreadyVoted: false};
+    return {
+      ...flag,
+      alreadyVoted: false,
+      voteDirection: voteDirectionOf(flag, userId, voteWeightFor(flag)),
+    };
   }
-  const voteWeight = 1 + ((flag.reporterTrust as number) >= 50 ? 0.5 : 0);
-  const cast = await flagRepository.castVote(flagId, userId, voteWeight);
+  const signedWeight = voteWeightFor(flag) * sign;
+  const cast = await flagRepository.castSignedVote(
+    flagId,
+    userId,
+    signedWeight,
+  );
   if (!cast) return null;
-  if (cast.duplicate) return {...cast.flag, alreadyVoted: true};
+  if (cast.duplicate) {
+    return {...cast.flag, alreadyVoted: true, voteDirection: cast.direction};
+  }
   const newCount = cast.flag.voteCount as number;
   if (
+    sign > 0 &&
     newCount >= CONSENSUS_THRESHOLD &&
     cast.flag.status !== STATUS_FLAGS.CONFIRMED
   ) {
     await flagRepository.updateStatus(flagId, STATUS_FLAGS.CONFIRMED);
     cacheManager.del(NS, flagId);
-    await enqueueHazardPush(
-      flagId,
-      flag.type,
-      STATUS_FLAGS.CONFIRMED,
-    );
+    await enqueueHazardPush(flagId, flag.type, STATUS_FLAGS.CONFIRMED);
     return {
       ...cast.flag,
       voteCount: newCount,
       status: STATUS_FLAGS.CONFIRMED,
       alreadyVoted: false,
+      voteDirection: cast.direction,
     };
   }
+  if (sign < 0 && newCount <= -CONSENSUS_THRESHOLD) {
+    if (cast.flag.status === STATUS_FLAGS.SUGGESTED) {
+      await flagRepository.updateStatus(flagId, STATUS_FLAGS.REJECTED);
+      cacheManager.del(NS, flagId);
+      return {
+        ...cast.flag,
+        voteCount: newCount,
+        status: STATUS_FLAGS.REJECTED,
+        alreadyVoted: false,
+        voteDirection: cast.direction,
+      };
+    }
+    if (cast.flag.status === STATUS_FLAGS.CONFIRMED) {
+      await flagRepository.updateStatus(flagId, STATUS_FLAGS.SUGGESTED);
+      cacheManager.del(NS, flagId);
+      return {
+        ...cast.flag,
+        voteCount: newCount,
+        status: STATUS_FLAGS.SUGGESTED,
+        alreadyVoted: false,
+        voteDirection: cast.direction,
+      };
+    }
+  }
   cacheManager.del(NS, flagId);
-  return {...cast.flag, voteCount: newCount, alreadyVoted: false};
+  return {
+    ...cast.flag,
+    voteCount: newCount,
+    alreadyVoted: false,
+    voteDirection: cast.direction,
+  };
 };
+
+const confirmFlag = async (
+  flagId: string,
+  userId: string,
+): Promise<FlagRecord | null> => castSignedFlagVote(flagId, userId, 1);
+
+const denyFlag = async (
+  flagId: string,
+  userId: string,
+): Promise<FlagRecord | null> => castSignedFlagVote(flagId, userId, -1);
 
 const stripVoters = (flag: FlagRecord): FlagRecord => {
   const rest = {...flag};
   delete rest.voters;
+  delete rest.votes;
   return rest;
 };
 
@@ -314,6 +382,7 @@ const expireFlags = async (): Promise<number> => {
 export {
   createFlag,
   confirmFlag,
+  denyFlag,
   getNear,
   getMine,
   moderateFlag,

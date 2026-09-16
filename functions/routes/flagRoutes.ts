@@ -19,6 +19,12 @@ export default (
     flagController.confirmFlag,
   );
   app.post(
+    "/flags/deny",
+    requireAuth,
+    validate({body: schemas.denyFlag}),
+    flagController.denyFlag,
+  );
+  app.post(
     "/flags/near",
     requireAuth,
     validate({body: schemas.getFlagsNear}),

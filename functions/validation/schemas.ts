@@ -106,6 +106,9 @@ const schemas = {
   confirmFlag: Joi.object({
     flagId: strReq(),
   }),
+  denyFlag: Joi.object({
+    flagId: strReq(),
+  }),
   unflagFlag: Joi.object({
     flagId: strReq(),
   }),

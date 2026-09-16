@@ -214,3 +214,111 @@ describe("flag unflag", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("flag deny", () => {
+  let denyId = "";
+
+  it("POST /flags submits a deniable suggested flag", async () => {
+    const res = await request(app)
+      .post("/flags")
+      .set("Authorization", bearer(USER))
+      .send({type: "OBSTRUCTION", lat: BASE_LAT, lng: BASE_LNG});
+    expect(res.status).toBe(201);
+    denyId = res.body.data.id as string;
+  });
+
+  it("POST /flags/deny rejects the reporter's own denial", async () => {
+    const res = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(USER))
+      .send({flagId: denyId});
+    expect(res.status).toBe(403);
+  });
+
+  it("POST /flags/deny records a downvote below the threshold", async () => {
+    const res = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_A))
+      .send({flagId: denyId});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      voteCount: -1,
+      status: "1",
+      alreadyVoted: false,
+      voteDirection: "down",
+    });
+  });
+
+  it("POST /flags/deny is idempotent for repeat deniers", async () => {
+    const again = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_A))
+      .send({flagId: denyId});
+    expect(again.status).toBe(200);
+    expect(again.body.data).toMatchObject({
+      voteCount: -1,
+      alreadyVoted: true,
+      voteDirection: "down",
+    });
+  });
+
+  it("POST /flags/deny switches a confirmer to a denier", async () => {
+    const up = await request(app)
+      .post("/flags/confirm")
+      .set("Authorization", bearer(VOTER_B))
+      .send({flagId: denyId});
+    expect(up.body.data).toMatchObject({voteCount: 0, voteDirection: "up"});
+    const down = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_B))
+      .send({flagId: denyId});
+    expect(down.status).toBe(200);
+    expect(down.body.data).toMatchObject({
+      voteCount: -2,
+      status: "1",
+      alreadyVoted: false,
+      voteDirection: "down",
+    });
+  });
+
+  it("POST /flags/deny rejects at three net downvotes", async () => {
+    const third = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_C))
+      .send({flagId: denyId});
+    expect(third.status).toBe(200);
+    expect(third.body.data).toMatchObject({
+      voteCount: -3,
+      status: "5",
+      voteDirection: "down",
+    });
+    const near = await request(app)
+      .post("/flags/near")
+      .set("Authorization", bearer(USER))
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    const ids = (near.body.data as {id: string}[]).map((f) => f.id);
+    expect(ids).not.toContain(denyId);
+  });
+
+  it("POST /flags/deny demotes a confirmed flag", async () => {
+    const confirmed = await seedFlag({status: "2", voteCount: 0});
+    await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_A))
+      .send({flagId: confirmed});
+    await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_B))
+      .send({flagId: confirmed});
+    const third = await request(app)
+      .post("/flags/deny")
+      .set("Authorization", bearer(VOTER_C))
+      .send({flagId: confirmed});
+    expect(third.status).toBe(200);
+    expect(third.body.data).toMatchObject({
+      voteCount: -3,
+      status: "1",
+      voteDirection: "down",
+    });
+  });
+});

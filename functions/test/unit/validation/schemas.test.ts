@@ -21,6 +21,7 @@ const valid: Record<string, unknown> = {
   moderateFlag: {flagId: "f1", status: "3"},
   getFlagsNear: {lat: 10.7626, lng: 106.6602},
   confirmFlag: {flagId: "f1"},
+  denyFlag: {flagId: "f1"},
   unflagFlag: {flagId: "f1"},
   nearLandmarks: {lat: 10.7626, lng: 106.6602},
   createLandmark: {lat: 10.7626, lng: 106.6602, displayLabel: "Gate"},

@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 28 unit suites (311 tests) and 19 integration suites (103 tests), all green:
+Backend tested with **Jest** across two tiers — 28 unit suites (320 tests) and 19 integration suites (110 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
@@ -110,15 +110,15 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 
 | File | What it asserts |
 |------|-----------------|
-| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords). |
+| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords); dispatch assist flow samples; rating/volunteer samples. |
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync. |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup), heartbeat 404/off-400/refresh. |
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
-| `service/flagService.test.ts` | Consensus threshold flip at 3, trust-weighted votes, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, flag covering an own saved-route destination/place → 409 (no create), far-away flag allowed, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
+| `service/flagService.test.ts` | Signed net-score voting (one switchable vote per rider, `voteDirection` in responses): confirm flip to `"2"` at +3, trust-weighted votes, deny reject to `"5"` at −3, confirmed demote to `"1"` at −3, no push on reject/demote, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, flag covering an own saved-route destination/place → 409 (no create), far-away flag allowed, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
 | `service/placesService.test.ts` | Directory search merges shops before landmarks, prefix scoping, short-query rejection. |
@@ -147,12 +147,12 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | File | Tests |
 |------|-------|
 | `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
-| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400 |
+| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags, heartbeat off-400/record |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `status.test.ts` | POST /statuses returns groups sorted by order, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
 | `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
-| `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
+| `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST deny ×3 → code `"5"` (dropped from near), confirm→deny switch applies the double-weight delta, confirmed flag demoted to `"1"` at −3, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `places.test.ts` | POST search merges shops before landmarks, prefix-scoped, short query 400, missing token 401 |
 | `savedPlace.test.ts` | POST save 201 + coord-dedupe label update, POST saved lists mine, POST unsave deletes mine / rejects strangers' |

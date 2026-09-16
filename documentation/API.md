@@ -458,7 +458,7 @@ Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-ty
 
 ### `POST /flags/confirm` **(Auth)**
 
-Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count ≥ 3 flips the flag to `"2"` (Confirmed, reflected in the response). `"3"` (Locked) flags are returned unchanged.
+Cast a consensus up-vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); net score ≥ +3 flips a Suggested flag to `"2"` (Confirmed, reflected in the response). `"3"` (Locked) flags are returned unchanged, as are votes on your own report (`403`). One active vote per rider: confirming after denying (or the reverse) switches the vote, applying twice the weight as the delta. Vote responses carry `voteDirection` (`"up"` / `"down"` / `null`) alongside `alreadyVoted`.
 
 **Request:**
 ```json
@@ -467,7 +467,25 @@ Cast a consensus vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); count �
 
 **Response `200`:**
 ```json
-{ "statusCode": 200, "status": "SUCCESS", "message": "Flag vote recorded", "data": { "id": "flag1", "voteCount": 3, "status": "2" } }
+{ "statusCode": 200, "status": "SUCCESS", "message": "Flag vote recorded", "data": { "id": "flag1", "voteCount": 3, "status": "2", "voteDirection": "up" } }
+```
+
+Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
+
+---
+
+### `POST /flags/deny` **(Auth)**
+
+Cast a consensus down-vote — the mirror of confirm with the same eligibility (never your own report, never a `"3"` Locked flag) and the same trust weighting applied with a negative sign. Net score ≤ −3 rejects a Suggested flag to `"5"` (Rejected, dropped from near/mine results) or demotes a Confirmed flag back to `"1"` (Suggested, re-opened for evaluation). `voteCount` is a running net score and is never reset, so a demoted flag needs a full climb back to +3 — the hysteresis is intentional. No push is enqueued on reject/demote; blocking stops applying on the next request automatically.
+
+**Request:**
+```json
+{ "flagId": "flag1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Flag denial recorded", "data": { "id": "flag1", "voteCount": -3, "status": "5", "voteDirection": "down" } }
 ```
 
 Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.

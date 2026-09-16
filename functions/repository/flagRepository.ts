@@ -11,6 +11,7 @@ interface FlagRecord {
   lng: number;
   voteCount: number;
   voters?: string[];
+  votes?: Record<string, number>;
   radiusMeters?: number;
   ttlExpiresAt: Date;
   reporterUid: string;
@@ -101,24 +102,60 @@ const castVote = async (
   uid: string,
   weight: number,
 ): Promise<{flag: FlagRecord; duplicate: boolean} | null> => {
+  const cast = await castSignedVote(flagId, uid, weight);
+  if (!cast) return null;
+  return {flag: cast.flag, duplicate: cast.duplicate};
+};
+
+const castSignedVote = async (
+  flagId: string,
+  uid: string,
+  signedWeight: number,
+): Promise<{
+  flag: FlagRecord;
+  duplicate: boolean;
+  direction: "up" | "down";
+} | null> => {
   const ref = db.collection("flags").doc(flagId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) return null;
     const data = {id: snap.id, ...(snap.data() ?? {})} as FlagRecord;
-    const voters = Array.isArray(data.voters) ? data.voters : [];
-    if (voters.includes(uid)) return {flag: data, duplicate: true};
+    const weight = Math.abs(signedWeight);
+    const direction = signedWeight >= 0 ? "up" : "down";
+    const stored =
+      data.votes !== undefined && data.votes !== null ?
+        (data.votes as Record<string, number>) :
+        {};
+    const legacyVoters = Array.isArray(data.voters) ?
+      (data.voters as string[]) :
+      [];
+    const current =
+      uid in stored ? stored[uid] : legacyVoters.includes(uid) ? weight : 0;
+    const next = direction === "up" ? weight : -weight;
+    if (current === next) return {flag: data, duplicate: true, direction};
+    const votes = {...stored, [uid]: next};
+    const voteCount = (data.voteCount ?? 0) + (next - current);
     tx.update(ref, {
-      voters: FieldValue.arrayUnion(uid),
-      voteCount: FieldValue.increment(weight),
+      votes,
+      voteCount,
+      voters:
+        direction === "up" ?
+          FieldValue.arrayUnion(uid) :
+          FieldValue.arrayRemove(uid),
     });
     return {
       flag: {
         ...data,
-        voters: [...voters, uid],
-        voteCount: (data.voteCount ?? 0) + weight,
+        votes,
+        voters:
+          direction === "up" ?
+            Array.from(new Set([...legacyVoters, uid])) :
+            legacyVoters.filter((voter) => voter !== uid),
+        voteCount,
       },
       duplicate: false,
+      direction,
     };
   });
 };
@@ -157,6 +194,7 @@ export {
   create,
   incrementVote,
   castVote,
+  castSignedVote,
   updateStatus,
   deleteById,
   findExpired,
