@@ -258,7 +258,7 @@ Responds `{cached, routes}` — up to 5 options stop-less (`routes[0]` primary),
 | `name` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
-| `type` | enum: SHOP, PUMP | req |
+| `type` | enum: SHOP, MOBILE, TOW | req |
 
 ### `POST /shops/near` — `nearShops`
 | Field | Type | |
@@ -266,7 +266,7 @@ Responds `{cached, routes}` — up to 5 options stop-less (`routes[0]` primary),
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 2000) |
-| `type` | enum: SHOP, PUMP | opt |
+| `type` | enum: SHOP, MOBILE, TOW | opt |
 
 ---
 

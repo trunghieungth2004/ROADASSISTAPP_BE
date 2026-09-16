@@ -78,6 +78,37 @@ const updateStatus = async (req: Request, res: Response) => {
   }
 };
 
+const setVolunteerAvailability = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {available, volunteerRadiusKm, capability} = req.body;
+    const result = await userService.setVolunteerAvailability({
+      userId,
+      available,
+      volunteerRadiusKm,
+      capability,
+    });
+    sendSuccess(res, result, {message: "Volunteer status updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const volunteerHeartbeat = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {lat, lng} = req.body;
+    const result = await userService.volunteerHeartbeat({
+      userId,
+      lat,
+      lng,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 export {
   register,
   getOneUser,
@@ -85,4 +116,6 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  setVolunteerAvailability,
+  volunteerHeartbeat,
 };

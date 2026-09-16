@@ -8,6 +8,14 @@ interface Shop {
   lng: number;
   type: string;
   geoHash: string;
+  openHours?: string | null;
+  accepting?: boolean;
+  hasTow?: boolean;
+  towVehicleType?: string | null;
+  towVehicleWidth?: number | null;
+  operatorUid?: string | null;
+  ratingAvg?: number;
+  ratingCount?: number;
   [key: string]: unknown;
 }
 
@@ -16,11 +24,25 @@ const create = async (data: {
   lat: number;
   lng: number;
   type: string;
+  openHours?: string;
+  accepting?: boolean;
+  hasTow?: boolean;
+  towVehicleType?: string;
+  towVehicleWidth?: number;
+  operatorUid?: string;
 }): Promise<Shop> => {
   const ref = db.collection("shops").doc();
   const doc = {
     id: ref.id,
     ...data,
+    openHours: data.openHours ?? null,
+    accepting: data.accepting ?? true,
+    hasTow: data.hasTow ?? false,
+    towVehicleType: data.towVehicleType ?? null,
+    towVehicleWidth: data.towVehicleWidth ?? null,
+    operatorUid: data.operatorUid ?? null,
+    ratingAvg: 0,
+    ratingCount: 0,
     nameLower: data.name.trim().toLowerCase(),
     geoHash: encodeGeohash(data.lat, data.lng, 8),
     geoCell: encodeGeohash(data.lat, data.lng, 6),
@@ -28,6 +50,30 @@ const create = async (data: {
   };
   await ref.set(doc);
   return doc;
+};
+
+const findById = async (shopId: string): Promise<Shop | null> => {
+  const doc = await db.collection("shops").doc(shopId).get();
+  if (!doc.exists) return null;
+  return {id: doc.id, ...doc.data()} as Shop;
+};
+
+const update = async (
+  shopId: string,
+  fields: Record<string, unknown>,
+): Promise<void> => {
+  await db.collection("shops").doc(shopId).update(fields);
+};
+
+const updateRating = async (
+  shopId: string,
+  avg: number,
+  count: number,
+): Promise<void> => {
+  await db.collection("shops").doc(shopId).update({
+    ratingAvg: avg,
+    ratingCount: count,
+  });
 };
 
 const findByGeohashPrefixes = async (prefixes: string[]): Promise<Shop[]> => {
@@ -65,4 +111,5 @@ const findByNamePrefix = async (
   return results;
 };
 
-export {create, findByGeohashPrefixes, findByNamePrefix};
+export {create, findById, update, updateRating, findByGeohashPrefixes,
+  findByNamePrefix};

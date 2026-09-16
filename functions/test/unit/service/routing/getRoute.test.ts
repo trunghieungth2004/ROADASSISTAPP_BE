@@ -163,7 +163,12 @@ describe("routingService.getRoute", () => {
       ],
     });
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
-    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 5);
+    expect(mockPostRoutes).toHaveBeenCalledWith(
+      [originStop, destStop],
+      [],
+      5,
+      "motor_scooter",
+    );
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -284,7 +289,12 @@ describe("routingService.getRoute", () => {
     });
     await getRoute({...base, width: 0.9});
     expect(mockPostRoutes).toHaveBeenCalledTimes(1);
-    expect(mockPostRoutes).toHaveBeenCalledWith([originStop, destStop], [], 5);
+    expect(mockPostRoutes).toHaveBeenCalledWith(
+      [originStop, destStop],
+      [],
+      5,
+      "motor_scooter",
+    );
   });
 
   it("keeps width buckets out of the engine request", async () => {
@@ -331,6 +341,7 @@ describe("routingService.getRoute", () => {
       [originStop, stops[0], destStop],
       [],
       1,
+      "motor_scooter",
     );
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.stringContaining(";"),
@@ -355,7 +366,40 @@ describe("routingService.getRoute", () => {
     await getRoute(base);
     const key = jest.mocked(routingCacheRepository.save).mock.calls[0][0];
     expect(key).not.toContain(";");
-    expect(key).toBe("10.76260,106.66020:10.77580,106.70190:MEDIUM");
+    expect(key).toBe(
+      "10.76260,106.66020:10.77580,106.70190:MEDIUM:motor_scooter",
+    );
+  });
+
+  it("routes car vehicles with the auto costing", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry: Line = {type: "LineString", coordinates: [[1, 2]]};
+    mockPostRoutes.mockResolvedValue([
+      {geometry, distanceMeters: 100, durationSeconds: 50},
+    ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [],
+      warnings: [],
+    });
+    await getRoute({...base, width: 1.9, vehicleType: "CAR"});
+    expect(mockPostRoutes).toHaveBeenCalledWith(
+      [originStop, destStop],
+      [],
+      5,
+      "auto",
+    );
+    const key = jest.mocked(routingCacheRepository.save).mock.calls[0][0];
+    expect(key).toBe(
+      "10.76260,106.66020:10.77580,106.70190:WIDE:auto",
+    );
+    expect(routingCacheRepository.save).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({costing: "auto"}),
+    );
   });
 
   it("skips the width gate without a width", async () => {

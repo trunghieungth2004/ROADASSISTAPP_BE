@@ -24,4 +24,33 @@ export default (
     validate({body: schemas.updateDispatchStatus}),
     dispatchController.updateDispatchStatus,
   );
+  app.post(
+    "/dispatch/near",
+    requireAuth,
+    validate({body: schemas.nearDispatch}),
+    dispatchController.nearDispatch,
+  );
+  app.post(
+    "/dispatch/offers",
+    requireAuth,
+    validate({body: schemas.dispatchOffers}),
+    dispatchController.dispatchOffers,
+  );
+  app.post(
+    "/dispatch/select",
+    requireAuth,
+    validate({body: schemas.selectDispatch}),
+    dispatchController.selectDispatch,
+  );
+  app.post(
+    "/dispatch/accept",
+    requireAuth,
+    validate({body: schemas.acceptDispatch}),
+    dispatchController.acceptDispatch,
+  );
+  app.post(
+    "/dispatch/deliver",
+    validate({body: schemas.deliverDispatch}),
+    dispatchController.deliverDispatch,
+  );
 };

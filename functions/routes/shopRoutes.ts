@@ -18,4 +18,10 @@ export default (
     validate({body: schemas.nearShops}),
     shopController.nearShops,
   );
+  app.put(
+    "/shops",
+    requireAuth,
+    validate({body: schemas.updateShop}),
+    shopController.updateShop,
+  );
 };

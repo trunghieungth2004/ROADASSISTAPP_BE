@@ -120,6 +120,7 @@ describe("routingService detours", () => {
       [originStop, destStop],
       [],
       5,
+      "motor_scooter",
     ]);
     const polygons = mockPostRoutes.mock.calls[1][1] ?? [];
     expect(polygons).toHaveLength(1);
@@ -517,6 +518,7 @@ describe("routingService detours", () => {
       [originStop, stop, destStop],
       [],
       1,
+      "motor_scooter",
     ]);
     expect(mockPostRoutes.mock.calls[1][0]).toEqual([
       originStop,

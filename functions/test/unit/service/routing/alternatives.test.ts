@@ -107,6 +107,7 @@ describe("routingService alternatives", () => {
       [originStop, destStop],
       [],
       5,
+      "motor_scooter",
     ]);
     expect(routingCacheRepository.save).toHaveBeenCalledWith(
       expect.any(String),

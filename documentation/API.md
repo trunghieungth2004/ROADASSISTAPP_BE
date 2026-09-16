@@ -37,6 +37,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 - [Shops](#shops)
 - [Diagnostics](#diagnostics)
 - [Dispatch](#dispatch)
+- [Ratings](#ratings)
 - [Error Responses](#error-responses)
 
 ---
@@ -171,6 +172,38 @@ Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled
 
 ---
 
+### `PUT /users/volunteer` **(Auth)**
+
+Opt in or out of the volunteer network (Đội Cứu Hộ). Opting out deletes the volunteer's last-known location. `volunteerRadiusKm` (1–50, default 5) bounds SOS matching. `capability` is `SOLO_BIKE` (default, two-wheelers only) or `CAR` (also takes car tickets).
+
+**Request:**
+```json
+{ "available": true, "volunteerRadiusKm": 5, "capability": "SOLO_BIKE" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Volunteer status updated", "data": { "updated": 1, "available": true } }
+```
+
+---
+
+### `POST /users/volunteer/heartbeat` **(Auth)**
+
+Refresh the volunteer's last-known location for SOS matching. Rejected (`400`) while volunteer mode is off. Locations older than 15 minutes never match.
+
+**Request:**
+```json
+{ "lat": 10.7626, "lng": 106.6602 }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "uid": "abc123", "lat": 10.7626, "lng": 106.6602, "...": "..." } }
+```
+
+---
+
 ## Roles
 
 The `roles` collection maps numeric codes to names/descriptions for clients. It is seeded via `npm run db:init` (upsert from `functions/constants/roles.ts`).
@@ -287,7 +320,7 @@ Create a vehicle profile (physical footprint used for passability checks).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | yes | One of `SCOOTER`, `CUB`, `MANUAL` |
+| `type` | string | yes | One of `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` (car-class types route with `auto` costing) |
 | `baseWidth` | number | yes | Meters |
 | `baseHeight` | number | yes | Meters |
 
@@ -616,7 +649,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ### `POST /routes` **(Auth)**
 
-Route between two points for the caller's vehicle width. Returns up to 5 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`), otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing) and persisted (geometries stored JSON-stringified). Stop-less requests ask Valhalla for `alternates: 4` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ENGINE.md](./ENGINE.md).
+Route between two points for the caller's vehicle width and type (`vehicleType`, optional: `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK`). Returns up to 5 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`); the key is `origin:dest:bucket:costing` (stops-joined form when stops are present), so car and scooter requests never share cache entries. Otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing, or `auto` for `CAR`/`VAN`/`TRUCK`) and persisted (geometries stored JSON-stringified). `VALHALLA_AUTO_MAX_DISTANCE` optionally caps `auto` requests by straight-line OD distance (`400` beyond it; unset by default). Stop-less requests ask Valhalla for `alternates: 4` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ENGINE.md](./ENGINE.md).
 
 **Request:**
 ```json
@@ -753,35 +786,56 @@ Enqueued automatically — guarded by the `X-CloudTasks-QueueName: hazard-push` 
 
 ## Shops
 
-XeAssist stub endpoints.
+Repair shops (`SHOP`), mobile shops (`MOBILE`, service on the move), and tow providers (`TOW`) share the `shops` collection. Providers carry `openHours` (`"HH:MM-HH:MM"`), an `accepting` availability toggle, an optional `hasTow` flag on repair shops, tow-vehicle details (`towVehicleType` `CAR`/`VAN`/`TRUCK` + `towVehicleWidth` in meters), an `operatorUid` (the account that accepts tickets for the shop), and denormalized `ratingAvg`/`ratingCount`.
 
 ### `POST /shops` **(Auth)**
 
-Register a repair shop or fuel pump.
+Register a repair shop, mobile shop, or tow provider. The caller becomes the `operatorUid` unless one is supplied.
 
 **Request:**
 ```json
-{ "name": "Sửa xe Minh", "lat": 10.7626, "lng": 106.6602, "type": "SHOP" }
+{ "name": "Sửa xe Minh", "lat": 10.7626, "lng": 106.6602, "type": "SHOP", "openHours": "06:00-22:00", "hasTow": true }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | yes | One of `SHOP`, `PUMP` |
+| `type` | string | yes | One of `SHOP`, `MOBILE`, `TOW` |
+| `towVehicleType` | string | no | One of `CAR`, `VAN`, `TRUCK` |
+| `towVehicleWidth` | number | no | Tow vehicle width in meters (0.3–3) |
+| `openHours` | string | no | `"HH:MM-HH:MM"`, may cross midnight |
+| `hasTow` | boolean | no | Repair shop also runs a tow vehicle |
+| `operatorUid` | string | no | Defaults to the caller |
 
 **Response `201`:**
 ```json
-{ "statusCode": 201, "status": "SUCCESS", "message": "Shop created", "data": { "id": "shop1", "...": "..." } }
+{ "statusCode": 201, "status": "SUCCESS", "message": "Shop created", "data": { "id": "shop1", "accepting": true, "...": "..." } }
+```
+
+---
+
+### `PUT /shops` **(Auth)**
+
+Update a provider. Only the `operatorUid` (or an admin) may edit. Used for the availability toggle (`accepting`), hours, tow capability, and the tow vehicle (`towVehicleType`, `towVehicleWidth`).
+
+**Request:**
+```json
+{ "shopId": "shop1", "accepting": false, "openHours": "06:00-22:00" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Shop updated", "data": { "updated": 1 } }
 ```
 
 ---
 
 ### `POST /shops/near` **(Auth)**
 
-List shops near a point with computed `distance`, optionally filtered by `type`.
+List shops near a point, sorted nearest-first and capped (`limit` 1–20, default 10). Each hit carries `distance` and `openNow` (`true`/`false`, or `null` when no hours are set). `radiusMeters` is 200–10000 (default 2000); the walk panel uses 500–2000.
 
 **Request:**
 ```json
-{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "type": "PUMP" }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "type": "MOBILE", "acceptingOnly": true, "openOnly": true, "limit": 10 }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
@@ -877,21 +931,32 @@ Get a diagnostic by ID.
 
 ## Dispatch
 
-XeAssist stub endpoints. Ticket lifecycle: `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved (or `"5"` Cancelled).
+Three assistance tiers share the ticket lifecycle: `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved (or `"5"` Cancelled). Nobody is auto-assigned: volunteers and providers accept at will, and the rider picks from the offer list.
+
+- **Walk:** `POST /shops/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP`/`MOBILE` providers only.
+- **Professional:** ticket carries the rider vehicle (`vehicleType`/`vehicleWidth`, so helpers know what they rescue), alley-entrance coords + clearance (`alleySegmentId` → measured `accessWidthMeters`), an optional tow destination (registered `destinationShopId` or free-form `destinationPoint {lat,lng,label}`, snapshotted), and a provider assignment (`assignedShopId`). Tow providers flip `accepting: false` while on a ticket and back on resolve/cancel. Tow offers carry the provider vehicle and a `fitsAlley` label (`true`/`false`, `null` when unknown) against the ticket clearance.
+- **Volunteer:** `SOS` tickets geo-match available volunteers (toggle on, fresh location < 15 min, no active ticket, capability fit: car tickets only match `CAR`-capable volunteers), persist them as `candidates`, fan out via FCM (`dispatch-push` queue, gated by `CLOUD_TASKS_ENABLED`/`FCM_ENABLED`), and surface on the `near` radar.
 
 ### `POST /dispatch` **(Auth)**
 
-Open a dispatch ticket, optionally linked to a diagnostic.
+Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point).
 
 **Request:**
 ```json
-{ "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "diagnosticId": "diag1" }
+{ "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "diagnosticId": "diag1", "alleySegmentId": "seg1", "note": "Alley gate", "destinationShopId": "shop9", "destinationPoint": {"lat": 10.71, "lng": 106.61, "label": "Home"}, "vehicleType": "CAR", "vehicleWidth": 1.9 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `ticketType` | string | yes | One of `MECHANIC`, `TOW`, `SOS` |
 | `diagnosticId` | string | no | May be `""`/`null` |
+| `alleySegmentId` | string | no | Alley entrance; `accessWidthMeters` resolves from its measured `baseWidth` |
+| `accessWidthMeters` | number | no | Explicit clearance (0–20 m), wins over the segment lookup |
+| `note` | string | no | Free text, max 280 chars |
+| `destinationShopId` | string | no | Repair shop the tow should drop the vehicle at (wins over `destinationPoint`) |
+| `destinationPoint` | object | no | Free-form tow destination `{lat, lng, label?}` |
+| `vehicleType` | string | no | Rider vehicle, one of `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` |
+| `vehicleWidth` | number | no | Rider vehicle width in meters (0.3–3) |
 
 **Response `201`:**
 ```json
@@ -925,6 +990,97 @@ Advance a ticket's status (validated against the lifecycle enum).
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "message": "Dispatch updated", "data": { "updated": 1 } }
+```
+
+---
+
+### `POST /dispatch/near` **(Auth)**
+
+Radar: pending tickets near a point, nearest-first with `distance`. Used by volunteers (SOS) and provider apps. `radiusMeters` 200–10000 (default 5000). Car tickets are hidden from bike-only volunteers on the radar.
+
+**Request:**
+```json
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 5000, "ticketType": "SOS" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...tickets... ] }`
+
+---
+
+### `POST /dispatch/offers` **(Auth)**
+
+Offer list: accepting providers near a point (sorted nearest-first, capped). `kind` is `SHOP`, `MOBILE`, or `TOW`. `accessWidthMeters` (optional) labels each `TOW` offer with `fitsAlley` (`true`/`false`, `null` when the provider vehicle or clearance is unknown).
+
+**Request:**
+```json
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 5000, "kind": "TOW", "limit": 10, "accessWidthMeters": 2.5 }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
+
+---
+
+### `POST /dispatch/select` **(Auth)**
+
+The rider picks a provider for a pending ticket (stays pending until the provider accepts).
+
+**Request:**
+```json
+{ "ticketId": "tick1", "shopId": "shop9" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Provider selected", "data": { "selected": "shop9" } }
+```
+
+---
+
+### `POST /dispatch/accept` **(Auth)**
+
+Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that shop (must be its `operatorUid` or an admin; shop must be accepting). Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "shopId": "shop9" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Ticket accepted", "data": { "matched": true, "kind": "SHOP" } }
+```
+
+---
+
+### `POST /dispatch/deliver` (Cloud Tasks only)
+
+Fan out an SOS ticket to candidate volunteers' FCM tokens (`"SOS request near you"` + ticket data). Skipped when FCM is disabled or the ticket left pending.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "delivered": 1, "skipped": false } }`
+
+---
+
+## Ratings
+
+Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update). Targets are `VOLUNTEER`, `SHOP`, or `RIDER`. Averages denormalize to `ratingAvg`/`ratingCount` on users/shops and onto the ticket (`helperRating`/`riderRating`).
+
+### `POST /ratings` **(Auth)**
+
+Rate after a ticket resolves (`400` otherwise). Riders rate the helper (assigned volunteer, assigned shop, or destination shop); helpers (assigned volunteer or the shop operator) rate the rider.
+
+**Request:**
+```json
+{ "targetId": "vol1", "targetKind": "VOLUNTEER", "ticketId": "tick1", "score": 5 }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Rating submitted", "data": { "avg": 5, "count": 1, "updated": 1 } }
 ```
 
 ---

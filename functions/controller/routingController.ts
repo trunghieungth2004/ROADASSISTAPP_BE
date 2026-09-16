@@ -6,7 +6,8 @@ import {AuthedRequest} from "../middleware/auth";
 const getRoute = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {originLat, originLng, destLat, destLng, stops, width} = req.body;
+    const {originLat, originLng, destLat, destLng, stops, width,
+      vehicleType} = req.body;
     const result = await routingService.getRoute({
       userId,
       originLat,
@@ -15,6 +16,7 @@ const getRoute = async (req: Request, res: Response) => {
       destLng,
       stops,
       width,
+      vehicleType,
     });
     sendSuccess(res, result);
   } catch (error) {

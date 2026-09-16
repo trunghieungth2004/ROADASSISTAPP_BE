@@ -22,6 +22,7 @@ import routingRoutes from "./routes/routingRoutes";
 import shopRoutes from "./routes/shopRoutes";
 import diagnosticRoutes from "./routes/diagnosticRoutes";
 import dispatchRoutes from "./routes/dispatchRoutes";
+import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 
 const app = express();
@@ -93,6 +94,7 @@ routingRoutes(app, routeDeps);
 shopRoutes(app, routeDeps);
 diagnosticRoutes(app, routeDeps);
 dispatchRoutes(app, routeDeps);
+ratingRoutes(app, routeDeps);
 pushRoutes(app, routeDeps);
 
 app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {

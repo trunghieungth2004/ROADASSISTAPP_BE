@@ -66,7 +66,8 @@ functions cannot reach `localhost`).
    with a real `exclude_polygons`, asserting `trip.status: 0` —
    proving both the costing and polygon avoidance parse),
    retrying up to ~5 min for tile load; fails the deploy on persistent
-   failure.
+   failure. Optionally repeat the probe with `costing: auto` to prove the
+   car path before enabling car riders in the app.
 7. Prunes stale `valhalla-vietnam:*` images, keeping only the live digest —
    rebuilds never accumulate dead GBs in Artifact Registry.
 

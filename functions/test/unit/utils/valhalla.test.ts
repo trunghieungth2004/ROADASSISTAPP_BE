@@ -1,8 +1,10 @@
 import {haversineMeters} from "../../../utils/geo";
 import {
   circleToRing,
+  costingForVehicle,
   decodePolyline6,
   dedupeRoutes,
+  isCarVehicle,
   postRoute,
   postRoutes,
   ServiceError,
@@ -261,6 +263,71 @@ describe("postRoutes", () => {
       3,
     );
     expect(res).toHaveLength(1);
+  });
+
+  it("defaults to the scooter costing", async () => {
+    const fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(okResponse(tripBody([SHAPE_A])));
+    await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      1,
+    );
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(sent.costing).toBe("motor_scooter");
+  });
+
+  it("sends the auto costing when requested", async () => {
+    const fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(okResponse(tripBody([SHAPE_A])));
+    await postRoutes(
+      [
+        {lat: 10.7626, lng: 106.6602},
+        {lat: 10.7758, lng: 106.7019},
+      ],
+      [],
+      1,
+      "auto",
+    );
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(sent.costing).toBe("auto");
+  });
+
+  it("rejects auto routes beyond the configured distance", async () => {
+    process.env.VALHALLA_AUTO_MAX_DISTANCE = "1000";
+    const fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(okResponse(tripBody([SHAPE_A])));
+    await expect(
+      postRoutes(
+        [
+          {lat: 10.7626, lng: 106.6602},
+          {lat: 10.7758, lng: 106.7019},
+        ],
+        [],
+        1,
+        "auto",
+      ),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(fetchSpy).not.toHaveBeenCalled();
+    delete process.env.VALHALLA_AUTO_MAX_DISTANCE;
+  });
+
+  it("maps vehicle types to costings", () => {
+    expect(costingForVehicle("CAR")).toBe("auto");
+    expect(costingForVehicle("VAN")).toBe("auto");
+    expect(costingForVehicle("TRUCK")).toBe("auto");
+    expect(costingForVehicle("SCOOTER")).toBe("motor_scooter");
+    expect(costingForVehicle(undefined)).toBe("motor_scooter");
+    expect(isCarVehicle("CAR")).toBe(true);
+    expect(isCarVehicle("CUB")).toBe(false);
   });
 
   it("drops alternates with geometry identical to the primary", async () => {

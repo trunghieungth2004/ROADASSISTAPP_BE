@@ -51,9 +51,9 @@ Notable behaviors:
 
 `POST /routes` does not use the in-process LRU. It uses the `routing_cache` collection as a durable cache (`repository/routingCacheRepository.ts`, consumed by `service/routingService.ts`):
 
-- Key: origin/dest rounded to 5 decimals plus width bucket, e.g. `10.76262,106.66017:10.77584,106.70194:MEDIUM`.
+- Key: origin/dest rounded to 5 decimals plus width bucket plus costing, e.g. `10.76262,106.66017:10.77584,106.70194:MEDIUM:motor_scooter` (stops-joined form when stops are present). Pre-costing keys (`...:MEDIUM` without the costing suffix) never hit and re-solve once, then persist under the new form. Car and scooter requests for the same OD solve and cache separately by design.
 - Hit returns the full payload `{cached: true, routes: [...]}` without touching Valhalla.
-- Miss calls Valhalla (`motor_scooter` costing, no width params — the engine is width-agnostic), persists `{originLat/Lng, destLat/Lng, widthBucket, routes, cachedAt, expiresAt}`, and returns `{cached: false, routes: [...]}`. Stop-less misses store up to 3 base routes; pre-alternatives single-route entries are still readable (legacy read). The bucket only scopes the width gate that runs after the solve, so different buckets may share the same base geometry.
+- Miss calls Valhalla (`motor_scooter`, or `auto` for car-class `vehicleType`; no width params — the engine is width-agnostic), persists `{originLat/Lng, destLat/Lng, widthBucket, costing, routes, cachedAt, expiresAt}`, and returns `{cached: false, routes: [...]}`. Stop-less misses store up to 3 base routes; pre-alternatives single-route entries are still readable (legacy read). The bucket only scopes the width gate that runs after the solve, so different buckets may share the same base geometry.
 - Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
 - TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
 

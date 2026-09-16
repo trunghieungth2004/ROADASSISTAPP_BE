@@ -21,6 +21,7 @@ interface SteerCheck {
 interface SteerInput {
   origin: LatLng;
   destination: LatLng;
+  costing: string;
   rings: Ring[];
   cluster: closureService.BlockingZone[];
   check: (geometry: unknown) => Promise<SteerCheck>;
@@ -199,6 +200,7 @@ const steerThroughCorridor = async (
           [input.origin, anchor, input.destination],
           input.rings,
           1,
+          input.costing,
         )
       )[0];
     } catch {

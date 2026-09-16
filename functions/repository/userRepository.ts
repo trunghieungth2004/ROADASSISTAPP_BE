@@ -8,6 +8,11 @@ interface UserRecord {
   role: string;
   status?: string;
   trustScore?: number;
+  volunteerAvailable?: boolean;
+  volunteerRadiusKm?: number;
+  capability?: string;
+  ratingAvg?: number;
+  ratingCount?: number;
   [key: string]: unknown;
 }
 
@@ -47,6 +52,11 @@ const create = async (
       role: data.role,
       status: STATUS_USER.ACTIVE,
       trustScore: 0,
+      volunteerAvailable: false,
+      volunteerRadiusKm: 5,
+      capability: "SOLO_BIKE",
+      ratingAvg: 0,
+      ratingCount: 0,
       createdAt: new Date().toISOString(),
     });
 };
@@ -65,6 +75,28 @@ const updateTrustScore = async (
 const updateStatus = async (userId: string, status: string): Promise<void> => {
   await db.collection("users").doc(userId).update({status});
   await auth.updateUser(userId, {disabled: status !== STATUS_USER.ACTIVE});
+};
+
+const updateVolunteer = async (
+  userId: string,
+  fields: {
+    volunteerAvailable?: boolean;
+    volunteerRadiusKm?: number;
+    capability?: string;
+  },
+): Promise<void> => {
+  await db.collection("users").doc(userId).update(fields);
+};
+
+const updateRating = async (
+  userId: string,
+  avg: number,
+  count: number,
+): Promise<void> => {
+  await db.collection("users").doc(userId).update({
+    ratingAvg: avg,
+    ratingCount: count,
+  });
 };
 
 const updateRoles = async (
@@ -133,6 +165,8 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  updateVolunteer,
+  updateRating,
   updateRoles,
   updateStatuses,
   findByIds,

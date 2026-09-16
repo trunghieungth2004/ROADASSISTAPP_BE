@@ -1,4 +1,6 @@
 import * as userRepository from "../repository/userRepository";
+import * as volunteerLocationRepository from
+  "../repository/volunteerLocationRepository";
 import * as cacheManager from "../utils/cacheManager";
 import {ROLE_ADMIN, ROLE_RIDER} from "../constants/roles";
 import {auth} from "../config/firebase";
@@ -118,6 +120,48 @@ const updateStatus = async ({
   return {updated: 1};
 };
 
+const setVolunteerAvailability = async ({
+  userId,
+  available,
+  volunteerRadiusKm,
+  capability,
+}: {
+  userId: string;
+  available: boolean;
+  volunteerRadiusKm?: number;
+  capability?: string;
+}) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  await userRepository.updateVolunteer(userId, {
+    volunteerAvailable: available,
+    ...(volunteerRadiusKm !== undefined ? {volunteerRadiusKm} : {}),
+    ...(capability !== undefined ? {capability} : {}),
+  });
+  if (!available) {
+    await volunteerLocationRepository.remove(userId);
+  }
+  cacheManager.del(USER_NS, userId);
+  return {updated: 1, available};
+};
+
+const volunteerHeartbeat = async ({
+  userId,
+  lat,
+  lng,
+}: {
+  userId: string;
+  lat: number;
+  lng: number;
+}) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  if (user.volunteerAvailable !== true) {
+    throw new ValidationError("Volunteer mode is off");
+  }
+  return volunteerLocationRepository.upsert(userId, lat, lng);
+};
+
 export {
   register,
   getOneUser,
@@ -125,6 +169,8 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  setVolunteerAvailability,
+  volunteerHeartbeat,
   ValidationError,
   NotFoundError,
   ForbiddenError,

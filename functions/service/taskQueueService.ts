@@ -17,6 +17,7 @@ const loadClient = async (): Promise<TasksClient> => {
 };
 
 const QUEUE_NAME = "hazard-push";
+const DISPATCH_QUEUE_NAME = "dispatch-push";
 const ALREADY_EXISTS_CODE = 6;
 
 const tasksEnabled = (): boolean =>
@@ -68,4 +69,56 @@ const enqueueHazardPush = async (
   }
 };
 
-export {enqueueHazardPush, tasksEnabled, QUEUE_NAME};
+const enqueueDispatchPush = async (
+  ticketId: string,
+): Promise<{enqueued: boolean}> => {
+  if (!tasksEnabled()) return {enqueued: false};
+  const project =
+    process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT ?? "";
+  const location = process.env.TASK_QUEUE_LOCATION ?? "asia-southeast1";
+  const url =
+    process.env.DISPATCH_DELIVER_URL ??
+    process.env.PUSH_DELIVER_URL ??
+    "";
+  const serviceAccountEmail = process.env.TASK_INVOKER_EMAIL ?? "";
+  if (project === "" || url === "" || serviceAccountEmail === "") {
+    return {enqueued: false};
+  }
+  try {
+    const client = await loadClient();
+    const parent = client.queuePath(
+      project,
+      location,
+      DISPATCH_QUEUE_NAME,
+    );
+    const taskId = sanitizeTaskId(`dispatch-${ticketId}`);
+    await client.createTask({
+      parent,
+      task: {
+        name: client.taskPath(
+          project,
+          location,
+          DISPATCH_QUEUE_NAME,
+          taskId,
+        ),
+        httpRequest: {
+          httpMethod: "POST",
+          url,
+          headers: {"Content-Type": "application/json"},
+          body: Buffer.from(JSON.stringify({ticketId})).toString("base64"),
+          oidcToken: {serviceAccountEmail},
+        },
+      },
+    });
+    return {enqueued: true};
+  } catch (err) {
+    if ((err as {code?: number} | null)?.code === ALREADY_EXISTS_CODE) {
+      return {enqueued: true};
+    }
+    console.error("enqueueDispatchPush failed", err);
+    return {enqueued: false};
+  }
+};
+
+export {enqueueHazardPush, enqueueDispatchPush, tasksEnabled,
+  QUEUE_NAME, DISPATCH_QUEUE_NAME};

@@ -2,7 +2,8 @@ import * as routingCacheRepository from
   "../repository/routingCacheRepository";
 import * as userRepository from "../repository/userRepository";
 import * as closureService from "./closureService";
-import {postRoutes, dedupeRoutes} from "../utils/valhalla";
+import {postRoutes, dedupeRoutes, costingForVehicle} from
+  "../utils/valhalla";
 import type {LatLng} from "../utils/valhalla";
 import {
   NotFoundError,
@@ -54,18 +55,19 @@ const buildKey = (
   destLng: number,
   stops: LatLng[],
   widthBucket: string,
+  costing: string,
 ): string => {
   if (stops.length === 0) {
     const origin = pointKey(originLat, originLng);
     const dest = pointKey(destLat, destLng);
-    return `${origin}:${dest}:${widthBucket}`;
+    return `${origin}:${dest}:${widthBucket}:${costing}`;
   }
   const legs = [
     pointKey(originLat, originLng),
     ...stops.map((s) => pointKey(s.lat, s.lng)),
     pointKey(destLat, destLng),
   ];
-  return `${legs.join(";")}:${widthBucket}`;
+  return `${legs.join(";")}:${widthBucket}:${costing}`;
 };
 
 const parseGeometry = (stored: unknown): unknown => {
@@ -121,6 +123,7 @@ const buildPrimary = async ({
   destLng,
   stops,
   width,
+  costing,
   key,
   userId,
   source,
@@ -132,6 +135,7 @@ const buildPrimary = async ({
   destLng: number;
   stops: LatLng[];
   width: number | undefined;
+  costing: string;
   key: string;
   userId: string;
   source: string;
@@ -156,6 +160,7 @@ const buildPrimary = async ({
     destLng,
     stops,
     width,
+    costing,
     key,
     userId,
     baseGeometry: base.geometry,
@@ -175,6 +180,7 @@ const buildAlternative = async ({
   destLng,
   stops,
   width,
+  costing,
   key,
   userId,
   source,
@@ -186,6 +192,7 @@ const buildAlternative = async ({
   destLng: number;
   stops: LatLng[];
   width: number | undefined;
+  costing: string;
   key: string;
   userId: string;
   source: string;
@@ -229,6 +236,7 @@ const buildAlternative = async ({
       destLng,
       stops,
       width,
+      costing,
       key,
       userId,
       baseGeometry: base.geometry,
@@ -262,6 +270,7 @@ const getRoute = async ({
   destLng,
   stops,
   width,
+  vehicleType,
 }: {
   userId: string;
   originLat: number;
@@ -270,12 +279,14 @@ const getRoute = async ({
   destLng: number;
   stops?: LatLng[];
   width?: number;
+  vehicleType?: string;
 }): Promise<RouteList> => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
 
   const stopList = stops ?? [];
   const widthBucket = widthToBucket(width);
+  const costing = costingForVehicle(vehicleType);
   const key = buildKey(
     originLat,
     originLng,
@@ -283,6 +294,7 @@ const getRoute = async ({
     destLng,
     stopList,
     widthBucket,
+    costing,
   );
 
   const existing = await routingCacheRepository.findExisting(key);
@@ -308,8 +320,8 @@ const getRoute = async ({
     ];
     const raw =
       stopList.length === 0 ?
-        await postRoutes(controls, [], MAX_ROUTE_OPTIONS) :
-        await postRoutes(controls, [], 1);
+        await postRoutes(controls, [], MAX_ROUTE_OPTIONS, costing) :
+        await postRoutes(controls, [], 1, costing);
     bases = raw.map((r) => ({
       geometry: r.geometry,
       distanceMeters: r.distanceMeters,
@@ -322,6 +334,7 @@ const getRoute = async ({
       destLng,
       stops: stopList,
       widthBucket,
+      costing,
       routes: bases,
     });
   }
@@ -337,6 +350,7 @@ const getRoute = async ({
     destLng,
     stops: stopList,
     width,
+    costing,
     key,
     userId,
     source,
@@ -360,6 +374,7 @@ const getRoute = async ({
       destLng,
       stops: stopList,
       width,
+      costing,
       key,
       userId,
       source,

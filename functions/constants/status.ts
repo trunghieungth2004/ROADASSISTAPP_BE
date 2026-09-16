@@ -22,6 +22,56 @@ const STATUS_DISPATCH = {
   CANCELLED: "5",
 } as const;
 
+const HELPER_KIND = {
+  VOLUNTEER: "VOLUNTEER",
+  SHOP: "SHOP",
+} as const;
+
+const RATING_TARGET = {
+  VOLUNTEER: "VOLUNTEER",
+  SHOP: "SHOP",
+  RIDER: "RIDER",
+} as const;
+
+const RATING_MIN = 1;
+const RATING_MAX = 5;
+
+const VOLUNTEER_FRESH_MS = 15 * 60 * 1000;
+const VOLUNTEER_DEFAULT_RADIUS = 5000;
+const WALK_RADIUS_MIN = 500;
+const WALK_RADIUS_MAX = 2000;
+const SHOP_SEARCH_MAX_RADIUS = 10000;
+const NEAR_SHOPS_MAX = 10;
+
+const VEHICLE_TYPE = {
+  SCOOTER: "SCOOTER",
+  CUB: "CUB",
+  MANUAL: "MANUAL",
+  CAR: "CAR",
+  VAN: "VAN",
+  TRUCK: "TRUCK",
+} as const;
+
+const VEHICLE_DEFAULT_WIDTH: Record<string, number> = {
+  SCOOTER: 0.7,
+  CUB: 0.7,
+  MANUAL: 0.8,
+  CAR: 1.9,
+  VAN: 2.0,
+  TRUCK: 2.3,
+};
+
+const TOW_VEHICLE_TYPE = {
+  CAR: "CAR",
+  VAN: "VAN",
+  TRUCK: "TRUCK",
+} as const;
+
+const VOLUNTEER_CAPABILITY = {
+  SOLO_BIKE: "SOLO_BIKE",
+  CAR: "CAR",
+} as const;
+
 interface StatusDefinition {
   domain: string;
   code: string;
@@ -141,6 +191,20 @@ export {
   STATUS_USER,
   STATUS_FLAGS,
   STATUS_DISPATCH,
+  HELPER_KIND,
+  RATING_TARGET,
+  RATING_MIN,
+  RATING_MAX,
+  VOLUNTEER_FRESH_MS,
+  VOLUNTEER_DEFAULT_RADIUS,
+  WALK_RADIUS_MIN,
+  WALK_RADIUS_MAX,
+  SHOP_SEARCH_MAX_RADIUS,
+  NEAR_SHOPS_MAX,
+  VEHICLE_TYPE,
+  VEHICLE_DEFAULT_WIDTH,
+  TOW_VEHICLE_TYPE,
+  VOLUNTEER_CAPABILITY,
   USER_STATUSES,
   FLAG_STATUSES,
   DISPATCH_STATUSES,

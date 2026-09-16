@@ -116,3 +116,64 @@ describe("user endpoints", () => {
     expect(on.status).toBe(200);
   });
 });
+
+describe("volunteer endpoints", () => {
+  it("PUT /users/volunteer opts in and out", async () => {
+    const on = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: true});
+    expect(on.status).toBe(200);
+    expect(on.body.data).toEqual({updated: 1, available: true});
+    let doc = await db.collection("users").doc(RIDER).get();
+    expect(doc.data()?.volunteerAvailable).toBe(true);
+    const off = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: false});
+    expect(off.status).toBe(200);
+    doc = await db.collection("users").doc(RIDER).get();
+    expect(doc.data()?.volunteerAvailable).toBe(false);
+  });
+
+  it("heartbeat requires volunteer mode", async () => {
+    const res = await request(app)
+      .post("/users/volunteer/heartbeat")
+      .set("Authorization", bearer(RIDER))
+      .send({lat: 10.7626, lng: 106.6602});
+    expect(res.status).toBe(400);
+  });
+
+  it("heartbeat records the volunteer location", async () => {
+    await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: true});
+    const res = await request(app)
+      .post("/users/volunteer/heartbeat")
+      .set("Authorization", bearer(RIDER))
+      .send({lat: 10.7626, lng: 106.6602});
+    expect(res.status).toBe(200);
+    expect(res.body.data.uid).toBe(RIDER);
+    await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: false});
+  });
+});
+
+describe("volunteer capability", () => {
+  it("PUT /users/volunteer stores the capability", async () => {
+    const res = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: true, capability: "CAR"});
+    expect(res.status).toBe(200);
+    const doc = await db.collection("users").doc(RIDER).get();
+    expect(doc.data()?.capability).toBe("CAR");
+    await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: false});
+  });
+});

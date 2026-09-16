@@ -16,6 +16,9 @@ const ALL_COLLECTIONS = [
   "shops",
   "diagnostics",
   "dispatch_tickets",
+  "volunteer_locations",
+  "ratings",
+  "fcm_tokens",
   "routing_cache",
   "saved_routes",
 ];

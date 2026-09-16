@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 28 unit suites (320 tests) and 19 integration suites (110 tests), all green:
+Backend tested with **Jest** across two tiers — 29 unit suites (395 tests) and 20 integration suites (130 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
@@ -62,6 +62,7 @@ functions/
     │       ├── shopService.test.ts
     │       ├── diagnosticService.test.ts
     │       ├── dispatchService.test.ts
+    │       ├── ratingService.test.ts
     │       └── taskQueueService.test.ts
     │   └── repository/
     │       └── routingCacheRepository.test.ts
@@ -83,6 +84,7 @@ functions/
     │   ├── shop.test.ts
     │   ├── diagnostic.test.ts
     │   ├── dispatch.test.ts
+    │   ├── ratings.test.ts
     │   └── validation.test.ts
     ├── reporters/
     │   └── markdownReporter.js
@@ -110,13 +112,13 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 
 | File | What it asserts |
 |------|-----------------|
-| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords); dispatch assist flow samples; rating/volunteer samples. |
+| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords) + `vehicleType`; dispatch assist flow samples (vehicle, free-form destination, capability, tow vehicle, `MOBILE`); rating/volunteer samples. |
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup), heartbeat 404/off-400/refresh. |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup, capability), heartbeat 404/off-400/refresh. |
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
-| `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create and ride-config writes. |
+| `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create (incl. `CAR`/`VAN`/`TRUCK`) and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
 | `service/flagService.test.ts` | Signed net-score voting (one switchable vote per rider, `voteDirection` in responses): confirm flip to `"2"` at +3, trust-weighted votes, deny reject to `"5"` at −3, confirmed demote to `"1"` at −3, no push on reject/demote, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, flag covering an own saved-route destination/place → 409 (no create), far-away flag allowed, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
@@ -124,18 +126,19 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/placesService.test.ts` | Directory search merges shops before landmarks, prefix scoping, short-query rejection. |
 | `service/savedPlaceService.test.ts` | Save create, coord-dedupe label update, per-user list, stranger-unsave rejection. |
 | `service/savedRouteService.test.ts` | Save stores geometry, geometry-less rejection, summaries omit geometry, ownership gating on read/rename/delete. |
-| `service/routing/getRoute.test.ts` | Bucket mapping, engine request shape (ordered locations, no exclusions on clean routes, no width params), stops-aware cache key (legacy key when empty), cache-hit short-circuit (engine untouched), cached duplicate geometries collapsed to one route, multi-stop single route (no `alternates`), blocked routes return soft-blocked with `hazards` instead of 409, `active_routes` touch on every 200, engine 500/404 propagation. `postRoutes` is module-mocked; wire behavior lives in `utils/valhalla.test.ts`. |
+| `service/routing/getRoute.test.ts` | Bucket mapping, engine request shape (ordered locations, no exclusions on clean routes, no width params), stops-aware cache key (legacy key when empty), cache-hit short-circuit (engine untouched), cached duplicate geometries collapsed to one route, multi-stop single route (no `alternates`), blocked routes return soft-blocked with `hazards` instead of 409, `active_routes` touch on every 200, engine 500/404 propagation, car `vehicleType` solves with `auto` costing under a `WIDE:auto` key. `postRoutes` is module-mocked; wire behavior lives in `utils/valhalla.test.ts`. |
 | `service/routing/alternatives.test.ts` | `alternates: 4` on stop-less requests (up to 5 options), top-level `alternates[].trip` parsing, unusable alternates skipped, blocked alternatives get their own detour attempt, failed detours keep the raw route with `hazards`, width-blocked alternatives dropped, blocked primary falls back to a safe alternative then to soft-blocked primary, legacy single-route cache read. |
 | `service/routing/detour.test.ts` | Hazard block → detour (`source: "detour"` + `hazards`, detour never cached), chained retries reuse true reported radii, exhausted detour → soft-blocked with `hazards`, newly crossed zones chained into the exclusion set on the next attempt (up to 4 attempts / 8 zones), cascade of 3 fresh zones on a two-point request → steered shortest-clean win (≤5 engine calls, pre-chain single ring on the steered call), multi-stop detour preserves stop order, stop/destination inside a zone → named 409 (`EndpointBlockedError`), over-distance detour → soft-blocked. |
 | `service/routing/corridor.test.ts` | Shortest-duration clean anchor wins (≤3 candidate solves), every anchor lands outside all zones, >150 m from both controls, and within 0.15–0.85 axis progress, all-dirty candidates → null, empty cluster → null with no engine call. |
 | `service/routing/widthGate.test.ts` | Narrow segment → 409 after 2 attempts, width polygons in the detour request, compatible/unknown/far pass, skipped without width, hazard wins over width. |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
-| `utils/valhalla.test.ts` | `postRoutes` sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, drops alternates with geometry identical to the primary, `dedupeRoutes` keeps first/preserves order/tolerates unparseable geometry, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
-| `service/shopService.test.ts` | Unknown user 404, create, radius + type filtering. |
-| `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open. |
+| `utils/valhalla.test.ts` | `postRoutes` defaults to `motor_scooter` and sends `auto` when requested (`400` beyond `VALHALLA_AUTO_MAX_DISTANCE`), sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, drops alternates with geometry identical to the primary, `costingForVehicle`/`isCarVehicle` mapping, `dedupeRoutes` keeps first/preserves order/tolerates unparseable geometry, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
+| `service/shopService.test.ts` | Unknown user 404, create (SHOP/MOBILE/TOW, operator default, tow-vehicle passthrough), operator-only update + stranger 403 (+ tow-vehicle patch), `isOpenNow` daytime/overnight/invalid, near sort-nearest-first + cap + `openNow`, accepting-only and open-only filters. |
+| `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open, dispatch queue targeting + body. |
+| `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→volunteer/SHOP + ticket `helperRating`, rider→destination shop, volunteer/operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating. |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
-| `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404. |
+| `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (shop + free-form point), rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), shop accept (stranger 403, tow auto-busy), near radius filter + sort, offers accepting filter + `fitsAlley` labels, FCM fan-out skip/deliver. |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
 ### test/integration/
@@ -147,7 +150,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | File | Tests |
 |------|-------|
 | `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
-| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags, heartbeat off-400/record |
+| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags (+ capability), heartbeat off-400/record |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `status.test.ts` | POST /statuses returns groups sorted by order, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
@@ -157,13 +160,14 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `places.test.ts` | POST search merges shops before landmarks, prefix-scoped, short query 400, missing token 401 |
 | `savedPlace.test.ts` | POST save 201 + coord-dedupe label update, POST saved lists mine, POST unsave deletes mine / rejects strangers' |
 | `savedRoute.test.ts` | POST save stores route, geometry-less 400, legacy via/hazards ignored (stripped, not stored), POST saved lists summaries without geometry and hides others', POST saved/one + PUT rename + POST unsave are owner-only |
-| `routing.test.ts` | POST route miss → `routes[0].source: valhalla` + persisted, repeat → `cached: true`, confirmed flood → 200 soft-blocked with `hazards` on the cached route, fresh blockage → `source: detour` + `hazards` (no `via`), flood removed → 200 again, stops routed in order as `locations` (single route), >10 stops → 400, narrower segment + width → 409 width-block, Valhalla down → 500 |
+| `routing.test.ts` | POST route miss → `routes[0].source: valhalla` + persisted, repeat → `cached: true`, confirmed flood → 200 soft-blocked with `hazards` on the cached route, fresh blockage → `source: detour` + `hazards` (no `via`), flood removed → 200 again, stops routed in order as `locations` (single route), >10 stops → 400, narrower segment + width → 409 width-block, Valhalla down → 500, car `vehicleType` solves with `auto` costing |
 | `routingAlternatives.test.ts` | Clean two-point route → 3 options (`alternates: 4` on the wire), hazard-blocked alternative gets its own detour, blocked primary falls back to a safe alternative, fully-blocked set returns soft-blocked with `hazards` |
 | `routingDetour.test.ts` | Fresh blockage detoured, long route detoured around mid-line hazards, reporter's own suggested flag detours while other riders get a warning |
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
-| `shop.test.ts` | POST create 201 (SHOP + PUMP), POST near + type filter |
+| `shop.test.ts` | POST create 201 (SHOP + MOBILE), POST near + type filter, TOW create with hours + operator default, near `openNow`, PUT availability toggle + accepting-only exclusion, tow-vehicle create/update roundtrip |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
-| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400 |
+| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot, offers list, rider select, shop accept + tow busy, resolve restores availability, near SOS radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels |
+| `ratings.test.ts` | SOS→accept→resolve flow, unknown ticket 404, rider→volunteer + helper→rider ratings, out-of-range 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 
 ## How the mock works

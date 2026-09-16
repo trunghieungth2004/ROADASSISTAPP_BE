@@ -44,4 +44,16 @@ export default (
     validate({body: schemas.updateUserStatus}),
     userController.updateStatus,
   );
+  app.put(
+    "/users/volunteer",
+    requireAuth,
+    validate({body: schemas.volunteerToggle}),
+    userController.setVolunteerAvailability,
+  );
+  app.post(
+    "/users/volunteer/heartbeat",
+    requireAuth,
+    validate({body: schemas.volunteerHeartbeat}),
+    userController.volunteerHeartbeat,
+  );
 };

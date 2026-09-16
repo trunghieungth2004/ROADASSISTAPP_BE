@@ -57,6 +57,7 @@ describe("steerThroughCorridor", () => {
     const res = await steerThroughCorridor({
       origin,
       destination,
+      costing: "motor_scooter",
       rings: [],
       cluster: cluster as never,
       check,
@@ -85,6 +86,7 @@ describe("steerThroughCorridor", () => {
     const res = await steerThroughCorridor({
       origin,
       destination,
+      costing: "motor_scooter",
       rings: [],
       cluster: cluster as never,
       check: cleanCheck(),
@@ -124,6 +126,7 @@ describe("steerThroughCorridor", () => {
     const res = await steerThroughCorridor({
       origin,
       destination,
+      costing: "motor_scooter",
       rings: [],
       cluster: cluster as never,
       check,
@@ -136,6 +139,7 @@ describe("steerThroughCorridor", () => {
     const res = await steerThroughCorridor({
       origin,
       destination,
+      costing: "motor_scooter",
       rings: [],
       cluster: [],
       check: cleanCheck(),

@@ -22,6 +22,7 @@ import routingRoutes from "../../routes/routingRoutes";
 import shopRoutes from "../../routes/shopRoutes";
 import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
+import ratingRoutes from "../../routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "../../routes/pushRoutes";
 
 const registerRoutes = (app: Express, deps: RouteDeps): void => {
@@ -39,6 +40,7 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   shopRoutes(app, deps);
   diagnosticRoutes(app, deps);
   dispatchRoutes(app, deps);
+  ratingRoutes(app, deps);
   pushRoutes(app, deps);
 };
 

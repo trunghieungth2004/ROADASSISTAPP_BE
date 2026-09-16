@@ -1,4 +1,6 @@
 import * as userRepository from "../../../repository/userRepository";
+import * as volunteerLocationRepository from
+  "../../../repository/volunteerLocationRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {
   register,
@@ -7,9 +9,12 @@ import {
   updateRole,
   updateTrustScore,
   updateStatus,
+  setVolunteerAvailability,
+  volunteerHeartbeat,
 } from "../../../service/userService";
 
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../repository/volunteerLocationRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -128,5 +133,89 @@ describe("userService.updateStatus", () => {
     ).resolves.toEqual({updated: 1});
     expect(userRepository.updateStatus).toHaveBeenCalledWith("u2", "0");
     expect(cacheManager.del).toHaveBeenCalledWith("user", "u2");
+  });
+});
+
+describe("userService.setVolunteerAvailability", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      setVolunteerAvailability({userId: "ghost", available: true}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("opts the user in without a location row", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
+      setVolunteerAvailability({userId: "u1", available: true}),
+    ).resolves.toEqual({updated: 1, available: true});
+    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
+      volunteerAvailable: true,
+    });
+    expect(volunteerLocationRepository.remove).not.toHaveBeenCalled();
+  });
+
+  it("removes the location row on opt-out", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
+      setVolunteerAvailability({userId: "u1", available: false}),
+    ).resolves.toEqual({updated: 1, available: false});
+    expect(volunteerLocationRepository.remove).toHaveBeenCalledWith(
+      "u1",
+    );
+  });
+
+  it("stores the volunteer capability on opt-in", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
+      setVolunteerAvailability({
+        userId: "u1",
+        available: true,
+        capability: "CAR",
+      }),
+    ).resolves.toEqual({updated: 1, available: true});
+    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
+      volunteerAvailable: true,
+      capability: "CAR",
+    });
+  });
+});
+
+describe("userService.volunteerHeartbeat", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      volunteerHeartbeat({userId: "ghost", lat: 1, lng: 2}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("rejects heartbeats with volunteer mode off", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      volunteerAvailable: false,
+    } as never);
+    await expect(
+      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(volunteerLocationRepository.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the volunteer location", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      volunteerAvailable: true,
+    } as never);
+    jest.mocked(volunteerLocationRepository.upsert).mockResolvedValue({
+      uid: "u1",
+    } as never);
+    await expect(
+      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
+    ).resolves.toEqual({uid: "u1"});
   });
 });

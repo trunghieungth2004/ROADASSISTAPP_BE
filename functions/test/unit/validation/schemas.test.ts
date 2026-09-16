@@ -46,6 +46,20 @@ const valid: Record<string, unknown> = {
   createDispatch: {ticketType: "TOW", lat: 10.7, lng: 106.6},
   getDispatch: {ticketId: "t1"},
   updateDispatchStatus: {ticketId: "t1", status: "2"},
+  acceptDispatch: {ticketId: "t1"},
+  selectDispatch: {ticketId: "t1", shopId: "s1"},
+  nearDispatch: {lat: 10.7, lng: 106.6},
+  dispatchOffers: {lat: 10.7, lng: 106.6, kind: "TOW"},
+  volunteerToggle: {available: true},
+  volunteerHeartbeat: {lat: 10.7, lng: 106.6},
+  submitRating: {
+    targetId: "vol1",
+    targetKind: "VOLUNTEER",
+    ticketId: "t1",
+    score: 5,
+  },
+  deliverDispatch: {ticketId: "t1"},
+  updateShop: {shopId: "s1", accepting: false},
   getRoles: {},
   getRoleByUser: {},
   getStatuses: {},
@@ -89,11 +103,18 @@ describe("schemas reject invalid input", () => {
 
   it("createVehicleProfile rejects bad type", () => {
     const {error} = table.createVehicleProfile.validate({
-      type: "TRUCK",
+      type: "BOAT",
       baseWidth: 1,
       baseHeight: 1,
     });
     expect(error).toBeDefined();
+    expect(
+      table.createVehicleProfile.validate({
+        type: "CAR",
+        baseWidth: 1.9,
+        baseHeight: 1.5,
+      }).error,
+    ).toBeUndefined();
   });
 
   it("addRideConfig rejects bad configType", () => {
@@ -226,6 +247,107 @@ describe("schemas reject invalid input", () => {
     ).toBeDefined();
     expect(
       table.nearShops.validate({...base, type: "BAR"}).error,
+    ).toBeDefined();
+    expect(
+      table.nearShops.validate({...base, radiusMeters: 50}).error,
+    ).toBeDefined();
+    expect(
+      table.createShop.validate({
+        ...base,
+        name: "S",
+        type: "TOW",
+        openHours: "9-5",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createShop.validate({...base, name: "S", type: "PUMP"}).error,
+    ).toBeDefined();
+    expect(
+      table.createShop.validate({
+        ...base,
+        name: "S",
+        type: "TOW",
+        towVehicleType: "BOAT",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createShop.validate({
+        ...base,
+        name: "S",
+        type: "MOBILE",
+        towVehicleType: "VAN",
+        towVehicleWidth: 2.0,
+      }).error,
+    ).toBeUndefined();
+  });
+
+  it("dispatch schemas accept the assist flow", () => {
+    expect(
+      table.createDispatch.validate({
+        ticketType: "SOS",
+        lat: 10.7,
+        lng: 106.6,
+        note: "Alley gate",
+        destinationShopId: "s1",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.createDispatch.validate({
+        ticketType: "TOW",
+        lat: 10.7,
+        lng: 106.6,
+        destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
+        vehicleType: "CAR",
+        vehicleWidth: 1.9,
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.createDispatch.validate({
+        ticketType: "TOW",
+        lat: 10.7,
+        lng: 106.6,
+        vehicleType: "BOAT",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.volunteerToggle.validate({
+        available: true,
+        capability: "CAR",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.volunteerToggle.validate({
+        available: true,
+        capability: "PLANE",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.dispatchOffers.validate({
+        lat: 10.7,
+        lng: 106.6,
+        kind: "MOBILE",
+        accessWidthMeters: 2.5,
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.getRoute.validate({
+        originLat: 10.7626,
+        originLng: 106.6602,
+        destLat: 10.7758,
+        destLng: 106.7019,
+        vehicleType: "CAR",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.submitRating.validate({
+        targetId: "v",
+        targetKind: "RIDER",
+        ticketId: "t",
+        score: 9,
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.volunteerToggle.validate({}).error,
     ).toBeDefined();
   });
 

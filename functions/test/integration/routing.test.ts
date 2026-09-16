@@ -193,3 +193,25 @@ describe("routing endpoints", () => {
     await db.collection("alley_segments").doc(segId).delete();
   });
 });
+
+describe("routing vehicle costing", () => {
+  it("POST /routes solves car vehicles with auto", async () => {
+    const fetchSpy = jest.spyOn(global, "fetch");
+    const res = await request(app)
+      .post("/routes")
+      .set("Authorization", bearer(USER2))
+      .send({
+        originLat: 10.8,
+        originLng: 106.7,
+        destLat: 10.81,
+        destLng: 106.71,
+        vehicleType: "CAR",
+        width: 1.9,
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({cached: false});
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(sent.costing).toBe("auto");
+  });
+});

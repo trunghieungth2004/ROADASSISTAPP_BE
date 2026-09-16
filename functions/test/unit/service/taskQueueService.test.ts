@@ -3,7 +3,10 @@ jest.mock("@google-cloud/tasks", () => ({
 }));
 
 import {CloudTasksClient} from "@google-cloud/tasks";
-import {enqueueHazardPush} from "../../../service/taskQueueService";
+import {
+  enqueueDispatchPush,
+  enqueueHazardPush,
+} from "../../../service/taskQueueService";
 
 const OLD_ENV = {...process.env};
 
@@ -105,5 +108,38 @@ describe("taskQueueService.enqueueHazardPush", () => {
     await expect(
       enqueueHazardPush("f1", "FLOOD", "2"),
     ).resolves.toEqual({enqueued: false});
+  });
+});
+
+describe("taskQueueService.enqueueDispatchPush", () => {
+  it("stays idle when the queue is disabled", async () => {
+    await expect(enqueueDispatchPush("t1")).resolves.toEqual({
+      enqueued: false,
+    });
+    expect(CloudTasksClient).not.toHaveBeenCalled();
+  });
+
+  it("targets the dispatch queue when enabled", async () => {
+    enable();
+    await expect(enqueueDispatchPush("t1")).resolves.toEqual({
+      enqueued: true,
+    });
+    expect(queuePath).toHaveBeenCalledWith(
+      "test-project",
+      "asia-southeast1",
+      "dispatch-push",
+    );
+    const {task} = createTask.mock.calls[0][0] as {
+      task: {
+        name: string;
+        httpRequest: {body: string};
+      };
+    };
+    expect(task.name.endsWith("/dispatch-t1")).toBe(true);
+    expect(
+      JSON.parse(
+        Buffer.from(task.httpRequest.body, "base64").toString(),
+      ),
+    ).toEqual({ticketId: "t1"});
   });
 });

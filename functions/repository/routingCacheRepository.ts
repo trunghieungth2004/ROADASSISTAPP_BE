@@ -58,6 +58,7 @@ const save = async (
     destLng: number;
     stops?: {lat: number; lng: number}[];
     widthBucket: string;
+    costing?: string;
     routes: CachedRoute[];
   },
 ): Promise<void> => {

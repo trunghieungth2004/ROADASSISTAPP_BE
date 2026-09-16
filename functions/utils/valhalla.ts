@@ -1,3 +1,5 @@
+import {haversineMeters} from "./geo";
+
 interface LatLng {
   lat: number;
   lng: number;
@@ -21,8 +23,19 @@ class ServiceError extends Error {
 
 const VALHALLA_URL = process.env.VALHALLA_URL || "http://localhost:8002";
 const VALHALLA_TIMEOUT_MS = 15000;
-const VALHALLA_COSTING = "motor_scooter";
+const COSTING_SCOOTER = "motor_scooter";
+const COSTING_AUTO = "auto";
+const VALHALLA_COSTING = COSTING_SCOOTER;
+const autoMaxDistance = (): number =>
+  Number(process.env.VALHALLA_AUTO_MAX_DISTANCE ?? "");
+const CAR_VEHICLE_TYPES = new Set(["CAR", "VAN", "TRUCK"]);
 const RING_STEPS = 32;
+
+const isCarVehicle = (vehicleType?: string): boolean =>
+  typeof vehicleType === "string" && CAR_VEHICLE_TYPES.has(vehicleType);
+
+const costingForVehicle = (vehicleType?: string): string =>
+  isCarVehicle(vehicleType) ? COSTING_AUTO : COSTING_SCOOTER;
 
 const decodePolyline6 = (encoded: string): Array<[number, number]> => {
   const factor = 1e6;
@@ -180,14 +193,30 @@ const postRoutes = async (
   locations: LatLng[],
   excludePolygons: Ring[] = [],
   maxAlternates = 1,
+  costing: string = VALHALLA_COSTING,
 ): Promise<ValhallaRoute[]> => {
   const want = Math.max(
     1,
     Math.min(maxAlternates, MAX_ALTERNATES + 1),
   );
+  if (
+    costing === COSTING_AUTO &&
+    autoMaxDistance() > 0 &&
+    locations.length >= 2
+  ) {
+    const span = haversineMeters(
+      locations[0].lat,
+      locations[0].lng,
+      locations[locations.length - 1].lat,
+      locations[locations.length - 1].lng,
+    );
+    if (span > autoMaxDistance()) {
+      throw new ServiceError("Route exceeds the auto distance limit", 400);
+    }
+  }
   const body: Record<string, unknown> = {
     locations: locations.map((p) => ({lat: p.lat, lon: p.lng})),
-    costing: VALHALLA_COSTING,
+    costing,
   };
   if (want > 1 && locations.length === 2) {
     body.alternates = want - 1;
@@ -242,8 +271,9 @@ const postRoutes = async (
 const postRoute = async (
   locations: LatLng[],
   excludePolygons: Ring[] = [],
+  costing: string = VALHALLA_COSTING,
 ): Promise<ValhallaRoute> => {
-  const routes = await postRoutes(locations, excludePolygons, 1);
+  const routes = await postRoutes(locations, excludePolygons, 1, costing);
   return routes[0];
 };
 
@@ -253,8 +283,13 @@ export {
   decodePolyline6,
   circleToRing,
   dedupeRoutes,
+  isCarVehicle,
+  costingForVehicle,
   VALHALLA_URL,
   VALHALLA_COSTING,
+  COSTING_SCOOTER,
+  COSTING_AUTO,
+  autoMaxDistance,
   ServiceError,
   LatLng,
   Ring,

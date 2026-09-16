@@ -75,6 +75,7 @@ const routeSafely = async ({
   destLng,
   stops,
   width,
+  costing,
   key,
   userId,
   baseGeometry,
@@ -90,6 +91,7 @@ const routeSafely = async ({
   destLng: number;
   stops: LatLng[];
   width: number | undefined;
+  costing: string;
   key: string;
   userId: string;
   baseGeometry: unknown;
@@ -178,6 +180,7 @@ const routeSafely = async ({
           circleToRing(zone.lat, zone.lng, zone.radiusMeters),
         ),
         1,
+        costing,
       )
     )[0];
     const recheck = await queueFor(solved.geometry, null);
@@ -206,6 +209,7 @@ const routeSafely = async ({
         const steered = await steerThroughCorridor({
           origin: {lat: originLat, lng: originLng},
           destination: {lat: destLat, lng: destLng},
+          costing,
           rings: queue.map((zone) =>
             circleToRing(zone.lat, zone.lng, zone.radiusMeters),
           ),

@@ -143,9 +143,17 @@ Sources: `infra/valhalla/Dockerfile`, `infra/valhalla/setup.sh`,
 
 ### App client (`functions/utils/valhalla.ts`)
 
-- `VALHALLA_COSTING = "motor_scooter"` — built-in profile, no custom
-  profile to maintain. Route distance is capped by the engine at
-  ~500 km for this costing (intercity ODs surface as `500`).
+- Costing is per-request (`costingForVehicle`): `motor_scooter` for
+  two-wheelers, `auto` for `CAR`/`VAN`/`TRUCK` — both built-in profiles,
+  no custom profile to maintain, no second instance. Car riders get
+  motorways, car speeds, and OSM height/access rules; detours, closures,
+  and `exclude_polygons` are costing-agnostic and unchanged. Route
+  distance is capped by the engine at ~500 km for `motor_scooter`
+  (intercity ODs surface as `500`); stock `auto` service limits already
+  cover intercity distances. `VALHALLA_AUTO_MAX_DISTANCE` is an optional
+  ops guard: when set, `auto` requests beyond that straight-line OD
+  distance are rejected with `400` before touching the engine (unset by
+  default).
 - `POST {VALHALLA_URL}/route`, `VALHALLA_TIMEOUT_MS = 15000` with one
   fetch retry (cold-boot tolerance for a scale-to-zero engine).
 - `alternates: want - 1` (capped at `MAX_ALTERNATES = 4`), stop-less
