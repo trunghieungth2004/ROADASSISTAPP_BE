@@ -26,27 +26,8 @@ import {ROLE_ADMIN} from "../constants/roles";
 import {fcmEnabled} from "./pushService";
 import {isCarVehicle} from "../utils/valhalla";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ForbiddenError, NotFoundError, ValidationError} from
+  "../utils/errors";
 
 const VALID_STATUSES: string[] = Object.values(STATUS_DISPATCH);
 const SEND_CHUNK = 500;
@@ -173,6 +154,12 @@ const createDispatch = async ({
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
+  if (ticketType === "MECHANIC" && isCarVehicle(vehicleType)) {
+    throw new ValidationError("Walk-in repair isn't available for cars");
+  }
+  if (ticketType === "TOW" && !destinationShopId && !destinationPoint) {
+    throw new ValidationError("Tow tickets need a destination");
+  }
   const width = await resolveAccessWidth(
     alleySegmentId,
     accessWidthMeters,
@@ -272,6 +259,7 @@ const nearDispatch = async ({
   return pending
     .filter((t) => !ticketType || t.ticketType === ticketType)
     .filter((t) =>
+      t.ticketType !== "SOS" ||
       volunteerFitsTicket(
         capability,
         t.vehicleType as string | undefined,
@@ -424,6 +412,44 @@ const acceptDispatch = async ({
   return acceptAsVolunteer(userId, ticketId);
 };
 
+const updateDispatchDestination = async ({
+  userId,
+  ticketId,
+  destinationShopId,
+  destinationPoint,
+}: {
+  userId: string;
+  ticketId: string;
+  destinationShopId?: string;
+  destinationPoint?: {lat: number; lng: number; label?: string};
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider edits the destination");
+  }
+  if (
+    ticket.status !== STATUS_DISPATCH.PENDING &&
+    ticket.status !== STATUS_DISPATCH.MATCHED &&
+    ticket.status !== STATUS_DISPATCH.ARRIVED
+  ) {
+    throw new ValidationError("Ticket is no longer editable");
+  }
+  if (!destinationShopId && !destinationPoint) {
+    throw new ValidationError("A destination needs a shop or a point");
+  }
+  const destinationSnapshot = await resolveDestination(
+    destinationShopId,
+    destinationPoint,
+  );
+  await dispatchRepository.update(ticketId, {
+    destinationShopId: destinationShopId ?? null,
+    destinationPoint: destinationPoint ?? null,
+    destinationSnapshot: destinationSnapshot ?? null,
+  });
+  return dispatchRepository.findById(ticketId);
+};
+
 const deliverDispatchPush = async (
   ticketId: string,
 ): Promise<{delivered: number; skipped: boolean}> => {
@@ -489,6 +515,7 @@ export {
   dispatchOffers,
   selectDispatch,
   acceptDispatch,
+  updateDispatchDestination,
   findCandidates,
   deliverDispatchPush,
   ValidationError,

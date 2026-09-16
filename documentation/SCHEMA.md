@@ -65,6 +65,11 @@ No body schema (any body allowed).
 | `targetUserId` | string | req |
 | `status` | enum: `"0"` Inactive, `"1"` Active | req |
 
+### `PUT /users/profile` — `updateProfile`
+| Field | Type | |
+|-------|------|---|
+| `displayName` | string (trimmed, 1–120) | req |
+
 ---
 
 ## Roles
@@ -92,7 +97,7 @@ No body schema (lists the authenticated caller's profiles).
 ### `POST /vehicleProfiles` — `createVehicleProfile`
 | Field | Type | |
 |-------|------|---|
-| `type` | enum: SCOOTER, CUB, MANUAL | req |
+| `type` | enum: SCOOTER, CUB, MANUAL, CAR, VAN, TRUCK | req |
 | `baseWidth` | number | req |
 | `baseHeight` | number | req |
 
@@ -103,6 +108,12 @@ No body schema (lists the authenticated caller's profiles).
 | `configType` | enum: SOLO, PASSENGER, CARGO | req |
 | `estWidth` | number | opt |
 | `estHeight` | number | opt |
+
+### `PUT /vehicleProfiles/tow` — `setTowVehicle`
+| Field | Type | |
+|-------|------|---|
+| `profileId` | string | req |
+| `towVehicleType` | enum: CAR, VAN, TRUCK, or null (unset) | opt |
 
 ---
 
@@ -176,6 +187,9 @@ Creator-only retraction (hard delete); `"3"` Locked → 400, unknown/`"4"`/`"5"`
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `radiusMeters` | number | opt (default 2000) |
+
+### `POST /flags/all` — no schema
+No body schema (any body allowed; still admin-gated).
 
 ### `PUT /flags/moderate` — `moderateFlag`
 | Field | Type | |

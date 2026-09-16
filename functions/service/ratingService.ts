@@ -10,27 +10,8 @@ import {
   STATUS_DISPATCH,
 } from "../constants/status";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ForbiddenError, NotFoundError, ValidationError} from
+  "../utils/errors";
 
 const VALID_TARGETS: string[] = Object.values(RATING_TARGET);
 

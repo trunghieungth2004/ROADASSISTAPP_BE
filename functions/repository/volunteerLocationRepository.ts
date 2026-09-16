@@ -32,6 +32,24 @@ const remove = async (uid: string): Promise<void> => {
   await db.collection("volunteer_locations").doc(uid).delete();
 };
 
+const deleteStale = async (cutoffIso: string): Promise<number> => {
+  let deleted = 0;
+  for (;;) {
+    const snapshot = await db
+      .collection("volunteer_locations")
+      .where("lastSeen", "<", cutoffIso)
+      .limit(500)
+      .get();
+    if (snapshot.empty) break;
+    const batch = db.batch();
+    snapshot.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snapshot.size;
+    if (snapshot.size < 500) break;
+  }
+  return deleted;
+};
+
 const findByGeohashPrefixes = async (
   prefixes: string[],
 ): Promise<VolunteerLocation[]> => {
@@ -50,4 +68,4 @@ const findByGeohashPrefixes = async (
   return results;
 };
 
-export {upsert, remove, findByGeohashPrefixes};
+export {upsert, remove, deleteStale, findByGeohashPrefixes};

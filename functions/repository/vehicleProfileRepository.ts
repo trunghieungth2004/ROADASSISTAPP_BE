@@ -57,6 +57,19 @@ const create = async (
   return doc;
 };
 
+const update = async (
+  userId: string,
+  profileId: string,
+  data: Record<string, unknown>,
+): Promise<void> => {
+  await db
+    .collection("users")
+    .doc(userId)
+    .collection("vehicle_profiles")
+    .doc(profileId)
+    .update(data);
+};
+
 const addRideConfig = async (
   userId: string,
   profileId: string,
@@ -102,4 +115,4 @@ const findRideConfigs = async (
   return results;
 };
 
-export {findById, findByUser, create, addRideConfig, findRideConfigs};
+export {findById, findByUser, create, update, addRideConfig, findRideConfigs};

@@ -16,6 +16,7 @@ import {
   dispatchOffers,
   selectDispatch,
   acceptDispatch,
+  updateDispatchDestination,
   deliverDispatchPush,
 } from "../../../service/dispatchService";
 
@@ -46,7 +47,56 @@ describe("dispatchService.createDispatch", () => {
     const ticket = {id: "t1", status: "1"};
     jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
     await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "TOW",
+        lat: 1,
+        lng: 2,
+        destinationPoint: {lat: 10.7, lng: 106.6},
+      }),
+    ).resolves.toBe(ticket);
+  });
+
+  it("rejects tow tickets without a destination", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
       createDispatch({userId: "u1", ticketType: "TOW", lat: 1, lng: 2}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects walk-in repair for car vehicles", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "MECHANIC",
+        lat: 1,
+        lng: 2,
+        vehicleType: "CAR",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("allows walk-in repair for bikes", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    const ticket = {id: "t1", status: "1"};
+    jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
+    await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "MECHANIC",
+        lat: 1,
+        lng: 2,
+        vehicleType: "SCOOTER",
+      }),
     ).resolves.toBe(ticket);
   });
 });
@@ -133,6 +183,7 @@ describe("dispatchService.createDispatch extras", () => {
       lat: 1,
       lng: 2,
       alleySegmentId: "seg1",
+      destinationPoint: {lat: 10.7, lng: 106.6},
     });
     expect(dispatchRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -259,6 +310,7 @@ describe("dispatchService.createDispatch extras", () => {
       ticketType: "TOW",
       lat: 1,
       lng: 2,
+      destinationPoint: {lat: 10.7, lng: 106.6},
     });
     expect(
       volunteerLocationRepository.findByGeohashPrefixes,
@@ -335,6 +387,138 @@ describe("dispatchService.selectDispatch", () => {
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
       expect.objectContaining({suggestedShopId: "shop1"}),
+    );
+  });
+});
+
+describe("dispatchService.updateDispatchDestination", () => {
+  const ticket = {
+    id: "t1",
+    userId: "rider1",
+    status: "1",
+  };
+
+  it("rejects updates by strangers with 403", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      ticket as never,
+    );
+    await expect(
+      updateDispatchDestination({
+        userId: "stranger",
+        ticketId: "t1",
+        destinationShopId: "shop1",
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+  });
+
+  it("rejects updates without a destination", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      ticket as never,
+    );
+    await expect(
+      updateDispatchDestination({userId: "rider1", ticketId: "t1"}),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("rejects updates on resolved tickets", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      ...ticket,
+      status: "4",
+    } as never);
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationShopId: "shop1",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("rejects unknown destination shops with 404", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      ticket as never,
+    );
+    jest.mocked(shopRepository.findById).mockResolvedValue(null);
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationShopId: "ghost",
+      }),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("sets a shop destination and clears the point", async () => {
+    const stored = {
+      id: "t1",
+      userId: "rider1",
+      status: "1",
+      destinationShopId: "shop1",
+      destinationPoint: null,
+      destinationSnapshot: {
+        id: "shop1",
+        name: "Fix Co",
+        lat: 10.7,
+        lng: 106.6,
+        type: "SHOP",
+      },
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce(ticket as never)
+      .mockResolvedValueOnce(stored as never);
+    jest.mocked(shopRepository.findById).mockResolvedValue({
+      id: "shop1",
+      name: "Fix Co",
+      lat: 10.7,
+      lng: 106.6,
+      type: "SHOP",
+    } as never);
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationShopId: "shop1",
+      }),
+    ).resolves.toEqual(stored);
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        destinationShopId: "shop1",
+        destinationPoint: null,
+      }),
+    );
+  });
+
+  it("sets a point destination and clears the shop", async () => {
+    const stored = {
+      id: "t1",
+      userId: "rider1",
+      status: "1",
+      destinationShopId: null,
+      destinationPoint: {lat: 10.7, lng: 106.6, label: "Home"},
+      destinationSnapshot: {
+        lat: 10.7,
+        lng: 106.6,
+        label: "Home",
+        source: "point",
+      },
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce(ticket as never)
+      .mockResolvedValueOnce(stored as never);
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationPoint: {lat: 10.7, lng: 106.6, label: "Home"},
+      }),
+    ).resolves.toEqual(stored);
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        destinationShopId: null,
+        destinationPoint: {lat: 10.7, lng: 106.6, label: "Home"},
+      }),
     );
   });
 });
@@ -488,6 +672,23 @@ describe("dispatchService.nearDispatch", () => {
       lng: 106.6602,
     });
     expect(result.map((t) => (t as {id: string}).id)).toEqual(["bike"]);
+  });
+
+  it("shows car tow tickets to operators without a capability", async () => {
+    jest.mocked(dispatchRepository.findByStatus).mockResolvedValue([
+      {id: "tow", lat: 10.7626, lng: 106.6602, ticketType: "TOW",
+        vehicleType: "CAR"},
+    ] as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+    } as never);
+    const result = await nearDispatch({
+      userId: "op1",
+      lat: 10.7626,
+      lng: 106.6602,
+      ticketType: "TOW",
+    });
+    expect(result.map((t) => (t as {id: string}).id)).toEqual(["tow"]);
   });
 });
 

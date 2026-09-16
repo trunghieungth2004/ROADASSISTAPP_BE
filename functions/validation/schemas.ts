@@ -32,6 +32,14 @@ const MAX_STOPS = 10;
 
 const emptyBody = (): Joi.ObjectSchema => Joi.object({}).unknown(true);
 
+const dayInterval =
+  "(MON|TUE|WED|THU|FRI|SAT|SUN) \\d{2}:\\d{2}-\\d{2}:\\d{2}";
+
+const dayHoursPattern = (): Joi.StringSchema =>
+  Joi.string().pattern(
+    new RegExp(`^${dayInterval}(,${dayInterval})*$`),
+  );
+
 const rideConfigFields = {
   configType: Joi.string().valid("SOLO", "PASSENGER", "CARGO").required(),
   estWidth: numOpt(),
@@ -68,6 +76,9 @@ const schemas = {
       .valid(...Object.values(STATUS_USER))
       .required(),
   }),
+  updateProfile: Joi.object({
+    displayName: Joi.string().trim().min(1).max(120).required(),
+  }),
   createVehicleProfile: Joi.object({
     type: Joi.string()
       .valid(...Object.values(VEHICLE_TYPE))
@@ -78,6 +89,13 @@ const schemas = {
   addRideConfig: Joi.object({
     profileId: strReq(),
     ...rideConfigFields,
+  }),
+  setTowVehicle: Joi.object({
+    profileId: strReq(),
+    towVehicleType: Joi.string()
+      .valid(...Object.values(TOW_VEHICLE_TYPE))
+      .allow(null)
+      .optional(),
   }),
   getAllVehicleProfiles: emptyBody(),
   getAlleySegment: Joi.object({
@@ -193,10 +211,7 @@ const schemas = {
     lat: latAttr(),
     lng: langAttr(),
     type: Joi.string().valid("SHOP", "MOBILE", "TOW").required(),
-    openHours: Joi.string()
-      .pattern(/^\d{2}:\d{2}-\d{2}:\d{2}$/)
-      .allow("", null)
-      .optional(),
+    openHours: dayHoursPattern().allow("", null).optional(),
     hasTow: Joi.boolean().optional(),
     towVehicleType: Joi.string()
       .valid(...Object.values(TOW_VEHICLE_TYPE))
@@ -207,10 +222,7 @@ const schemas = {
   updateShop: Joi.object({
     shopId: strReq(),
     name: Joi.string().trim().min(1).max(120).optional(),
-    openHours: Joi.string()
-      .pattern(/^\d{2}:\d{2}-\d{2}:\d{2}$/)
-      .allow("", null)
-      .optional(),
+    openHours: dayHoursPattern().allow("", null).optional(),
     accepting: Joi.boolean().optional(),
     hasTow: Joi.boolean().optional(),
     towVehicleType: Joi.string()
@@ -230,6 +242,7 @@ const schemas = {
     openOnly: Joi.boolean().optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
   }),
+  myShops: emptyBody(),
   searchPlaces: Joi.object({
     q: Joi.string().trim().min(2).max(80).required(),
     limit: Joi.number().integer().min(1).max(10).optional(),
@@ -287,6 +300,15 @@ const schemas = {
   selectDispatch: Joi.object({
     ticketId: strReq(),
     shopId: strReq(),
+  }),
+  updateDispatchDestination: Joi.object({
+    ticketId: strReq(),
+    destinationShopId: strOpt(),
+    destinationPoint: Joi.object({
+      lat: latAttr(),
+      lng: langAttr(),
+      label: Joi.string().max(140).allow("", null).optional(),
+    }).optional(),
   }),
   nearDispatch: locationBody().append({
     radiusMeters: Joi.number()

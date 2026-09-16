@@ -29,7 +29,12 @@ describe("dispatch endpoints", () => {
     const res = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(USER))
-      .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
+      .send({
+        ticketType: "TOW",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        destinationPoint: {lat: 10.71, lng: 106.61},
+      });
     expect(res.status).toBe(201);
     expect(res.body.data.status).toBe("1");
     ticketId = res.body.data.id as string;
@@ -103,6 +108,52 @@ describe("dispatch assist flow", () => {
     expect(res.body.data.destinationShopId).toBe(shopId);
     expect(res.body.data.destinationSnapshot.name).toBe("Tow Co");
     flowTicket = res.body.data.id as string;
+  });
+
+  it("POST /dispatch rejects tow tickets without a destination", async () => {
+    const res = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /dispatch/destination moves the drop-off", async () => {
+    const res = await request(app)
+      .post("/dispatch/destination")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketId: flowTicket,
+        destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.data.destinationPoint).toMatchObject({
+      lat: 10.71,
+      lng: 106.61,
+    });
+    expect(res.body.data.destinationShopId).toBeNull();
+    expect(res.body.data.destinationSnapshot.source).toBe("point");
+  });
+
+  it("POST /dispatch/near surfaces pending tow tickets", async () => {
+    const tow = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "TOW",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        destinationPoint: {lat: 10.71, lng: 106.61},
+        vehicleType: "CAR",
+      });
+    expect(tow.status).toBe(201);
+    const res = await request(app)
+      .post("/dispatch/near")
+      .set("Authorization", bearer(USER))
+      .send({lat: BASE_LAT, lng: BASE_LNG, ticketType: "TOW"});
+    expect(res.status).toBe(200);
+    const ids = (res.body.data as {id: string}[]).map((t) => t.id);
+    expect(ids).toContain(tow.body.data.id as string);
   });
 
   it("POST /dispatch/offers lists accepting providers", async () => {

@@ -11,6 +11,7 @@ import {
   denyFlag,
   getNear,
   getMine,
+  getAllFlags,
   moderateFlag,
   unflagFlag,
   expireFlags,
@@ -574,6 +575,22 @@ describe("flagService.getMine", () => {
     expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
       "a",
       "b",
+    ]);
+  });
+});
+
+describe("flagService.getAllFlags", () => {
+  it("returns every flag including expired and rejected", async () => {
+    jest.mocked(flagRepository.findAll).mockResolvedValue([
+      {id: "a", status: "1"},
+      {id: "b", status: "4"},
+      {id: "c", status: "5"},
+    ] as never);
+    const result = await getAllFlags();
+    expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
+      "a",
+      "b",
+      "c",
     ]);
   });
 });

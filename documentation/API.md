@@ -19,7 +19,7 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 > - Success status codes: `200` (OK), `201` (created).
 > - Error status codes: `400` (validation / business-rule violation), `401` (missing or invalid token), `403` (inactive user / insufficient permissions / non-reporter unflag), `404` (not found), `409` (route impassable for the vehicle width), `500` (unexpected, e.g. Auth create failure, Valhalla outage).
 
-> **Request validation:** Every endpoint except `GET /`, `POST /users/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
+> **Request validation:** Every endpoint except `GET /`, `POST /users/all`, `POST /flags/all`, and `POST /flags/expire` validates its request body at the edge with a shared Joi schema (see `functions/validation/schemas.ts`). On failure the endpoint returns `400` with the canonical error envelope and an `errors` array of human-readable messages, e.g. `"targetUserId is required"`, `"tier must be one of [TIER1, TIER2, TIER3]"`. Unexpected fields are stripped. Validation covers presence, format (email/ranges/enums/booleans), and array non-emptiness; deeper business rules (existence, consensus, status legality) are enforced in the service layer.
 
 ---
 
@@ -237,6 +237,22 @@ Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled
 
 ---
 
+### `PUT /users/profile` **(Auth)**
+
+Rename the caller (`displayName`, 1–120 chars). Syncs Firebase Auth and busts the user cache.
+
+**Request:**
+```json
+{ "displayName": "New Name" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Profile updated successfully", "data": { "updated": 1 } }
+```
+
+---
+
 ### `PUT /users/volunteer` **(Auth)**
 
 Opt in or out of the volunteer network (Đội Cứu Hộ). Opting out deletes the volunteer's last-known location. `volunteerRadiusKm` (1–50, default 5) bounds SOS matching. `capability` is `SOLO_BIKE` (default, two-wheelers only) or `CAR` (also takes car tickets).
@@ -415,6 +431,22 @@ Attach a ride configuration (solo/passenger/cargo with estimated footprint) to a
 **Response `201`:**
 ```json
 { "statusCode": 201, "status": "SUCCESS", "message": "Ride config added", "data": { "id": "cfg1", "...": "..." } }
+```
+
+---
+
+### `PUT /vehicleProfiles/tow` **(Auth)**
+
+Designate one of the caller's vehicle profiles as the tow vehicle (`CAR`/`VAN`/`TRUCK`), or unset it with `null`. Setting one clears the flag on all other profiles (one tow vehicle per user). `404` for unknown profiles, `400` for invalid types.
+
+**Request:**
+```json
+{ "profileId": "prof1", "towVehicleType": "CAR" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Tow vehicle updated", "data": { "id": "prof1", "towVehicleType": "CAR", "...": "..." } }
 ```
 
 ---
@@ -614,6 +646,14 @@ List active flags near a point (`"4"` Expired and `"5"` Rejected are excluded).
 ```json
 { "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000 }
 ```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...flags... ] }`
+
+---
+
+### `POST /flags/all` **(Admin)**
+
+List all flags, newest first (up to 100), including `"4"` Expired and `"5"` Rejected. Backs the admin moderation queue. No body schema.
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...flags... ] }`
 

@@ -92,6 +92,18 @@ const findByGeohashPrefixes = async (prefixes: string[]): Promise<Shop[]> => {
   return results;
 };
 
+const findByOperator = async (operatorUid: string): Promise<Shop[]> => {
+  const snapshot = await db
+    .collection("shops")
+    .where("operatorUid", "==", operatorUid)
+    .get();
+  const results: Shop[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Shop),
+  );
+  return results;
+};
+
 const findByNamePrefix = async (
   prefix: string,
   limit = 5,
@@ -112,4 +124,4 @@ const findByNamePrefix = async (
 };
 
 export {create, findById, update, updateRating, findByGeohashPrefixes,
-  findByNamePrefix};
+  findByNamePrefix, findByOperator};

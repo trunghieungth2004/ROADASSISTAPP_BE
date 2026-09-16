@@ -49,6 +49,12 @@ export default (
     dispatchController.acceptDispatch,
   );
   app.post(
+    "/dispatch/destination",
+    requireAuth,
+    validate({body: schemas.updateDispatchDestination}),
+    dispatchController.updateDispatchDestination,
+  );
+  app.post(
     "/dispatch/deliver",
     validate({body: schemas.deliverDispatch}),
     dispatchController.deliverDispatch,

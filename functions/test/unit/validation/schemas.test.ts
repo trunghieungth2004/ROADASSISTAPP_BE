@@ -9,6 +9,7 @@ const valid: Record<string, unknown> = {
   updateUserRole: {targetUserId: "u1", role: "1"},
   updateUserTrust: {targetUserId: "u1", trustScore: 60},
   updateUserStatus: {targetUserId: "u1", status: "0"},
+  updateProfile: {displayName: "New Name"},
   createVehicleProfile: {type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
   addRideConfig: {profileId: "p1", configType: "CARGO"},
   getAllVehicleProfiles: {},
@@ -48,10 +49,12 @@ const valid: Record<string, unknown> = {
   updateDispatchStatus: {ticketId: "t1", status: "2"},
   acceptDispatch: {ticketId: "t1"},
   selectDispatch: {ticketId: "t1", shopId: "s1"},
+  updateDispatchDestination: {ticketId: "t1", destinationShopId: "s1"},
   nearDispatch: {lat: 10.7, lng: 106.6},
   dispatchOffers: {lat: 10.7, lng: 106.6, kind: "TOW"},
   volunteerToggle: {available: true},
   volunteerHeartbeat: {lat: 10.7, lng: 106.6},
+  setTowVehicle: {profileId: "p1", towVehicleType: "CAR"},
   submitRating: {
     targetId: "vol1",
     targetKind: "VOLUNTEER",
@@ -309,6 +312,17 @@ describe("schemas reject invalid input", () => {
         vehicleType: "BOAT",
       }).error,
     ).toBeDefined();
+    expect(
+      table.updateDispatchDestination.validate({
+        ticketId: "t1",
+        destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.updateDispatchDestination.validate({
+        ticketId: "t1",
+      }).error,
+    ).toBeUndefined();
     expect(
       table.volunteerToggle.validate({
         available: true,

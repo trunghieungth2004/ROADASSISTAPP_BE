@@ -12,36 +12,8 @@ import * as cacheManager from "../utils/cacheManager";
 import {effectiveRadiusMeters} from "./closureService";
 import {enqueueHazardPush} from "./taskQueueService";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ConflictError extends Error {
-  statusCode: number;
-  errors: unknown;
-  constructor(message: string, errors?: unknown) {
-    super(message);
-    this.statusCode = 409;
-    this.errors = errors;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ConflictError, ForbiddenError, NotFoundError, ValidationError}
+  from "../utils/errors";
 
 interface FlagRecord {
   id: string;
@@ -324,6 +296,11 @@ const getMine = async (userId: string): Promise<FlagRecord[]> => {
     .map(stripVoters);
 };
 
+const getAllFlags = async (): Promise<FlagRecord[]> => {
+  const flags = await flagRepository.findAll();
+  return flags.map(stripVoters);
+};
+
 const moderateFlag = async ({
   flagId,
   status,
@@ -385,6 +362,7 @@ export {
   denyFlag,
   getNear,
   getMine,
+  getAllFlags,
   moderateFlag,
   unflagFlag,
   expireFlags,

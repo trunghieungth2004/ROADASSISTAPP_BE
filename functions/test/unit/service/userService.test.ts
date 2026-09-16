@@ -11,6 +11,7 @@ import {
   updateRole,
   updateTrustScore,
   updateStatus,
+  updateProfile,
   setVolunteerAvailability,
   volunteerHeartbeat,
   setActiveVehicle,
@@ -94,6 +95,32 @@ describe("userService.updateRole", () => {
     ).resolves.toEqual({updated: 1});
     expect(userRepository.updateRole).toHaveBeenCalledWith("u2", "1");
     expect(cacheManager.del).toHaveBeenCalledWith("user", "u2");
+    expect(cacheManager.del).toHaveBeenCalledWith("user", "__all__");
+  });
+});
+
+describe("userService.updateProfile", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      updateProfile({userId: "ghost", displayName: "Ghost"}),
+    ).rejects.toMatchObject({statusCode: 404});
+    expect(userRepository.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it("updates the name and invalidates the caches", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(userRepository.updateProfile).mockResolvedValue(undefined);
+    await expect(
+      updateProfile({userId: "u1", displayName: "New Name"}),
+    ).resolves.toEqual({updated: 1});
+    expect(userRepository.updateProfile).toHaveBeenCalledWith(
+      "u1",
+      "New Name",
+    );
+    expect(cacheManager.del).toHaveBeenCalledWith("user", "u1");
     expect(cacheManager.del).toHaveBeenCalledWith("user", "__all__");
   });
 });

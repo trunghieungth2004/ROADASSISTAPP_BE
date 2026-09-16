@@ -3,6 +3,7 @@ import * as userRepository from "../../../repository/userRepository";
 import {
   createShop,
   updateShop,
+  myShops,
   nearShops,
   isOpenNow,
 } from "../../../service/shopService";
@@ -113,6 +114,7 @@ describe("shopService.updateShop", () => {
 describe("shopService.isOpenNow", () => {
   const noon = new Date(2026, 5, 15, 12, 0, 0);
   const night = new Date(2026, 5, 15, 23, 30, 0);
+  const tueEarly = new Date(2026, 5, 16, 2, 0, 0);
 
   it("returns null without hours", () => {
     expect(isOpenNow(null, noon)).toBeNull();
@@ -121,13 +123,27 @@ describe("shopService.isOpenNow", () => {
   });
 
   it("handles daytime ranges", () => {
-    expect(isOpenNow("06:00-22:00", noon)).toBe(true);
-    expect(isOpenNow("13:00-22:00", noon)).toBe(false);
+    expect(isOpenNow("MON 06:00-22:00", noon)).toBe(true);
+    expect(isOpenNow("MON 13:00-22:00", noon)).toBe(false);
+  });
+
+  it("treats days without an entry as closed", () => {
+    expect(isOpenNow("TUE 06:00-22:00", noon)).toBe(false);
   });
 
   it("handles overnight ranges", () => {
-    expect(isOpenNow("22:00-06:00", night)).toBe(true);
-    expect(isOpenNow("22:00-06:00", noon)).toBe(false);
+    expect(isOpenNow("MON 22:00-06:00", night)).toBe(true);
+    expect(isOpenNow("MON 22:00-06:00", noon)).toBe(false);
+  });
+
+  it("covers overnight spillover into the next day", () => {
+    expect(isOpenNow("MON 22:00-06:00", tueEarly)).toBe(true);
+    expect(isOpenNow("TUE 22:00-06:00", tueEarly)).toBe(false);
+  });
+
+  it("treats the legacy single interval as every day", () => {
+    expect(isOpenNow("06:00-22:00", noon)).toBe(true);
+    expect(isOpenNow("06:00-22:00", tueEarly)).toBe(false);
   });
 });
 
@@ -135,15 +151,15 @@ describe("shopService.nearShops", () => {
   const noon = new Date(2026, 5, 15, 12, 0, 0);
   const shops = [
     {id: "near", lat: 10.7626, lng: 106.6602, type: "SHOP",
-      openHours: "00:00-23:59", accepting: true},
+      openHours: "MON 00:00-23:59", accepting: true},
     {id: "mobile", lat: 10.7627, lng: 106.6603, type: "MOBILE",
       openHours: null, accepting: true},
     {id: "closed", lat: 10.7626, lng: 106.6602, type: "SHOP",
-      openHours: "00:00-00:01", accepting: true},
+      openHours: "MON 00:00-00:01", accepting: true},
     {id: "off", lat: 10.7626, lng: 106.6602, type: "SHOP",
-      openHours: "00:00-00:01", accepting: false},
+      openHours: "MON 00:00-00:01", accepting: false},
     {id: "far", lat: 11.7626, lng: 107.6602, type: "SHOP",
-      openHours: "00:00-23:59", accepting: true},
+      openHours: "MON 00:00-23:59", accepting: true},
   ];
 
   it("returns in-radius shops with distances", async () => {
@@ -270,5 +286,26 @@ describe("shopService tow vehicles", () => {
       towVehicleType: "VAN",
       towVehicleWidth: 2.0,
     });
+  });
+});
+
+describe("shopService.myShops", () => {
+  it("throws 404 for an unknown user", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(myShops({userId: "ghost"})).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it("returns only the caller operated shops", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    const owned = [{id: "s1", operatorUid: "u1"}];
+    jest.mocked(shopRepository.findByOperator).mockResolvedValue(
+      owned as never,
+    );
+    await expect(myShops({userId: "u1"})).resolves.toBe(owned);
+    expect(shopRepository.findByOperator).toHaveBeenCalledWith("u1");
   });
 });

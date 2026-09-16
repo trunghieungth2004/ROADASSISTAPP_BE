@@ -1,5 +1,7 @@
 import * as routingCacheRepository from
   "../repository/routingCacheRepository";
+import * as activeRouteRepository from
+  "../repository/activeRouteRepository";
 import * as userRepository from "../repository/userRepository";
 import * as closureService from "./closureService";
 import {postRoutes, dedupeRoutes, costingForVehicle} from
@@ -18,11 +20,12 @@ import {
   MAX_EXTRA_DISTANCE_METERS,
 } from "./routing/detour";
 import {probeWidth, toWidthZone, withTightZones} from "./routing/widthGate";
+import {logWarn} from "../utils/logger";
 
 const MAX_ROUTE_OPTIONS = 5;
 
 const logBlocked = (reason: string, fields: Record<string, unknown>): void => {
-  console.warn(`[routing] ${reason} ${JSON.stringify(fields)}`);
+  logWarn("routing", reason, fields);
 };
 
 const withWidthFallback = async (
@@ -411,8 +414,13 @@ const getRoute = async ({
   return {cached, routes: dedupeRoutes<RouteOption>(options)};
 };
 
+const sweepActiveRoutes = async (): Promise<number> => {
+  return activeRouteRepository.deleteExpired();
+};
+
 export {
   getRoute,
+  sweepActiveRoutes,
   widthToBucket,
   MAX_EXTRA_DISTANCE_METERS,
   MAX_ROUTE_OPTIONS,

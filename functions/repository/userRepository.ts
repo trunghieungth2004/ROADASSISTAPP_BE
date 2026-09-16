@@ -83,6 +83,14 @@ const updateStatus = async (userId: string, status: string): Promise<void> => {
   await auth.updateUser(userId, {disabled: status !== STATUS_USER.ACTIVE});
 };
 
+const updateProfile = async (
+  userId: string,
+  displayName: string,
+): Promise<void> => {
+  await db.collection("users").doc(userId).update({displayName});
+  await auth.updateUser(userId, {displayName});
+};
+
 const updateVolunteer = async (
   userId: string,
   fields: {
@@ -188,6 +196,7 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  updateProfile,
   updateVolunteer,
   updateActiveVehicle,
   updateOnboarded,

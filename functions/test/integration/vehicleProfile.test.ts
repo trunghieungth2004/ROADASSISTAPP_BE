@@ -54,4 +54,28 @@ describe("vehicle profile endpoints", () => {
       .send({profileId: "ghost", configType: "SOLO"});
     expect(res.status).toBe(404);
   });
+
+  it("PUT /vehicleProfiles/tow designates the tow vehicle", async () => {
+    const res = await request(app)
+      .put("/vehicleProfiles/tow")
+      .set("Authorization", bearer(USER))
+      .send({profileId, towVehicleType: "CAR"});
+    expect(res.status).toBe(200);
+    expect(res.body.data.towVehicleType).toBe("CAR");
+    const listed = await request(app)
+      .post("/vehicleProfiles/all")
+      .set("Authorization", bearer(USER))
+      .send({});
+    const match = (listed.body.data as {id: string;
+      towVehicleType: string}[]).find((p) => p.id === profileId);
+    expect(match?.towVehicleType).toBe("CAR");
+  });
+
+  it("PUT /vehicleProfiles/tow rejects invalid types", async () => {
+    const res = await request(app)
+      .put("/vehicleProfiles/tow")
+      .set("Authorization", bearer(USER))
+      .send({profileId, towVehicleType: "BOAT"});
+    expect(res.status).toBe(400);
+  });
 });

@@ -5,6 +5,7 @@ import {
   getProfiles,
   createProfile,
   addRideConfig,
+  setTowVehicle,
 } from "../../../service/vehicleProfileService";
 
 jest.mock("../../../repository/vehicleProfileRepository");
@@ -103,5 +104,68 @@ describe("vehicleProfileService.getProfiles", () => {
       [{id: "p1"}] as never,
     );
     await expect(getProfiles("u1")).resolves.toEqual([{id: "p1"}]);
+  });
+});
+
+describe("vehicleProfileService.setTowVehicle", () => {
+  it("throws 404 for an unknown profile", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue(null);
+    await expect(
+      setTowVehicle({userId: "u1", profileId: "ghost",
+        towVehicleType: "CAR"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("rejects invalid tow vehicle types", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
+      id: "p1",
+    } as never);
+    await expect(
+      setTowVehicle({userId: "u1", profileId: "p1",
+        towVehicleType: "BOAT"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(vehicleProfileRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("sets the tow vehicle and clears the others", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
+      id: "p2",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([
+      {id: "p1", towVehicleType: "VAN"},
+      {id: "p2", towVehicleType: null},
+    ] as never);
+    await setTowVehicle({userId: "u1", profileId: "p2",
+      towVehicleType: "CAR"});
+    expect(vehicleProfileRepository.update).toHaveBeenCalledWith("u1", "p1", {
+      towVehicleType: null,
+    });
+    expect(vehicleProfileRepository.update).toHaveBeenCalledWith("u1", "p2", {
+      towVehicleType: "CAR",
+    });
+  });
+
+  it("unsets the tow vehicle", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
+      id: "p1",
+      towVehicleType: "VAN",
+    } as never);
+    await setTowVehicle({userId: "u1", profileId: "p1",
+      towVehicleType: null});
+    expect(vehicleProfileRepository.update).toHaveBeenCalledWith("u1", "p1", {
+      towVehicleType: null,
+    });
   });
 });

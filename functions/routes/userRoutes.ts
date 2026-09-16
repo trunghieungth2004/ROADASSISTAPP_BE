@@ -63,6 +63,12 @@ export default (
     userController.updateStatus,
   );
   app.put(
+    "/users/profile",
+    requireAuth,
+    validate({body: schemas.updateProfile}),
+    userController.updateProfile,
+  );
+  app.put(
     "/users/volunteer",
     requireAuth,
     validate({body: schemas.volunteerToggle}),
@@ -73,5 +79,11 @@ export default (
     requireAuth,
     validate({body: schemas.volunteerHeartbeat}),
     userController.volunteerHeartbeat,
+  );
+  app.post(
+    "/users/volunteers/sweep",
+    requireAuth,
+    requireRole("1"),
+    userController.sweepVolunteers,
   );
 };

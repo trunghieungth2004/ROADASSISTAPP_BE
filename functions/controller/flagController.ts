@@ -72,6 +72,15 @@ const getMine = async (req: Request, res: Response) => {
   }
 };
 
+const getAllFlags = async (_req: Request, res: Response) => {
+  try {
+    const result = await flagService.getAllFlags();
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const moderateFlag = async (req: Request, res: Response) => {
   try {
     const {flagId, status} = req.body;
@@ -116,6 +125,7 @@ export {
   denyFlag,
   getNear,
   getMine,
+  getAllFlags,
   moderateFlag,
   unflagFlag,
   expireFlags,

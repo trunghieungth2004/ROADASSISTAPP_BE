@@ -127,6 +127,22 @@ const acceptDispatch = async (req: Request, res: Response) => {
   }
 };
 
+const updateDispatchDestination = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, destinationShopId, destinationPoint} = req.body;
+    const result = await dispatchService.updateDispatchDestination({
+      userId,
+      ticketId,
+      destinationShopId,
+      destinationPoint,
+    });
+    sendSuccess(res, result, {message: "Destination updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
     const {ticketId} = req.body;
@@ -138,4 +154,5 @@ const deliverDispatch = async (req: Request, res: Response) => {
 };
 
 export {createDispatch, getDispatch, updateDispatchStatus, nearDispatch,
-  dispatchOffers, selectDispatch, acceptDispatch, deliverDispatch};
+  dispatchOffers, selectDispatch, acceptDispatch, updateDispatchDestination,
+  deliverDispatch};

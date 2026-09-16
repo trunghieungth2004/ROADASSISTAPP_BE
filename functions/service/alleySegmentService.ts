@@ -3,20 +3,7 @@ import * as userRepository from "../repository/userRepository";
 import {encodeGeohash, boundsForRadiusMeters} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 404;
-  }
-}
+import {NotFoundError, ValidationError} from "../utils/errors";
 
 const NS = "alleySegment";
 

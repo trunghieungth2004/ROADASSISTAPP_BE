@@ -1,4 +1,5 @@
 import {BLOCKING_TYPES} from "./closureService";
+import {logError} from "../utils/logger";
 
 interface TasksClient {
   queuePath(project: string, location: string, queue: string): string;
@@ -64,7 +65,7 @@ const enqueueHazardPush = async (
     if ((err as {code?: number} | null)?.code === ALREADY_EXISTS_CODE) {
       return {enqueued: true};
     }
-    console.error("enqueueHazardPush failed", err);
+    logError("tasks", "enqueueHazardPush failed", {}, err);
     return {enqueued: false};
   }
 };
@@ -115,7 +116,7 @@ const enqueueDispatchPush = async (
     if ((err as {code?: number} | null)?.code === ALREADY_EXISTS_CODE) {
       return {enqueued: true};
     }
-    console.error("enqueueDispatchPush failed", err);
+    logError("tasks", "enqueueDispatchPush failed", {}, err);
     return {enqueued: false};
   }
 };

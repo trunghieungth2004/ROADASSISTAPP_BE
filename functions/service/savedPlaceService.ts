@@ -2,29 +2,8 @@ import * as savedPlaceRepository from "../repository/savedPlaceRepository";
 
 export type SavedPlace = savedPlaceRepository.SavedPlace;
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ForbiddenError, NotFoundError, ValidationError} from
+  "../utils/errors";
 
 const MAX_SAVED_PLACES = 50;
 

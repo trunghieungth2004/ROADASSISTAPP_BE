@@ -43,6 +43,16 @@ const updateShop = async (req: Request, res: Response) => {
   }
 };
 
+const myShops = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await shopService.myShops({userId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const nearShops = async (req: Request, res: Response) => {
   try {
     const {lat, lng, type, radiusMeters, acceptingOnly, openOnly,
@@ -62,4 +72,4 @@ const nearShops = async (req: Request, res: Response) => {
   }
 };
 
-export {createShop, updateShop, nearShops};
+export {createShop, updateShop, myShops, nearShops};

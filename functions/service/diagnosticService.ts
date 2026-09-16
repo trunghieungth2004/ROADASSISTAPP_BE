@@ -1,12 +1,6 @@
 import * as diagnosticRepository from "../repository/diagnosticRepository";
 
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 404;
-  }
-}
+import {NotFoundError} from "../utils/errors";
 
 const createDiagnostic = async (data: {
   userId: string;

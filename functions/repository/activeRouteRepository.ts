@@ -83,9 +83,29 @@ const findNearFlag = async (
   return results;
 };
 
+const deleteExpired = async (): Promise<number> => {
+  const nowIso = new Date().toISOString();
+  let deleted = 0;
+  for (;;) {
+    const snapshot = await db
+      .collection("active_routes")
+      .where("expiresAt", "<=", nowIso)
+      .limit(500)
+      .get();
+    if (snapshot.empty) break;
+    const batch = db.batch();
+    snapshot.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snapshot.size;
+    if (snapshot.size < 500) break;
+  }
+  return deleted;
+};
+
 export {
   touch,
   findNearFlag,
+  deleteExpired,
   cellsForGeometry,
   ACTIVE_ROUTE_TTL_MS,
 };

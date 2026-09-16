@@ -2,20 +2,7 @@ import * as savedRouteRepository from
   "../repository/savedRouteRepository";
 import * as userRepository from "../repository/userRepository";
 
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ForbiddenError, NotFoundError} from "../utils/errors";
 
 interface SaveRouteInput {
   userId: string;

@@ -20,6 +20,19 @@ interface FlagRecord {
 
 const RULE_OF_THREE = 3;
 
+const findAll = async (limit = 100): Promise<FlagRecord[]> => {
+  const snapshot = await db
+    .collection("flags")
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  const results: FlagRecord[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as FlagRecord),
+  );
+  return results;
+};
+
 const findById = async (flagId: string): Promise<FlagRecord | null> => {
   const doc = await db.collection("flags").doc(flagId).get();
   if (!doc.exists) return null;
@@ -188,6 +201,7 @@ const findExpired = async (): Promise<FlagRecord[]> => {
 };
 
 export {
+  findAll,
   findById,
   findByReporterUid,
   findByGeohashPrefixes,

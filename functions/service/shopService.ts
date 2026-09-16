@@ -8,28 +8,29 @@ import {
 import {NEAR_SHOPS_MAX} from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
 
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 404) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 403) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import {ForbiddenError, NotFoundError} from "../utils/errors";
 
-const toMinutes = (hm: string): number | null => {
-  const m = /^(\d{2}):(\d{2})$/.exec(hm);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (h > 23 || min > 59) return null;
-  return h * 60 + min;
+const DOW_KEYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+const parseSchedule = (
+  openHours: string,
+): Array<{day: string; open: number; close: number}> => {
+  const trimmed = openHours.trim();
+  const normalized = /^\d{2}:\d{2}-\d{2}:\d{2}$/.test(trimmed) ?
+    DOW_KEYS.map((d) => `${d} ${trimmed}`).join(",") :
+    openHours;
+  const out: Array<{day: string; open: number; close: number}> = [];
+  for (const entry of normalized.split(",")) {
+    const m = /^(MON|TUE|WED|THU|FRI|SAT|SUN) (\d{2}):(\d{2})-(\d{2}):(\d{2})$/
+      .exec(entry.trim());
+    if (!m) continue;
+    const open = Number(m[2]) * 60 + Number(m[3]);
+    const close = Number(m[4]) * 60 + Number(m[5]);
+    if (Number(m[2]) > 23 || Number(m[3]) > 59) continue;
+    if (Number(m[4]) > 23 || Number(m[5]) > 59) continue;
+    out.push({day: m[1], open, close});
+  }
+  return out;
 };
 
 const isOpenNow = (
@@ -37,14 +38,25 @@ const isOpenNow = (
   now: Date = new Date(),
 ): boolean | null => {
   if (!openHours) return null;
-  const parts = openHours.split("-");
-  if (parts.length !== 2) return null;
-  const open = toMinutes(parts[0]);
-  const close = toMinutes(parts[1]);
-  if (open === null || close === null) return null;
+  const entries = parseSchedule(openHours);
+  if (entries.length === 0) return null;
+  const dayIdx = now.getDay();
+  const today = DOW_KEYS[dayIdx] ?? "";
+  const yesterday = DOW_KEYS[(dayIdx + 6) % 7] ?? "";
   const cur = now.getHours() * 60 + now.getMinutes();
-  if (open <= close) return cur >= open && cur < close;
-  return cur >= open || cur < close;
+  for (const e of entries) {
+    if (e.day === today) {
+      if (e.open <= e.close) {
+        if (cur >= e.open && cur < e.close) return true;
+      } else if (cur >= e.open) {
+        return true;
+      }
+    }
+    if (e.open > e.close && e.day === yesterday && cur < e.close) {
+      return true;
+    }
+  }
+  return false;
 };
 
 const createShop = async ({
@@ -131,6 +143,12 @@ const updateShop = async ({
   return {updated: 1};
 };
 
+const myShops = async ({userId}: {userId: string}) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  return shopRepository.findByOperator(userId);
+};
+
 const nearShops = async ({
   lat,
   lng,
@@ -187,5 +205,5 @@ const nearShops = async ({
   return filtered.slice(0, limit);
 };
 
-export {createShop, updateShop, nearShops, isOpenNow, NotFoundError,
+export {createShop, updateShop, myShops, nearShops, isOpenNow, NotFoundError,
   ForbiddenError};

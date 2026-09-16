@@ -4,6 +4,7 @@ import * as userRepository from "../repository/userRepository";
 import {STATUS_USER} from "../constants/status";
 import {ROLE_RIDER} from "../constants/roles";
 import * as cacheManager from "../utils/cacheManager";
+import {logError, logInfo} from "../utils/logger";
 
 const USER_NS = "user";
 
@@ -70,7 +71,7 @@ export const requireAuth = async (
         trustScore: 0,
       };
       cacheManager.set(USER_NS, uid, userData);
-      console.info("Auth middleware: auto-provisioned user", uid);
+      logInfo("auth", "auto-provisioned user", {uid});
     }
 
     if (userData.status !== STATUS_USER.ACTIVE) {
@@ -87,7 +88,7 @@ export const requireAuth = async (
     authed.userRole = userData.role;
     next();
   } catch (error) {
-    console.error("Auth middleware error:", error);
+    logError("auth", "middleware error", {}, error);
     res.status(500).json({
       statusCode: 500,
       status: "ERROR",

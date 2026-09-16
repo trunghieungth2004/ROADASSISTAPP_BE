@@ -2,21 +2,9 @@ import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
+import {TOW_VEHICLE_TYPE} from "../constants/status";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 404;
-  }
-}
+import {NotFoundError, ValidationError} from "../utils/errors";
 
 const NS = "vehicleProfile";
 
@@ -84,10 +72,47 @@ const addRideConfig = async ({
   return config;
 };
 
+const setTowVehicle = async ({
+  userId,
+  profileId,
+  towVehicleType,
+}: {
+  userId: string;
+  profileId: string;
+  towVehicleType?: string | null;
+}) => {
+  await ensureUser(userId);
+  const profile = await vehicleProfileRepository.findById(userId, profileId);
+  if (!profile) throw new NotFoundError("Vehicle profile not found");
+  if (
+    towVehicleType !== undefined &&
+    towVehicleType !== null &&
+    !(Object.values(TOW_VEHICLE_TYPE) as string[]).includes(towVehicleType)
+  ) {
+    throw new ValidationError("Invalid tow vehicle type");
+  }
+  if (towVehicleType) {
+    const profiles = await vehicleProfileRepository.findByUser(userId);
+    for (const other of profiles) {
+      if (other.id !== profileId && other.towVehicleType) {
+        await vehicleProfileRepository.update(userId, other.id, {
+          towVehicleType: null,
+        });
+      }
+    }
+  }
+  await vehicleProfileRepository.update(userId, profileId, {
+    towVehicleType: towVehicleType ?? null,
+  });
+  cacheManager.del(NS, userId);
+  return vehicleProfileRepository.findById(userId, profileId);
+};
+
 export {
   getProfiles,
   createProfile,
   addRideConfig,
+  setTowVehicle,
   ValidationError,
   NotFoundError,
 };

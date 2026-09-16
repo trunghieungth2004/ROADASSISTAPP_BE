@@ -115,6 +115,22 @@ describe("user endpoints", () => {
       .send({targetUserId: uid, status: "1"});
     expect(on.status).toBe(200);
   });
+
+  it("PUT /users/profile renames the rider", async () => {
+    const created = await request(app).post("/users/register").send({
+      email: `${PREFIX}-rename@example.com`,
+      password: "secret123",
+      displayName: "Old Name",
+    });
+    const uid = created.body.data.uid as string;
+    const res = await request(app)
+      .put("/users/profile")
+      .set("Authorization", bearer(uid))
+      .send({displayName: "New Name"});
+    expect(res.status).toBe(200);
+    const doc = await db.collection("users").doc(uid).get();
+    expect(doc.data()?.displayName).toBe("New Name");
+  });
 });
 
 describe("volunteer endpoints", () => {

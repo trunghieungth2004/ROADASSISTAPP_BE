@@ -49,4 +49,19 @@ const addRideConfig = async (req: Request, res: Response) => {
   }
 };
 
-export {getAllProfiles, createProfile, addRideConfig};
+const setTowVehicle = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {profileId, towVehicleType} = req.body;
+    const result = await vehicleProfileService.setTowVehicle({
+      userId,
+      profileId,
+      towVehicleType,
+    });
+    sendSuccess(res, result, {message: "Tow vehicle updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {getAllProfiles, createProfile, addRideConfig, setTowVehicle};

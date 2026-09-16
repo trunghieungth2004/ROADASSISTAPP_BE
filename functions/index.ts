@@ -6,6 +6,7 @@ import morgan from "morgan";
 import * as functions from "firebase-functions";
 import {requireAuth, requireRole} from "./middleware/auth";
 import {validate} from "./middleware/validate";
+import {requestIdMiddleware} from "./utils/logger";
 import {sanitizeObject} from "./utils/sanitize";
 import {handleServiceError} from "./utils/response";
 import {schemas} from "./validation/schemas";
@@ -44,6 +45,26 @@ const limiter = rateLimiter({
 });
 app.use(limiter);
 
+const userOrIpKey = (req: Request): string => {
+  const header = req.headers.authorization || "";
+  if (header.length > 0) return `token:${header}`;
+  return `ip:${req.ip}`;
+};
+
+const writeLimiter = rateLimiter({
+  windowMs: 1 * 60 * 1000,
+  max: Number(process.env.WRITE_LIMIT_PER_MIN ?? 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: userOrIpKey,
+  message: {
+    statusCode: 429,
+    status: "ERROR",
+    message: "Too many requests, please try again later",
+  },
+});
+app.use(["/flags", "/dispatch", "/routes", "/ratings"], writeLimiter);
+
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((o) => o.trim())
@@ -60,7 +81,12 @@ app.use(
       return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "X-Request-Id",
+    ],
     credentials: true,
   }),
 );
@@ -69,6 +95,7 @@ app.use(express.json({limit: "20mb"}));
 app.use(express.urlencoded({extended: true}));
 app.use(compression());
 app.use(morgan("short"));
+app.use(requestIdMiddleware);
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
   if (req.body && typeof req.body === "object") {

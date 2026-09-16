@@ -5,29 +5,11 @@ import * as volunteerLocationRepository from
   "../repository/volunteerLocationRepository";
 import * as cacheManager from "../utils/cacheManager";
 import {ROLE_ADMIN, ROLE_RIDER} from "../constants/roles";
+import {VOLUNTEER_FRESH_MS} from "../constants/status";
 import {auth} from "../config/firebase";
 
-class ValidationError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode = 400) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-class NotFoundError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 404;
-  }
-}
-class ForbiddenError extends Error {
-  statusCode: number;
-  constructor(message: string) {
-    super(message);
-    this.statusCode = 403;
-  }
-}
+import {ForbiddenError, NotFoundError, ValidationError} from
+  "../utils/errors";
 
 const USER_NS = "user";
 
@@ -122,6 +104,21 @@ const updateStatus = async ({
   return {updated: 1};
 };
 
+const updateProfile = async ({
+  userId,
+  displayName,
+}: {
+  userId: string;
+  displayName: string;
+}) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  await userRepository.updateProfile(userId, displayName);
+  cacheManager.del(USER_NS, userId);
+  cacheManager.del(USER_NS, "__all__");
+  return {updated: 1};
+};
+
 const setVolunteerAvailability = async ({
   userId,
   available,
@@ -162,6 +159,11 @@ const volunteerHeartbeat = async ({
     throw new ValidationError("Volunteer mode is off");
   }
   return volunteerLocationRepository.upsert(userId, lat, lng);
+};
+
+const sweepStaleVolunteers = async (): Promise<number> => {
+  const cutoff = new Date(Date.now() - VOLUNTEER_FRESH_MS).toISOString();
+  return volunteerLocationRepository.deleteStale(cutoff);
 };
 
 const me = async (userId: string) => {
@@ -256,8 +258,10 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  updateProfile,
   setVolunteerAvailability,
   volunteerHeartbeat,
+  sweepStaleVolunteers,
   ValidationError,
   NotFoundError,
   ForbiddenError,

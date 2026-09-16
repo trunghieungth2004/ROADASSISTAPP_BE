@@ -142,6 +142,24 @@ describe("flag endpoints", () => {
     expect(res.status).toBe(200);
   });
 
+  it("POST /flags/all lists flags for admins", async () => {
+    const res = await request(app)
+      .post("/flags/all")
+      .set("Authorization", bearer(ADMIN))
+      .send({});
+    expect(res.status).toBe(200);
+    const ids = (res.body.data as {id: string}[]).map((f) => f.id);
+    expect(ids).toContain(flagId);
+  });
+
+  it("POST /flags/all rejects riders with 403", async () => {
+    const res = await request(app)
+      .post("/flags/all")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(res.status).toBe(403);
+  });
+
   it("POST /flags/expire flips lapsed flags", async () => {
     await seedFlag({
       lat: BASE_LAT,

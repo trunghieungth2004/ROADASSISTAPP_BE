@@ -2,7 +2,8 @@ import * as activeRouteRepository from
   "../../repository/activeRouteRepository";
 import * as closureService from "../closureService";
 import {haversineMeters} from "../../utils/geo";
-import {circleToRing, postRoutes} from "../../utils/valhalla";
+import {logWarn} from "../../utils/logger";
+import {COSTING_AUTO, circleToRing, postRoutes} from "../../utils/valhalla";
 import type {LatLng} from "../../utils/valhalla";
 import {EndpointBlockedError, RouteBlockedError, WidthBlockedError} from
   "./errors";
@@ -21,6 +22,13 @@ import {
 const MAX_EXTRA_DISTANCE_METERS = 15000;
 const DETOUR_ATTEMPTS = 4;
 const DETOUR_MAX_ZONES = 8;
+
+const maxExtraDistanceFor = (costing: string): number => {
+  if (costing === COSTING_AUTO) {
+    return Number(process.env.DETOUR_BUDGET_AUTO_METERS ?? 15000);
+  }
+  return Number(process.env.DETOUR_BUDGET_SCOOTER_METERS ?? 8000);
+};
 
 const hasCoords = (zone: closureService.BlockingZone): boolean =>
   Number.isFinite(zone.lat) &&
@@ -217,12 +225,10 @@ const routeSafely = async ({
           check: (geometry) => queueFor(geometry, null),
         });
         if (steered !== null) {
-          console.warn(
-            `[routing] corridor-steered ${JSON.stringify({
-              key,
-              distanceMeters: steered.distanceMeters,
-            })}`,
-          );
+          logWarn("routing", "corridor-steered", {
+            key,
+            distanceMeters: steered.distanceMeters,
+          });
           geometry = steered.geometry;
           distanceMeters = steered.distanceMeters;
           durationSeconds = steered.durationSeconds;
@@ -231,20 +237,18 @@ const routeSafely = async ({
           break;
         }
       }
-      console.warn(
-        `[routing] detour-chained ${JSON.stringify({
-          key,
-          attempt,
-          zones: fresh.zones.map((z) => z.flagId),
-        })}`,
-      );
+      logWarn("routing", "detour-chained", {
+        key,
+        attempt,
+        zones: fresh.zones.map((z) => z.flagId),
+      });
       queue.push(...fresh.zones);
     }
   }
   if (
     baseDistance !== undefined &&
     distanceMeters !== undefined &&
-    distanceMeters - baseDistance > MAX_EXTRA_DISTANCE_METERS
+    distanceMeters - baseDistance > maxExtraDistanceFor(costing)
   ) {
     if (blocking.length > 0) throw new RouteBlockedError(blocking);
     throw new WidthBlockedError(lastWidthBlocks);
@@ -264,6 +268,7 @@ const routeSafely = async ({
 export {
   routeSafely,
   recordActiveRoute,
+  maxExtraDistanceFor,
   MAX_EXTRA_DISTANCE_METERS,
   DETOUR_ATTEMPTS,
   DETOUR_MAX_ZONES,

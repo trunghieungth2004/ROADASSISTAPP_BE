@@ -78,6 +78,17 @@ const updateStatus = async (req: Request, res: Response) => {
   }
 };
 
+const updateProfile = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {displayName} = req.body;
+    const result = await userService.updateProfile({userId, displayName});
+    sendSuccess(res, result, {message: "Profile updated successfully"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const setVolunteerAvailability = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -104,6 +115,19 @@ const volunteerHeartbeat = async (req: Request, res: Response) => {
       lng,
     });
     sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const sweepVolunteers = async (_req: Request, res: Response) => {
+  try {
+    const count = await userService.sweepStaleVolunteers();
+    sendSuccess(
+      res,
+      {swept: count},
+      {message: "Stale volunteer locations removed"},
+    );
   } catch (error) {
     handleServiceError(res, error as Error);
   }
@@ -151,6 +175,8 @@ export {
   updateRole,
   updateTrustScore,
   updateStatus,
+  updateProfile,
   setVolunteerAvailability,
   volunteerHeartbeat,
+  sweepVolunteers,
 };

@@ -24,4 +24,17 @@ const getRoute = async (req: Request, res: Response) => {
   }
 };
 
-export {getRoute};
+const sweepRoutes = async (_req: Request, res: Response) => {
+  try {
+    const count = await routingService.sweepActiveRoutes();
+    sendSuccess(
+      res,
+      {expired: count},
+      {message: "Expired routes removed"},
+    );
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {getRoute, sweepRoutes};

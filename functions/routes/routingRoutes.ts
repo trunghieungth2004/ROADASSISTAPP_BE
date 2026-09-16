@@ -5,13 +5,19 @@ import * as savedRouteController from "../controller/savedRouteController";
 
 export default (
   app: Express,
-  {requireAuth, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/routes",
     requireAuth,
     validate({body: schemas.getRoute}),
     routingController.getRoute,
+  );
+  app.post(
+    "/routes/sweep",
+    requireAuth,
+    requireRole("1"),
+    routingController.sweepRoutes,
   );
   app.post(
     "/routes/save",

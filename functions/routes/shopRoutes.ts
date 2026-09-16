@@ -18,6 +18,12 @@ export default (
     validate({body: schemas.nearShops}),
     shopController.nearShops,
   );
+  app.post(
+    "/shops/mine",
+    requireAuth,
+    validate({body: schemas.myShops}),
+    shopController.myShops,
+  );
   app.put(
     "/shops",
     requireAuth,

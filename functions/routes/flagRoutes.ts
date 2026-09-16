@@ -36,6 +36,12 @@ export default (
     validate({body: schemas.getMyFlags}),
     flagController.getMine,
   );
+  app.post(
+    "/flags/all",
+    requireAuth,
+    requireRole("1"),
+    flagController.getAllFlags,
+  );
   app.put(
     "/flags/moderate",
     requireAuth,
