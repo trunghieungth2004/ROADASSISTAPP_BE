@@ -2,7 +2,8 @@
   "name": "functions",
   "description": "RoadAssist backend Cloud Functions",
   "scripts": {
-    "serve": "npm run build && firebase emulators:start --only functions",
+    "serve": "npm run build && firebase emulators:start --only functions,firestore",
+    "dev:watch": "npm run build:watch & firebase emulators:start --only functions,firestore",
     "build": "tsc",
     "build:watch": "tsc --watch",
     "lint": "eslint --ext .js,.ts .",
