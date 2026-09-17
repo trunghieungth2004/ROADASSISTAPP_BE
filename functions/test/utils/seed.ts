@@ -55,6 +55,7 @@ const seedUser = async (
   role: string = "2",
   status: string = STATUS_USER.ACTIVE,
   trustScore = 0,
+  services: string[] = ["RIDER"],
 ): Promise<string> => {
   await db.collection("users").doc(id).set({
     email: `${id}@example.com`,
@@ -62,6 +63,7 @@ const seedUser = async (
     role,
     status,
     trustScore,
+    services,
     createdAt: new Date().toISOString(),
   });
   return id;

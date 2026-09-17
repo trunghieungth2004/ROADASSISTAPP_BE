@@ -4,11 +4,17 @@ import {schemas} from "../../../validation/schemas";
 const table = schemas as unknown as Record<string, Joi.ObjectSchema>;
 
 const valid: Record<string, unknown> = {
-  register: {email: "rider@example.com", password: "secret123"},
+  register: {
+    email: "rider@example.com",
+    password: "secret123",
+    phone: "+10000000001",
+  },
   getOneUser: {},
   updateUserRole: {targetUserId: "u1", role: "1"},
   updateUserTrust: {targetUserId: "u1", trustScore: 60},
   updateUserStatus: {targetUserId: "u1", status: "0"},
+  setOnboarded: {service: "VOLUNTEER"},
+  updateUserServices: {targetUserId: "u1", grant: ["SHOP"]},
   updateProfile: {displayName: "New Name"},
   createVehicleProfile: {type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
   addRideConfig: {profileId: "p1", configType: "CARGO"},
@@ -46,6 +52,7 @@ const valid: Record<string, unknown> = {
   getDiagnostic: {diagnosticId: "d1"},
   createDispatch: {ticketType: "TOW", lat: 10.7, lng: 106.6},
   getDispatch: {ticketId: "t1"},
+  getMyTickets: {},
   updateDispatchStatus: {ticketId: "t1", status: "2"},
   acceptDispatch: {ticketId: "t1"},
   selectDispatch: {ticketId: "t1", shopId: "s1"},
@@ -101,6 +108,33 @@ describe("schemas reject invalid input", () => {
     expect(table.updateUserRole.validate({role: "1"}).error).toBeDefined();
     expect(
       table.updateUserRole.validate({targetUserId: "u1"}).error,
+    ).toBeDefined();
+  });
+
+  it("setOnboarded accepts service or legacy role, not neither", () => {
+    expect(
+      table.setOnboarded.validate({service: "TOW"}).error,
+    ).toBeUndefined();
+    expect(
+      table.setOnboarded.validate({role: "TOW"}).error,
+    ).toBeUndefined();
+    expect(table.setOnboarded.validate({}).error).toBeDefined();
+    expect(
+      table.setOnboarded.validate({service: "PILOT"}).error,
+    ).toBeDefined();
+  });
+
+  it("updateUserServices requires a target plus grant or revoke", () => {
+    expect(
+      table.updateUserServices.validate({targetUserId: "u1"}).error,
+    ).toBeDefined();
+    expect(
+      table.updateUserServices.validate({grant: ["SHOP"]}).error,
+    ).toBeDefined();
+    expect(
+      table.updateUserServices.validate(
+        {targetUserId: "u1", revoke: ["NOPE"]},
+      ).error,
     ).toBeDefined();
   });
 

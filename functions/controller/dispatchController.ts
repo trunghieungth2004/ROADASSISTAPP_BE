@@ -39,10 +39,21 @@ const createDispatch = async (req: Request, res: Response) => {
   }
 };
 
+const getMyTickets = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await dispatchService.getMyTickets(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const getDispatch = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {ticketId} = req.body;
-    const result = await dispatchService.getDispatch(ticketId);
+    const result = await dispatchService.getDispatch(ticketId, userId);
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -51,10 +62,12 @@ const getDispatch = async (req: Request, res: Response) => {
 
 const updateDispatchStatus = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {ticketId, status} = req.body;
     const result = await dispatchService.updateDispatchStatus({
       id: ticketId,
       status,
+      userId,
     });
     sendSuccess(res, result, {message: "Dispatch updated"});
   } catch (error) {
@@ -153,6 +166,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
   }
 };
 
-export {createDispatch, getDispatch, updateDispatchStatus, nearDispatch,
+export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
+  nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, updateDispatchDestination,
   deliverDispatch};

@@ -1,15 +1,17 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as routingController from "../controller/routingController";
 import * as savedRouteController from "../controller/savedRouteController";
 
 export default (
   app: Express,
-  {requireAuth, requireRole, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/routes",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.getRoute}),
     routingController.getRoute,
   );
@@ -22,6 +24,7 @@ export default (
   app.post(
     "/routes/save",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.saveRoute}),
     savedRouteController.saveRoute,
   );
@@ -40,12 +43,14 @@ export default (
   app.put(
     "/routes/saved",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.renameSavedRoute}),
     savedRouteController.renameRoute,
   );
   app.post(
     "/routes/unsave",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.deleteSavedRoute}),
     savedRouteController.deleteRoute,
   );

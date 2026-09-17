@@ -1,26 +1,30 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as flagController from "../controller/flagController";
 
 export default (
   app: Express,
-  {requireAuth, requireRole, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/flags",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createFlag}),
     flagController.createFlag,
   );
   app.post(
     "/flags/confirm",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.confirmFlag}),
     flagController.confirmFlag,
   );
   app.post(
     "/flags/deny",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.denyFlag}),
     flagController.denyFlag,
   );
@@ -52,6 +56,7 @@ export default (
   app.post(
     "/flags/unflag",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.unflagFlag}),
     flagController.unflagFlag,
   );

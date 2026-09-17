@@ -5,8 +5,9 @@ import {AuthedRequest} from "../middleware/auth";
 
 const register = async (req: Request, res: Response) => {
   try {
-    const {email, password, displayName} = req.body;
-    const result = await userService.register({email, password, displayName});
+    const {email, password, displayName, phone} = req.body;
+    const result = await userService.register(
+      {email, password, displayName, phone});
     sendSuccess(res, result, {
       message: "User registered successfully",
       statusCode: 201,
@@ -157,9 +158,20 @@ const setActiveVehicle = async (req: Request, res: Response) => {
 const setOnboarded = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {role} = req.body;
-    const result = await userService.setOnboarded({userId, role});
+    const {service, role} = req.body;
+    const result = await userService.setOnboarded({userId, service, role});
     sendSuccess(res, result, {message: "Onboarding updated"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const updateServices = async (req: Request, res: Response) => {
+  try {
+    const {targetUserId, grant, revoke} = req.body;
+    const result = await userService.updateServices(
+      {targetUserId, grant, revoke});
+    sendSuccess(res, result, {message: "Service licenses updated"});
   } catch (error) {
     handleServiceError(res, error as Error);
   }
@@ -171,6 +183,7 @@ export {
   getAllUser,
   setActiveVehicle,
   setOnboarded,
+  updateServices,
   getMe,
   updateRole,
   updateTrustScore,

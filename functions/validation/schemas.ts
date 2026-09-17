@@ -51,6 +51,8 @@ const schemas = {
     email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
     displayName: Joi.string().allow("", null).optional(),
+    phone: Joi.string().pattern(/^\+?[0-9\s\-()]+$/).min(7).max(20)
+      .required(),
   }),
   getOneUser: emptyBody(),
   getMe: emptyBody(),
@@ -58,14 +60,26 @@ const schemas = {
     profileId: Joi.string().min(1).allow("", null).optional(),
   }),
   setOnboarded: Joi.object({
+    service: Joi.string()
+      .valid(...Object.values(SERVICE_ROLE))
+      .optional(),
     role: Joi.string()
       .valid(...Object.values(SERVICE_ROLE))
-      .required(),
-  }),
+      .optional(),
+  }).or("service", "role"),
   updateUserRole: Joi.object({
     targetUserId: strReq(),
     role: strReq(),
   }),
+  updateUserServices: Joi.object({
+    targetUserId: strReq(),
+    grant: Joi.array()
+      .items(Joi.string().valid(...Object.values(SERVICE_ROLE)))
+      .optional(),
+    revoke: Joi.array()
+      .items(Joi.string().valid(...Object.values(SERVICE_ROLE)))
+      .optional(),
+  }).or("grant", "revoke"),
   updateUserTrust: Joi.object({
     targetUserId: strReq(),
     trustScore: numReq(),
@@ -287,6 +301,7 @@ const schemas = {
   getDispatch: Joi.object({
     ticketId: strReq(),
   }),
+  getMyTickets: emptyBody(),
   updateDispatchStatus: Joi.object({
     ticketId: strReq(),
     status: Joi.string()

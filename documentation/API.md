@@ -152,7 +152,7 @@ Login bootstrap: the authenticated caller's profile plus their registered vehicl
 
 ---
 
-### `PUT /users/activeVehicle` **(Auth)**
+### `PUT /users/activeVehicle` **(Auth + `RIDER` license)**
 
 Mark one of your own vehicle profiles as the active routing vehicle. Send `{ "profileId": null }` to clear. Rejected (`404`) for a profile that is not yours.
 
@@ -170,16 +170,32 @@ Mark one of your own vehicle profiles as the active routing vehicle. Send `{ "pr
 
 ### `PUT /users/onboard` **(Auth)**
 
-Record an onboarding choice without touching the admin `users.role` field. Sets `onboarded: true` and accumulates the service (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`) into `users.services`.
+Record an onboarding choice without touching the admin `users.role` field. Sets `onboarded: true` and accumulates the service (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`) into `users.services`. The legacy `role` field is still accepted as a fallback.
 
 **Request:**
 ```json
-{ "role": "RIDER" }
+{ "service": "RIDER" }
 ```
 
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "message": "Onboarding updated", "data": { "updated": 1, "onboarded": true, "services": ["RIDER"] } }
+```
+
+---
+
+### `PUT /users/services` **(Admin)**
+
+Grant or revoke service licenses on any user. At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effects on net loss: revoking a held `SHOP` flips `accepting: false` on every shop the target operates (reported as `unlistedShops`); revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
+
+**Request:**
+```json
+{ "targetUserId": "abc123", "grant": ["VOLUNTEER"], "revoke": ["SHOP"] }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Service licenses updated", "data": { "updated": 1, "services": ["RIDER", "VOLUNTEER"] } }
 ```
 
 ---
@@ -237,7 +253,7 @@ Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled
 
 ---
 
-### `PUT /users/profile` **(Auth)**
+### `PUT /users/profile` **(Auth + `RIDER` license)**
 
 Rename the caller (`displayName`, 1–120 chars). Syncs Firebase Auth and busts the user cache.
 
@@ -253,7 +269,7 @@ Rename the caller (`displayName`, 1–120 chars). Syncs Firebase Auth and busts 
 
 ---
 
-### `PUT /users/volunteer` **(Auth)**
+### `PUT /users/volunteer` **(Auth + `VOLUNTEER` license)**
 
 Opt in or out of the volunteer network (Đội Cứu Hộ). Opting out deletes the volunteer's last-known location. `volunteerRadiusKm` (1–50, default 5) bounds SOS matching. `capability` is `SOLO_BIKE` (default, two-wheelers only) or `CAR` (also takes car tickets).
 
@@ -269,9 +285,9 @@ Opt in or out of the volunteer network (Đội Cứu Hộ). Opting out deletes t
 
 ---
 
-### `POST /users/volunteer/heartbeat` **(Auth)**
+### `POST /users/volunteer/heartbeat` **(Auth + `VOLUNTEER` license)**
 
-Refresh the volunteer's last-known location for SOS matching. Rejected (`400`) while volunteer mode is off. Locations older than 15 minutes never match.
+Refresh the volunteer's last-known location for SOS matching. Rejected (`403`) without the `VOLUNTEER` license, or (`400`) while volunteer mode is off. Locations older than 15 minutes never match.
 
 **Request:**
 ```json
@@ -284,6 +300,22 @@ Refresh the volunteer's last-known location for SOS matching. Rejected (`400`) w
 ```
 
 ---
+
+## Service licenses
+
+Provider capabilities are licensed per user in `users.services` (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`; single source of truth in `functions/constants/status.ts:75`). Enforcement is `requireService(...)` middleware (`functions/middleware/auth.ts`) plus service-level checks; admins (`role "1"`) bypass license gates. Missing licenses return `403 { "message": "Service license required" }`.
+
+| License | Grants |
+|---|---|
+| `RIDER` | All base rider mutations (tickets, flags, alleys, landmarks, routes, places, push, diagnostics, vehicles, profile). Granted at register/self-heal; backfilled to every active user |
+| `VOLUNTEER` | `PUT /users/volunteer`, heartbeat, `POST /dispatch/near`, volunteer `POST /dispatch/accept` |
+| `SHOP` | `POST /shops`, `PUT /shops`, `POST /dispatch/near`, shop `POST /dispatch/accept` (plus operator ownership) |
+| `TOW` | `PUT /vehicleProfiles/tow` (clearing a designation needs no license) |
+| `MOBILE` | Reserved, no endpoint consumes it yet |
+
+Licenses are granted via `PUT /users/onboard` (`{service}`; legacy `{role}` still accepted) and managed by admins via `PUT /users/services` (grant/revoke). One-time backfill: `npm run db:backfill-services [-- --dry-run]` (same `:emulator` variant pattern as `db:init`); it grants `RIDER` to all active users, `VOLUNTEER` to opted-in volunteers, `SHOP` to shop operators, `TOW` to tow-vehicle owners.
+
+`POST /dispatch/one` is visible to the ticket rider, assignee, shop operator, admins, and licensed providers; `PUT /dispatch/status` to the rider, assignee, operator, or admin.
 
 ## Roles
 
@@ -300,7 +332,7 @@ List all role mappings.
   "status": "SUCCESS",
   "data": [
     { "id": "1", "name": "Admin", "description": "Full access to user management and moderation" },
-    { "id": "2", "name": "Rider", "description": "Standard rider access to navigation and assistance" }
+    { "id": "2", "name": "User", "description": "Standard user access to navigation and assistance" }
   ]
 }
 ```
@@ -316,7 +348,7 @@ Resolve the authenticated caller's role code plus its mapping. No body required.
 {
   "statusCode": 200,
   "status": "SUCCESS",
-  "data": { "id": "abc123", "role": "2", "name": "Rider", "description": "Standard rider access to navigation and assistance" }
+  "data": { "id": "abc123", "role": "2", "name": "User", "description": "Standard user access to navigation and assistance" }
 }
 ```
 
@@ -390,7 +422,7 @@ List all vehicle profiles for the caller. No body required.
 
 ---
 
-### `POST /vehicleProfiles` **(Auth)**
+### `POST /vehicleProfiles` **(Auth + `RIDER` license)**
 
 Create a vehicle profile (physical footprint used for passability checks).
 
@@ -412,7 +444,7 @@ Create a vehicle profile (physical footprint used for passability checks).
 
 ---
 
-### `POST /vehicleProfiles/rideConfig` **(Auth)**
+### `POST /vehicleProfiles/rideConfig` **(Auth + `RIDER` license)**
 
 Attach a ride configuration (solo/passenger/cargo with estimated footprint) to a profile.
 
@@ -435,7 +467,7 @@ Attach a ride configuration (solo/passenger/cargo with estimated footprint) to a
 
 ---
 
-### `PUT /vehicleProfiles/tow` **(Auth)**
+### `PUT /vehicleProfiles/tow` **(Auth + `TOW` license)**
 
 Designate one of the caller's vehicle profiles as the tow vehicle (`CAR`/`VAN`/`TRUCK`), or unset it with `null`. Setting one clears the flag on all other profiles (one tow vehicle per user). `404` for unknown profiles, `400` for invalid types.
 
@@ -504,7 +536,7 @@ Search segments near a point (geohash cell match).
 
 ---
 
-### `POST /alleys` **(Auth)**
+### `POST /alleys` **(Auth + `RIDER` license)**
 
 Submit a new alley segment.
 
@@ -527,7 +559,7 @@ Submit a new alley segment.
 
 ---
 
-### `PUT /alleys/passability` **(Auth)**
+### `PUT /alleys/passability` **(Auth + `RIDER` license)**
 
 Overwrite a segment's passability measurements (only provided fields are written).
 
@@ -561,7 +593,7 @@ Admin patch of any segment fields (only provided fields are written).
 
 ## Flags
 
-### `POST /flags` **(Auth)**
+### `POST /flags` **(Auth + `RIDER` license)**
 
 Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-type TTL (`ACCIDENT` 1h, `FLOOD` 6h, `OBSTRUCTION` 3h). The reporter is the authenticated caller.
 
@@ -586,7 +618,7 @@ Submit a road flag. Starts at `"1"` (Suggested) with `voteCount: 0` and a per-ty
 
 ---
 
-### `POST /flags/confirm` **(Auth)**
+### `POST /flags/confirm` **(Auth + `RIDER` license)**
 
 Cast a consensus up-vote. Weight 1 (+0.5 when the reporter's trust ≥ 50); net score ≥ +3 flips a Suggested flag to `"2"` (Confirmed, reflected in the response). `"3"` (Locked) flags are returned unchanged, as are votes on your own report (`403`). One active vote per rider: confirming after denying (or the reverse) switches the vote, applying twice the weight as the delta. Vote responses carry `voteDirection` (`"up"` / `"down"` / `null`) alongside `alreadyVoted`.
 
@@ -604,7 +636,7 @@ Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
 
 ---
 
-### `POST /flags/deny` **(Auth)**
+### `POST /flags/deny` **(Auth + `RIDER` license)**
 
 Cast a consensus down-vote — the mirror of confirm with the same eligibility (never your own report, never a `"3"` Locked flag) and the same trust weighting applied with a negative sign. Net score ≤ −3 rejects a Suggested flag to `"5"` (Rejected, dropped from near/mine results) or demotes a Confirmed flag back to `"1"` (Suggested, re-opened for evaluation). `voteCount` is a running net score and is never reset, so a demoted flag needs a full climb back to +3 — the hysteresis is intentional. No push is enqueued on reject/demote; blocking stops applying on the next request automatically.
 
@@ -622,7 +654,7 @@ Unknown flag ID returns `404` with `data: null` and message `"Flag not found"`.
 
 ---
 
-### `POST /flags/unflag` **(Auth)**
+### `POST /flags/unflag` **(Auth + `RIDER` license)**
 
 Retract your own report (hard delete). Only the reporter may unflag; `"3"` (Locked) flags return `400` (admin must moderate them away); unknown, `"4"` (Expired), or `"5"` (Rejected) flags return `404`.
 
@@ -710,7 +742,7 @@ List landmarks near a point, each with computed `distance` in meters.
 
 ---
 
-### `POST /landmarks` **(Auth)**
+### `POST /landmarks` **(Auth + `RIDER` license)**
 
 Create a landmark.
 
@@ -752,7 +784,7 @@ No match returns `{ "landmark": null, "confidence": <best score> }`.
 
 ## Routing
 
-### `POST /routes` **(Auth)**
+### `POST /routes` **(Auth + `RIDER` license)**
 
 Route between two points for the caller's vehicle width and type (`vehicleType`, optional: `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK`). Returns up to 5 route options (`routes[0]` is the primary). Served from the `routing_cache` collection on key hit (`cached: true`, per-option `source: "cache"`); the key is `origin:dest:bucket:costing` (stops-joined form when stops are present), so car and scooter requests never share cache entries. Otherwise computed by self-hosted Valhalla (`source: "valhalla"`, `motor_scooter` costing, or `auto` for `CAR`/`VAN`/`TRUCK`) and persisted (geometries stored JSON-stringified). `VALHALLA_AUTO_MAX_DISTANCE` optionally caps `auto` requests by straight-line OD distance (`400` beyond it; unset by default). Stop-less requests ask Valhalla for `alternates: 4` in the same single HTTP call; requests with `stops` solve one route (Valhalla `alternates` is stop-less only). The Valhalla fetch times out after 15 s with one retry (cold-boot tolerance for a scale-to-zero engine). Engine differences and limits vs the previous OSRM setup are tabulated in [ENGINE.md](./ENGINE.md).
 
@@ -858,7 +890,7 @@ Removing the blocking flag (`POST /flags/unflag` by its reporter, or expiry) unb
 
 Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); flag transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job that fans out to riders whose active route still crosses the flag. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off.
 
-### `POST /push/register` **(Auth)**
+### `POST /push/register` **(Auth + `RIDER` license)**
 
 **Request:**
 ```json
@@ -867,7 +899,7 @@ Hazard push notifications (FCM, direct-to-token — no topics). Clients register
 
 **Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user.
 
-### `POST /push/unregister` **(Auth)**
+### `POST /push/unregister` **(Auth + `RIDER` license)**
 
 **Request:**
 ```json
@@ -893,7 +925,7 @@ Enqueued automatically — guarded by the `X-CloudTasks-QueueName: hazard-push` 
 
 Repair shops (`SHOP`), mobile shops (`MOBILE`, service on the move), and tow providers (`TOW`) share the `shops` collection. Providers carry `openHours` (`"HH:MM-HH:MM"`), an `accepting` availability toggle, an optional `hasTow` flag on repair shops, tow-vehicle details (`towVehicleType` `CAR`/`VAN`/`TRUCK` + `towVehicleWidth` in meters), an `operatorUid` (the account that accepts tickets for the shop), and denormalized `ratingAvg`/`ratingCount`.
 
-### `POST /shops` **(Auth)**
+### `POST /shops` **(Auth + `SHOP` license)**
 
 Register a repair shop, mobile shop, or tow provider. The caller becomes the `operatorUid` unless one is supplied.
 
@@ -918,7 +950,7 @@ Register a repair shop, mobile shop, or tow provider. The caller becomes the `op
 
 ---
 
-### `PUT /shops` **(Auth)**
+### `PUT /shops` **(Auth + `SHOP` license)**
 
 Update a provider. Only the `operatorUid` (or an admin) may edit. Used for the availability toggle (`accepting`), hours, tow capability, and the tow vehicle (`towVehicleType`, `towVehicleWidth`).
 
@@ -960,7 +992,7 @@ Prefix-search the directory (shops, then landmarks) by name. Matching is accent-
 
 ---
 
-### `POST /places/save` **(Auth)**
+### `POST /places/save` **(Auth + `RIDER` license)**
 
 Save a place for the current user. Same coordinates dedupe to one entry (the label is updated); capped at 50 saved places per user.
 
@@ -983,7 +1015,7 @@ List the current user's saved places, newest first.
 
 ---
 
-### `POST /places/unsave` **(Auth)**
+### `POST /places/unsave` **(Auth + `RIDER` license)**
 
 Delete one of the current user's saved places (`403` when it belongs to someone else, `404` when unknown).
 
@@ -1000,7 +1032,7 @@ Delete one of the current user's saved places (`403` when it belongs to someone 
 
 XeAssist stub endpoints.
 
-### `POST /diagnostics` **(Auth)**
+### `POST /diagnostics` **(Auth + `RIDER` license)**
 
 Record a photo diagnostic.
 
@@ -1042,7 +1074,7 @@ Three assistance tiers share the ticket lifecycle: `"1"` Pending → `"2"` Match
 - **Professional:** ticket carries the rider vehicle (`vehicleType`/`vehicleWidth`, so helpers know what they rescue), alley-entrance coords + clearance (`alleySegmentId` → measured `accessWidthMeters`), an optional tow destination (registered `destinationShopId` or free-form `destinationPoint {lat,lng,label}`, snapshotted), and a provider assignment (`assignedShopId`). Tow providers flip `accepting: false` while on a ticket and back on resolve/cancel. Tow offers carry the provider vehicle and a `fitsAlley` label (`true`/`false`, `null` when unknown) against the ticket clearance.
 - **Volunteer:** `SOS` tickets geo-match available volunteers (toggle on, fresh location < 15 min, no active ticket, capability fit: car tickets only match `CAR`-capable volunteers), persist them as `candidates`, fan out via FCM (`dispatch-push` queue, gated by `CLOUD_TASKS_ENABLED`/`FCM_ENABLED`), and surface on the `near` radar.
 
-### `POST /dispatch` **(Auth)**
+### `POST /dispatch` **(Auth + `RIDER` license)**
 
 Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point).
 
@@ -1070,9 +1102,19 @@ Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (cle
 
 ---
 
+### `POST /dispatch/mine` **(Auth + `RIDER` license)**
+
+List the caller's own tickets, newest first (all statuses).
+
+**Request:** `{}`
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "...": "..." }] }`
+
+---
+
 ### `POST /dispatch/one` **(Auth)**
 
-Get a ticket by ID.
+Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the assigned shop's operator, admins, and holders of the `VOLUNTEER`/`SHOP` license (`403` otherwise).
 
 **Request:**
 ```json
@@ -1085,7 +1127,7 @@ Get a ticket by ID.
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status (validated against the lifecycle enum).
+Advance a ticket's status (validated against the lifecycle enum). Only the ticket rider, the assigned volunteer, the assigned shop's operator, or an admin (`403` otherwise).
 
 **Request:**
 ```json
@@ -1099,7 +1141,7 @@ Advance a ticket's status (validated against the lifecycle enum).
 
 ---
 
-### `POST /dispatch/near` **(Auth)**
+### `POST /dispatch/near` **(Auth + `VOLUNTEER`/`SHOP` license)**
 
 Radar: pending tickets near a point, nearest-first with `distance`. Used by volunteers (SOS) and provider apps. `radiusMeters` 200–10000 (default 5000). Car tickets are hidden from bike-only volunteers on the radar.
 
@@ -1112,7 +1154,7 @@ Radar: pending tickets near a point, nearest-first with `distance`. Used by volu
 
 ---
 
-### `POST /dispatch/offers` **(Auth)**
+### `POST /dispatch/offers` **(Auth + `RIDER` license)**
 
 Offer list: accepting providers near a point (sorted nearest-first, capped). `kind` is `SHOP`, `MOBILE`, or `TOW`. `accessWidthMeters` (optional) labels each `TOW` offer with `fitsAlley` (`true`/`false`, `null` when the provider vehicle or clearance is unknown).
 
@@ -1125,7 +1167,7 @@ Offer list: accepting providers near a point (sorted nearest-first, capped). `ki
 
 ---
 
-### `POST /dispatch/select` **(Auth)**
+### `POST /dispatch/select` **(Auth + `RIDER` license)**
 
 The rider picks a provider for a pending ticket (stays pending until the provider accepts).
 
@@ -1141,9 +1183,9 @@ The rider picks a provider for a pending ticket (stays pending until the provide
 
 ---
 
-### `POST /dispatch/accept` **(Auth)**
+### `POST /dispatch/accept` **(Auth + provider license)**
 
-Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that shop (must be its `operatorUid` or an admin; shop must be accepting). Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
+Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that shop (requires the `SHOP` license and must be its `operatorUid` or an admin; shop must be accepting). Admins bypass the license checks. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
 
 **Request:**
 ```json

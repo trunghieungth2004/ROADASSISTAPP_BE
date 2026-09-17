@@ -1,10 +1,11 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as alleySegmentController from "../controller/alleySegmentController";
 
 export default (
   app: Express,
-  {requireAuth, requireRole, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/alleys/segment",
@@ -21,12 +22,14 @@ export default (
   app.post(
     "/alleys",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createAlleySegment}),
     alleySegmentController.createSegment,
   );
   app.put(
     "/alleys/passability",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.setPassability}),
     alleySegmentController.setPassability,
   );

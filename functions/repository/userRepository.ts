@@ -6,6 +6,7 @@ const BATCH_SIZE = 400;
 interface UserRecord {
   id: string;
   role: string;
+  phone?: string;
   status?: string;
   trustScore?: number;
   volunteerAvailable?: boolean;
@@ -44,7 +45,13 @@ const findAll = async (): Promise<UserRecord[]> => {
 
 const create = async (
   uid: string,
-  data: { email?: string; displayName?: string; role: string },
+  data: {
+    email?: string;
+    displayName?: string;
+    role: string;
+    phone?: string;
+    services?: string[];
+  },
 ): Promise<void> => {
   await db
     .collection("users")
@@ -53,6 +60,8 @@ const create = async (
       email: data.email ?? null,
       displayName: data.displayName ?? null,
       role: data.role,
+      phone: data.phone ?? null,
+      services: data.services ?? [],
       status: STATUS_USER.ACTIVE,
       trustScore: 0,
       volunteerAvailable: false,
@@ -60,7 +69,6 @@ const create = async (
       capability: "SOLO_BIKE",
       activeVehicleId: null,
       onboarded: false,
-      services: [],
       ratingAvg: 0,
       ratingCount: 0,
       createdAt: new Date().toISOString(),

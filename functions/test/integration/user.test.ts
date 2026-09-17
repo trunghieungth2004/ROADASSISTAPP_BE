@@ -1,5 +1,6 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
+import {STATUS_USER} from "../../constants/status";
 import {db, cleanAll, seedUser, PREFIX} from "../utils/seed";
 
 const app = buildIntegrationApp();
@@ -12,7 +13,7 @@ const TARGET = `${PREFIX}-target`;
 beforeAll(async () => {
   await cleanAll();
   await seedUser(ADMIN, "1");
-  await seedUser(RIDER, "2");
+  await seedUser(RIDER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
   await seedUser(TARGET, "2");
 });
 
@@ -26,6 +27,7 @@ describe("user endpoints", () => {
       email: `${PREFIX}-new@example.com`,
       password: "secret123",
       displayName: "New Rider",
+      phone: "+10000000001",
     });
     expect(res.status).toBe(201);
     expect(res.body.data.uid).toBeDefined();
@@ -100,6 +102,7 @@ describe("user endpoints", () => {
     const created = await request(app).post("/users/register").send({
       email: `${PREFIX}-toggle@example.com`,
       password: "secret123",
+      phone: "+10000000002",
     });
     const uid = created.body.data.uid as string;
     const off = await request(app)
@@ -121,6 +124,7 @@ describe("user endpoints", () => {
       email: `${PREFIX}-rename@example.com`,
       password: "secret123",
       displayName: "Old Name",
+      phone: "+10000000003",
     });
     const uid = created.body.data.uid as string;
     const res = await request(app)
@@ -191,6 +195,61 @@ describe("volunteer capability", () => {
       .put("/users/volunteer")
       .set("Authorization", bearer(RIDER))
       .send({available: false});
+  });
+});
+
+describe("service licenses", () => {
+  it("PUT /users/volunteer rejects callers without the license", async () => {
+    const res = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(TARGET))
+      .send({available: true});
+    expect(res.status).toBe(403);
+  });
+
+  it("PUT /users/services is admin-only", async () => {
+    const res = await request(app)
+      .put("/users/services")
+      .set("Authorization", bearer(RIDER))
+      .send({targetUserId: TARGET, grant: ["VOLUNTEER"]});
+    expect(res.status).toBe(403);
+  });
+
+  it("admin grants and revokes licenses", async () => {
+    const grant = await request(app)
+      .put("/users/services")
+      .set("Authorization", bearer(ADMIN))
+      .send({targetUserId: TARGET, grant: ["VOLUNTEER", "SHOP"]});
+    expect(grant.status).toBe(200);
+    expect(grant.body.data.services).toEqual(
+      expect.arrayContaining(["RIDER", "VOLUNTEER", "SHOP"]),
+    );
+    const toggle = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(TARGET))
+      .send({available: true});
+    expect(toggle.status).toBe(200);
+    const revoke = await request(app)
+      .put("/users/services")
+      .set("Authorization", bearer(ADMIN))
+      .send({targetUserId: TARGET, revoke: ["VOLUNTEER"]});
+    expect(revoke.status).toBe(200);
+    expect(revoke.body.data.services).not.toContain("VOLUNTEER");
+    const denied = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(TARGET))
+      .send({available: false});
+    expect(denied.status).toBe(403);
+  });
+
+  it("PUT /users/onboard accepts the renamed service field", async () => {
+    const res = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(TARGET))
+      .send({service: "TOW"});
+    expect(res.status).toBe(200);
+    const doc = await db.collection("users").doc(TARGET).get();
+    expect(doc.data()?.services).toContain("TOW");
   });
 });
 

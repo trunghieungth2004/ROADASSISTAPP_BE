@@ -3,6 +3,7 @@ import * as vehicleProfileRepository from
   "../../../repository/vehicleProfileRepository";
 import * as volunteerLocationRepository from
   "../../../repository/volunteerLocationRepository";
+import * as shopRepository from "../../../repository/shopRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {
   register,
@@ -16,12 +17,14 @@ import {
   volunteerHeartbeat,
   setActiveVehicle,
   setOnboarded,
+  updateServices,
   me,
 } from "../../../service/userService";
 
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../repository/vehicleProfileRepository");
 jest.mock("../../../repository/volunteerLocationRepository");
+jest.mock("../../../repository/shopRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -31,12 +34,15 @@ beforeEach(() => {
 describe("userService.register", () => {
   it("creates an active rider with zero trust", async () => {
     jest.mocked(userRepository.create).mockResolvedValue(undefined);
-    const result = await register({email: "r@x.co", password: "secret123"});
+    const result = await register(
+      {email: "r@x.co", password: "secret123", phone: "+10000000001"});
     expect(result).toEqual({uid: "mock-uid"});
     expect(userRepository.create).toHaveBeenCalledWith("mock-uid", {
       email: "r@x.co",
       displayName: undefined,
       role: "2",
+      phone: "+10000000001",
+      services: ["RIDER"],
     });
   });
 });
@@ -228,9 +234,22 @@ describe("userService.volunteerHeartbeat", () => {
     ).rejects.toMatchObject({statusCode: 404});
   });
 
+  it("rejects heartbeats without the volunteer license", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+      volunteerAvailable: true,
+    } as never);
+    await expect(
+      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(volunteerLocationRepository.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects heartbeats with volunteer mode off", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["VOLUNTEER"],
       volunteerAvailable: false,
     } as never);
     await expect(
@@ -242,6 +261,7 @@ describe("userService.volunteerHeartbeat", () => {
   it("refreshes the volunteer location", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["VOLUNTEER"],
       volunteerAvailable: true,
     } as never);
     jest.mocked(volunteerLocationRepository.upsert).mockResolvedValue({
@@ -393,5 +413,114 @@ describe("userService.setOnboarded", () => {
       onboarded: true,
       services: ["RIDER"],
     });
+  });
+
+  it("accepts the renamed service field", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      setOnboarded({userId: "u1", service: "SHOP"}),
+    ).resolves.toEqual({
+      updated: 1,
+      onboarded: true,
+      services: ["RIDER", "SHOP"],
+    });
+  });
+
+  it("rejects unknown service licenses", async () => {
+    await expect(
+      setOnboarded({userId: "u1", service: "PILOT"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(userRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it("rejects onboarding without any license field", async () => {
+    await expect(
+      setOnboarded({userId: "u1"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(userRepository.findById).not.toHaveBeenCalled();
+  });
+});
+
+describe("userService.updateServices", () => {
+  it("throws 404 for an unknown target", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue(null);
+    await expect(
+      updateServices({targetUserId: "ghost", grant: ["VOLUNTEER"]}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("grants and revokes licenses while preserving onboarded", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER"],
+    } as never);
+    await expect(
+      updateServices(
+        {targetUserId: "u1", grant: ["SHOP"], revoke: ["VOLUNTEER"]}),
+    ).resolves.toEqual({
+      updated: 1,
+      services: ["RIDER", "SHOP"],
+      unlistedShops: 0,
+      volunteerCleared: true,
+    });
+    expect(userRepository.updateOnboarded).toHaveBeenCalledWith("u1", {
+      onboarded: true,
+      services: ["RIDER", "SHOP"],
+    });
+    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
+      volunteerAvailable: false,
+    });
+    expect(volunteerLocationRepository.remove).toHaveBeenCalledWith("u1");
+  });
+
+  it("unlists accepting shops when SHOP is revoked", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      onboarded: true,
+      services: ["RIDER", "SHOP"],
+    } as never);
+    jest.mocked(shopRepository.findByOperator).mockResolvedValue([
+      {id: "s1", accepting: true},
+      {id: "s2", accepting: false},
+    ] as never);
+    await expect(
+      updateServices({targetUserId: "u1", revoke: ["SHOP"]}),
+    ).resolves.toMatchObject({
+      updated: 1,
+      services: ["RIDER"],
+      unlistedShops: 1,
+      volunteerCleared: false,
+    });
+    expect(shopRepository.update).toHaveBeenCalledTimes(1);
+    expect(shopRepository.update).toHaveBeenCalledWith("s1", {
+      accepting: false,
+    });
+  });
+
+  it("skips shop writes when SHOP was never held", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      updateServices({targetUserId: "u1", revoke: ["SHOP"]}),
+    ).resolves.toMatchObject({unlistedShops: 0});
+    expect(shopRepository.findByOperator).not.toHaveBeenCalled();
+    expect(shopRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown licenses", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      updateServices({targetUserId: "u1", grant: ["PILOT"]}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
+import {STATUS_USER} from "../../constants/status";
 import {
   cleanAll,
   seedUser,
@@ -15,7 +16,7 @@ const USER = `${PREFIX}-user-1`;
 
 beforeAll(async () => {
   await cleanAll();
-  await seedUser(USER, "2");
+  await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "SHOP"]);
 });
 
 afterAll(async () => {
@@ -83,7 +84,8 @@ describe("shop availability flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         type: "TOW",
-        openHours: "00:00-23:59",
+        openHours: "MON 00:00-23:59,TUE 00:00-23:59,WED 00:00-23:59," +
+          "THU 00:00-23:59,FRI 00:00-23:59,SAT 00:00-23:59,SUN 00:00-23:59",
       });
     expect(res.status).toBe(201);
     expect(res.body.data.type).toBe("TOW");
@@ -161,5 +163,56 @@ describe("shop tow vehicle flow", () => {
     ).find((s) => s.id === towId);
     expect(hit?.towVehicleType).toBe("VAN");
     expect(hit?.towVehicleWidth).toBe(2.0);
+  });
+});
+
+describe("shop license revocation", () => {
+  const OP = `${PREFIX}-operator`;
+  const ADMIN = `${PREFIX}-admin`;
+  let shopId = "";
+
+  it("revoking SHOP unlists the operator shops", async () => {
+    await seedUser(OP, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "SHOP"]);
+    await seedUser(ADMIN, "1");
+    const created = await request(app)
+      .post("/shops")
+      .set("Authorization", bearer(OP))
+      .send({name: "Revoke Me", lat: BASE_LAT, lng: BASE_LNG, type: "SHOP"});
+    expect(created.status).toBe(201);
+    shopId = created.body.data.id as string;
+    const revoke = await request(app)
+      .put("/users/services")
+      .set("Authorization", bearer(ADMIN))
+      .send({targetUserId: OP, revoke: ["SHOP"]});
+    expect(revoke.status).toBe(200);
+    expect(revoke.body.data.unlistedShops).toBe(1);
+    const offers = await request(app)
+      .post("/shops/near")
+      .set("Authorization", bearer(OP))
+      .send({lat: BASE_LAT, lng: BASE_LNG, acceptingOnly: true});
+    const ids = (offers.body.data as {id: string}[]).map((s) => s.id);
+    expect(ids).not.toContain(shopId);
+  });
+
+  it("locks the revoked operator out of shop edits", async () => {
+    const res = await request(app)
+      .put("/shops")
+      .set("Authorization", bearer(OP))
+      .send({shopId, accepting: true});
+    expect(res.status).toBe(403);
+  });
+
+  it("lets an admin re-list the shop", async () => {
+    const res = await request(app)
+      .put("/shops")
+      .set("Authorization", bearer(ADMIN))
+      .send({shopId, accepting: true});
+    expect(res.status).toBe(200);
+    const offers = await request(app)
+      .post("/shops/near")
+      .set("Authorization", bearer(OP))
+      .send({lat: BASE_LAT, lng: BASE_LNG, acceptingOnly: true});
+    const ids = (offers.body.data as {id: string}[]).map((s) => s.id);
+    expect(ids).toContain(shopId);
   });
 });

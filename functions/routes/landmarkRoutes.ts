@@ -1,10 +1,11 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as landmarkController from "../controller/landmarkController";
 
 export default (
   app: Express,
-  {requireAuth, validate, schemas}: RouteDeps,
+  {requireAuth, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/landmarks/near",
@@ -15,6 +16,7 @@ export default (
   app.post(
     "/landmarks",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createLandmark}),
     landmarkController.createLandmark,
   );

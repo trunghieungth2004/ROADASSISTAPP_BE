@@ -17,6 +17,7 @@ import {
 import {
   HELPER_KIND,
   NEAR_SHOPS_MAX,
+  SERVICE_ROLE,
   STATUS_DISPATCH,
   VOLUNTEER_CAPABILITY,
   VOLUNTEER_DEFAULT_RADIUS,
@@ -198,24 +199,67 @@ const createDispatch = async ({
   return ticket;
 };
 
-const getDispatch = async (id: string) => {
+const getMyTickets = async (userId: string) => {
+  return dispatchRepository.findByUserId(userId);
+};
+
+const getDispatch = async (id: string, userId: string) => {
   const ticket = await dispatchRepository.findById(id);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
-  return ticket;
+  if (ticket.userId === userId) return ticket;
+  if (ticket.assignedUid === userId) return ticket;
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  if (caller.role === ROLE_ADMIN) return ticket;
+  if (
+    typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== ""
+  ) {
+    const shop = await shopRepository.findById(ticket.assignedShopId);
+    if (shop && shop.operatorUid === userId) return ticket;
+  }
+  const held = Array.isArray(caller.services) ? caller.services : [];
+  if (
+    held.includes(SERVICE_ROLE.VOLUNTEER) ||
+    held.includes(SERVICE_ROLE.SHOP)
+  ) {
+    return ticket;
+  }
+  throw new ForbiddenError("Only ticket participants or providers view this");
 };
 
 const updateDispatchStatus = async ({
   id,
   status,
+  userId,
 }: {
   id: string;
   status: string;
+  userId: string;
 }) => {
   if (!VALID_STATUSES.includes(status)) {
     throw new ValidationError("Invalid dispatch status");
   }
   const ticket = await dispatchRepository.findById(id);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  let operator = false;
+  if (
+    typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== ""
+  ) {
+    const shop = await shopRepository.findById(ticket.assignedShopId);
+    operator = !!shop && shop.operatorUid === userId;
+  }
+  if (
+    ticket.userId !== userId &&
+    ticket.assignedUid !== userId &&
+    !operator &&
+    caller.role !== ROLE_ADMIN
+  ) {
+    throw new ForbiddenError("Only the rider, helper, or operator updates");
+  }
   await dispatchRepository.updateStatus(id, status);
   if (
     (status === STATUS_DISPATCH.RESOLVED ||
@@ -348,6 +392,12 @@ const acceptAsShop = async (
   if (!shop) throw new NotFoundError("Shop not found");
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
+  if (caller.role !== ROLE_ADMIN) {
+    const held = Array.isArray(caller.services) ? caller.services : [];
+    if (!held.includes(SERVICE_ROLE.SHOP)) {
+      throw new ForbiddenError("Shop license required");
+    }
+  }
   const operator = shop.operatorUid as string | null;
   if (operator && operator !== userId && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator accepts for this shop");
@@ -369,6 +419,12 @@ const acceptAsShop = async (
 const acceptAsVolunteer = async (userId: string, ticketId: string) => {
   const me = await userRepository.findById(userId);
   if (!me) throw new NotFoundError("User not found");
+  if (me.role !== ROLE_ADMIN) {
+    const held = Array.isArray(me.services) ? me.services : [];
+    if (!held.includes(SERVICE_ROLE.VOLUNTEER)) {
+      throw new ForbiddenError("Volunteer license required");
+    }
+  }
   if (me.volunteerAvailable !== true) {
     throw new ForbiddenError("Volunteer mode is off");
   }
@@ -509,6 +565,7 @@ const deliverDispatchPush = async (
 
 export {
   createDispatch,
+  getMyTickets,
   getDispatch,
   updateDispatchStatus,
   nearDispatch,

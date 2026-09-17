@@ -1,10 +1,10 @@
 import express, {NextFunction, Request, Response} from "express";
 import cors from "cors";
 import compression from "compression";
-import rateLimiter from "express-rate-limit";
+import rateLimiter, {ipKeyGenerator} from "express-rate-limit";
 import morgan from "morgan";
 import * as functions from "firebase-functions";
-import {requireAuth, requireRole} from "./middleware/auth";
+import {requireAuth, requireRole, requireService} from "./middleware/auth";
 import {validate} from "./middleware/validate";
 import {requestIdMiddleware} from "./utils/logger";
 import {sanitizeObject} from "./utils/sanitize";
@@ -28,7 +28,13 @@ import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 
 const app = express();
 
-const routeDeps = {requireAuth, requireRole, validate, schemas};
+const routeDeps = {
+  requireAuth,
+  requireRole,
+  requireService,
+  validate,
+  schemas,
+};
 
 mountPushDeliver(app, routeDeps);
 
@@ -45,10 +51,10 @@ const limiter = rateLimiter({
 });
 app.use(limiter);
 
-const userOrIpKey = (req: Request): string => {
+export const userOrIpKey = (req: Request): string => {
   const header = req.headers.authorization || "";
   if (header.length > 0) return `token:${header}`;
-  return `ip:${req.ip}`;
+  return `ip:${ipKeyGenerator(req.ip ?? "")}`;
 };
 
 const writeLimiter = rateLimiter({

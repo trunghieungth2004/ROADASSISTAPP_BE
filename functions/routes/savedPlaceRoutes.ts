@@ -1,14 +1,16 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as savedPlaceController from "../controller/savedPlaceController";
 
 export default (
   app: Express,
-  {requireAuth, validate, schemas}: RouteDeps,
+  {requireAuth, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/places/save",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.savePlace}),
     savedPlaceController.savePlace,
   );
@@ -21,6 +23,7 @@ export default (
   app.post(
     "/places/unsave",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.unsavePlace}),
     savedPlaceController.removeSavedPlace,
   );

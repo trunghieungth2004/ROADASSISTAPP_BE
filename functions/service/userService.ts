@@ -3,9 +3,10 @@ import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
 import * as volunteerLocationRepository from
   "../repository/volunteerLocationRepository";
+import * as shopRepository from "../repository/shopRepository";
 import * as cacheManager from "../utils/cacheManager";
-import {ROLE_ADMIN, ROLE_RIDER} from "../constants/roles";
-import {VOLUNTEER_FRESH_MS} from "../constants/status";
+import {ROLE_ADMIN, ROLE_USER} from "../constants/roles";
+import {SERVICE_ROLE, VOLUNTEER_FRESH_MS} from "../constants/status";
 import {auth} from "../config/firebase";
 
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -31,10 +32,12 @@ const register = async ({
   email,
   password,
   displayName,
+  phone,
 }: {
   email: string;
   password: string;
   displayName?: string;
+  phone: string;
 }) => {
   const userRecord = await auth.createUser({
     email,
@@ -44,7 +47,9 @@ const register = async ({
   await userRepository.create(userRecord.uid, {
     email: userRecord.email ?? email,
     displayName: displayName ?? undefined,
-    role: ROLE_RIDER,
+    role: ROLE_USER,
+    phone,
+    services: [SERVICE_ROLE.RIDER],
   });
   cacheManager.del(USER_NS, "__all__");
   return {uid: userRecord.uid};
@@ -155,6 +160,12 @@ const volunteerHeartbeat = async ({
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
+  if (user.role !== ROLE_ADMIN) {
+    const held = Array.isArray(user.services) ? user.services : [];
+    if (!held.includes(SERVICE_ROLE.VOLUNTEER)) {
+      throw new ForbiddenError("Volunteer license required");
+    }
+  }
   if (user.volunteerAvailable !== true) {
     throw new ValidationError("Volunteer mode is off");
   }
@@ -231,15 +242,22 @@ const setActiveVehicle = async ({
 
 const setOnboarded = async ({
   userId,
+  service,
   role,
 }: {
   userId: string;
-  role: string;
+  service?: string;
+  role?: string;
 }) => {
+  const license = service ?? role;
+  if (!license) throw new ValidationError("A service license is required");
+  if (!(Object.values(SERVICE_ROLE) as string[]).includes(license)) {
+    throw new ValidationError("Unknown service license");
+  }
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   const current = Array.isArray(user.services) ? user.services : [];
-  const services = current.includes(role) ? current : [...current, role];
+  const services = current.includes(license) ? current : [...current, license];
   await userRepository.updateOnboarded(userId, {
     onboarded: true,
     services,
@@ -248,12 +266,69 @@ const setOnboarded = async ({
   return {updated: 1, onboarded: true, services};
 };
 
+const updateServices = async ({
+  targetUserId,
+  grant,
+  revoke,
+}: {
+  targetUserId: string;
+  grant?: string[];
+  revoke?: string[];
+}) => {
+  const target = await userRepository.findById(targetUserId);
+  if (!target) throw new NotFoundError("Target user not found");
+  const known = Object.values(SERVICE_ROLE) as string[];
+  for (const license of [...(grant ?? []), ...(revoke ?? [])]) {
+    if (!known.includes(license)) {
+      throw new ValidationError(`Unknown service license: ${license}`);
+    }
+  }
+  const current = Array.isArray(target.services) ? target.services : [];
+  const granted = current.concat(
+    (grant ?? []).filter((license) => !current.includes(license)),
+  );
+  const revoked = new Set(revoke ?? []);
+  const services = granted.filter((license) => !revoked.has(license));
+  let unlistedShops = 0;
+  if (
+    current.includes(SERVICE_ROLE.SHOP) &&
+    !services.includes(SERVICE_ROLE.SHOP)
+  ) {
+    const operated = await shopRepository.findByOperator(targetUserId);
+    for (const shop of operated) {
+      if (shop.accepting !== false) {
+        await shopRepository.update(shop.id, {accepting: false});
+        unlistedShops += 1;
+      }
+    }
+  }
+  let volunteerCleared = false;
+  if (
+    current.includes(SERVICE_ROLE.VOLUNTEER) &&
+    !services.includes(SERVICE_ROLE.VOLUNTEER)
+  ) {
+    await userRepository.updateVolunteer(targetUserId, {
+      volunteerAvailable: false,
+    });
+    await volunteerLocationRepository.remove(targetUserId);
+    volunteerCleared = true;
+  }
+  await userRepository.updateOnboarded(targetUserId, {
+    onboarded: target.onboarded === true,
+    services,
+  });
+  cacheManager.del(USER_NS, targetUserId);
+  cacheManager.del(USER_NS, "__all__");
+  return {updated: 1, services, unlistedShops, volunteerCleared};
+};
+
 export {
   register,
   getOneUser,
   getAllUser,
   setActiveVehicle,
   setOnboarded,
+  updateServices,
   me,
   updateRole,
   updateTrustScore,
@@ -266,5 +341,5 @@ export {
   NotFoundError,
   ForbiddenError,
   ROLE_ADMIN,
-  ROLE_RIDER,
+  ROLE_USER,
 };

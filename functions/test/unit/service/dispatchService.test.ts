@@ -10,6 +10,7 @@ import * as fcmTokenRepository from
   "../../../repository/fcmTokenRepository";
 import {
   createDispatch,
+  getMyTickets,
   getDispatch,
   updateDispatchStatus,
   nearDispatch,
@@ -101,27 +102,68 @@ describe("dispatchService.createDispatch", () => {
   });
 });
 
+describe("dispatchService.getMyTickets", () => {
+  it("returns the caller tickets newest-first", async () => {
+    const tickets = [{id: "t2"}, {id: "t1"}];
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue(
+      tickets as never,
+    );
+    await expect(getMyTickets("u1")).resolves.toBe(tickets);
+    expect(dispatchRepository.findByUserId).toHaveBeenCalledWith("u1");
+  });
+});
+
 describe("dispatchService.getDispatch", () => {
   it("throws 404 for an unknown ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(null);
-    await expect(getDispatch("ghost")).rejects.toMatchObject({
+    await expect(getDispatch("ghost", "u1")).rejects.toMatchObject({
       statusCode: 404,
     });
   });
 
-  it("returns the ticket", async () => {
-    const ticket = {id: "t1"};
+  it("returns the ticket to its rider", async () => {
+    const ticket = {id: "t1", userId: "u1"};
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       ticket as never,
     );
-    await expect(getDispatch("t1")).resolves.toBe(ticket);
+    await expect(getDispatch("t1", "u1")).resolves.toBe(ticket);
+  });
+
+  it("rejects unrelated users without a provider license", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "stranger",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(getDispatch("t1", "stranger")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+  });
+
+  it("returns the ticket to licensed providers", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "vol1",
+      role: "2",
+      services: ["VOLUNTEER"],
+    } as never);
+    await expect(getDispatch("t1", "vol1")).resolves.toMatchObject({
+      id: "t1",
+    });
   });
 });
 
 describe("dispatchService.updateDispatchStatus", () => {
   it("rejects illegal statuses with 400", async () => {
     await expect(
-      updateDispatchStatus({id: "t1", status: "FLYING"}),
+      updateDispatchStatus({id: "t1", status: "FLYING", userId: "u1"}),
     ).rejects.toMatchObject({statusCode: 400});
     expect(dispatchRepository.findById).not.toHaveBeenCalled();
   });
@@ -129,17 +171,34 @@ describe("dispatchService.updateDispatchStatus", () => {
   it("throws 404 for an unknown ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(null);
     await expect(
-      updateDispatchStatus({id: "ghost", status: "2"}),
+      updateDispatchStatus({id: "ghost", status: "2", userId: "u1"}),
     ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("rejects status changes from strangers", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "stranger",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "2", userId: "stranger"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
   });
 
   it("advances the status", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
+      userId: "u1",
     } as never);
     jest.mocked(dispatchRepository.updateStatus).mockResolvedValue(undefined);
     await expect(
-      updateDispatchStatus({id: "t1", status: "2"}),
+      updateDispatchStatus({id: "t1", status: "2", userId: "u1"}),
     ).resolves.toEqual({updated: 1});
     expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
       "t1",
@@ -150,7 +209,13 @@ describe("dispatchService.updateDispatchStatus", () => {
   it("restores tow availability on resolve", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
+      userId: "u1",
       assignedShopId: "tow1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      services: ["RIDER"],
     } as never);
     jest.mocked(shopRepository.findById).mockResolvedValue({
       id: "tow1",
@@ -158,7 +223,7 @@ describe("dispatchService.updateDispatchStatus", () => {
       accepting: false,
     } as never);
     await expect(
-      updateDispatchStatus({id: "t1", status: "4"}),
+      updateDispatchStatus({id: "t1", status: "4", userId: "u1"}),
     ).resolves.toEqual({updated: 1});
     expect(shopRepository.update).toHaveBeenCalledWith("tow1", {
       accepting: true,
@@ -548,6 +613,22 @@ describe("dispatchService.acceptDispatch", () => {
     ).rejects.toMatchObject({statusCode: 403});
   });
 
+  it("rejects volunteer accepts without the volunteer license", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "vol1",
+      services: ["RIDER"],
+      volunteerAvailable: true,
+    } as never);
+    await expect(
+      acceptDispatch({userId: "vol1", ticketId: "t1"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(dispatchRepository.update).not.toHaveBeenCalled();
+  });
+
   it("blocks volunteers already on a ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
@@ -555,6 +636,7 @@ describe("dispatchService.acceptDispatch", () => {
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "vol1",
+      services: ["VOLUNTEER"],
       volunteerAvailable: true,
     } as never);
     jest.mocked(dispatchRepository.findActiveForUid).mockResolvedValue([
@@ -572,6 +654,7 @@ describe("dispatchService.acceptDispatch", () => {
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "vol1",
+      services: ["VOLUNTEER"],
       volunteerAvailable: true,
     } as never);
     jest.mocked(dispatchRepository.findActiveForUid).mockResolvedValue(
@@ -613,6 +696,32 @@ describe("dispatchService.acceptDispatch", () => {
     ).rejects.toMatchObject({statusCode: 403});
   });
 
+  it("rejects shop accepts without the shop license", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+    } as never);
+    jest.mocked(shopRepository.findById).mockResolvedValue({
+      id: "shop1",
+      type: "SHOP",
+      accepting: true,
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "shop1",
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(dispatchRepository.update).not.toHaveBeenCalled();
+  });
+
   it("matches a tow and flips it busy", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
@@ -627,6 +736,7 @@ describe("dispatchService.acceptDispatch", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "op1",
       role: "2",
+      services: ["SHOP"],
     } as never);
     await expect(
       acceptDispatch({
@@ -867,6 +977,7 @@ describe("dispatchService vehicle and capability", () => {
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "vol1",
+      services: ["VOLUNTEER"],
       volunteerAvailable: true,
       capability: "CAR",
     } as never);

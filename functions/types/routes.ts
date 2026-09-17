@@ -11,6 +11,7 @@ type MiddlewareFn = (
 interface RouteDeps {
   requireAuth: MiddlewareFn;
   requireRole: (role: string | string[]) => MiddlewareFn;
+  requireService: (...services: string[]) => MiddlewareFn;
   validate: (schema: SchemaMap) => MiddlewareFn;
   schemas: Schemas;
 }

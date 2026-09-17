@@ -119,9 +119,25 @@ describe("vehicleProfileService.setTowVehicle", () => {
     ).rejects.toMatchObject({statusCode: 404});
   });
 
+  it("rejects tow designation without the tow license", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
+      id: "p1",
+    } as never);
+    await expect(
+      setTowVehicle({userId: "u1", profileId: "p1",
+        towVehicleType: "CAR"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(vehicleProfileRepository.update).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid tow vehicle types", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["TOW"],
     } as never);
     jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
       id: "p1",
@@ -136,6 +152,7 @@ describe("vehicleProfileService.setTowVehicle", () => {
   it("sets the tow vehicle and clears the others", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["TOW"],
     } as never);
     jest.mocked(vehicleProfileRepository.findById).mockResolvedValue({
       id: "p2",

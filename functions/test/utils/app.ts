@@ -6,8 +6,10 @@ import {handleServiceError} from "../../utils/response";
 import {
   stubRequireAuth,
   stubRequireRole,
+  stubRequireService,
   integrationRequireAuth,
   integrationRequireRole,
+  integrationRequireService,
 } from "./stubs";
 import userRoutes from "../../routes/userRoutes";
 import roleRoutes from "../../routes/roleRoutes";
@@ -62,6 +64,7 @@ const buildUnitApp = (): Express =>
   buildApp({
     requireAuth: stubRequireAuth,
     requireRole: stubRequireRole,
+    requireService: stubRequireService,
     validate,
     schemas,
   });
@@ -70,6 +73,7 @@ const buildIntegrationApp = (): Express =>
   buildApp({
     requireAuth: integrationRequireAuth,
     requireRole: integrationRequireRole,
+    requireService: integrationRequireService,
     validate,
     schemas,
   });

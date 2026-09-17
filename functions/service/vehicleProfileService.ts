@@ -2,9 +2,11 @@ import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
-import {TOW_VEHICLE_TYPE} from "../constants/status";
+import {SERVICE_ROLE, TOW_VEHICLE_TYPE} from "../constants/status";
+import {ROLE_ADMIN} from "../constants/roles";
 
-import {NotFoundError, ValidationError} from "../utils/errors";
+import {ForbiddenError, NotFoundError, ValidationError} from
+  "../utils/errors";
 
 const NS = "vehicleProfile";
 
@@ -81,9 +83,17 @@ const setTowVehicle = async ({
   profileId: string;
   towVehicleType?: string | null;
 }) => {
-  await ensureUser(userId);
+  const owner = await ensureUser(userId);
   const profile = await vehicleProfileRepository.findById(userId, profileId);
   if (!profile) throw new NotFoundError("Vehicle profile not found");
+  if (towVehicleType) {
+    if (owner.role !== ROLE_ADMIN) {
+      const held = Array.isArray(owner.services) ? owner.services : [];
+      if (!held.includes(SERVICE_ROLE.TOW)) {
+        throw new ForbiddenError("Tow license required");
+      }
+    }
+  }
   if (
     towVehicleType !== undefined &&
     towVehicleType !== null &&

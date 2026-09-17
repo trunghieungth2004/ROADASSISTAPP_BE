@@ -1,8 +1,8 @@
 import {NextFunction, Request, Response} from "express";
 import {auth, db} from "../config/firebase";
 import * as userRepository from "../repository/userRepository";
-import {STATUS_USER} from "../constants/status";
-import {ROLE_RIDER} from "../constants/roles";
+import {SERVICE_ROLE, STATUS_USER} from "../constants/status";
+import {ROLE_ADMIN, ROLE_USER} from "../constants/roles";
 import * as cacheManager from "../utils/cacheManager";
 import {logError, logInfo} from "../utils/logger";
 
@@ -13,11 +13,13 @@ interface UserData {
   role: string;
   status?: string;
   trustScore?: number;
+  services?: string[];
 }
 
 export interface AuthedRequest extends Request {
   uid: string;
   userRole: string;
+  userServices: string[];
 }
 
 const loadUser = async (userId: string): Promise<UserData | null> => {
@@ -63,12 +65,14 @@ export const requireAuth = async (
 
     let userData = await loadUser(uid);
     if (!userData) {
-      await userRepository.create(uid, {role: ROLE_RIDER});
+      await userRepository.create(
+        uid, {role: ROLE_USER, services: [SERVICE_ROLE.RIDER]});
       userData = {
         id: uid,
-        role: ROLE_RIDER,
+        role: ROLE_USER,
         status: STATUS_USER.ACTIVE,
         trustScore: 0,
+        services: [SERVICE_ROLE.RIDER],
       };
       cacheManager.set(USER_NS, uid, userData);
       logInfo("auth", "auto-provisioned user", {uid});
@@ -86,6 +90,9 @@ export const requireAuth = async (
     const authed = req as AuthedRequest;
     authed.uid = uid;
     authed.userRole = userData.role;
+    authed.userServices = Array.isArray(userData.services) ?
+      userData.services :
+      [];
     next();
   } catch (error) {
     logError("auth", "middleware error", {}, error);
@@ -123,6 +130,40 @@ export const requireRole = (role: string | string[]) => {
         statusCode: 403,
         status: "ERROR",
         message: "Insufficient permissions",
+      });
+      return;
+    }
+
+    next();
+  };
+};
+
+export const requireService = (...services: string[]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const authed = req as Request & {
+      userRole?: string;
+      userServices?: string[];
+    };
+    if (!authed.userRole) {
+      res.status(401).json({
+        statusCode: 401,
+        status: "ERROR",
+        message: "Authentication required",
+      });
+      return;
+    }
+    if (authed.userRole === ROLE_ADMIN) {
+      next();
+      return;
+    }
+    const held = Array.isArray(authed.userServices) ?
+      authed.userServices :
+      [];
+    if (!services.some((service) => held.includes(service))) {
+      res.status(403).json({
+        statusCode: 403,
+        status: "ERROR",
+        message: "Service license required",
       });
       return;
     }

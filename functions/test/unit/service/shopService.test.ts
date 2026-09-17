@@ -23,9 +23,21 @@ describe("shopService.createShop", () => {
     ).rejects.toMatchObject({statusCode: 404});
   });
 
+  it("rejects shop creation without the shop license", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      createShop({userId: "u1", name: "S", lat: 1, lng: 2, type: "SHOP"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(shopRepository.create).not.toHaveBeenCalled();
+  });
+
   it("creates the shop", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["SHOP"],
     } as never);
     const shop = {id: "s1"};
     jest.mocked(shopRepository.create).mockResolvedValue(shop as never);
@@ -46,6 +58,7 @@ describe("shopService.createShop", () => {
   it("creates tow providers", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["SHOP"],
     } as never);
     const shop = {id: "s2"};
     jest.mocked(shopRepository.create).mockResolvedValue(shop as never);
@@ -243,6 +256,7 @@ describe("shopService tow vehicles", () => {
   it("stores the tow vehicle on create", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
+      services: ["SHOP"],
     } as never);
     jest.mocked(shopRepository.create).mockResolvedValue({
       id: "s3",

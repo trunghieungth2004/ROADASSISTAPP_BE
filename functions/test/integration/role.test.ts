@@ -11,7 +11,7 @@ beforeAll(async () => {
   await cleanAll();
   await seedUser(USER, "2");
   await seedRole("1", "Admin", "Full access");
-  await seedRole("2", "Rider", "Standard access");
+  await seedRole("2", "User", "Standard access");
 });
 
 afterAll(async () => {
@@ -28,7 +28,7 @@ describe("role endpoints", () => {
     expect(res.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({id: "1", name: "Admin"}),
-        expect.objectContaining({id: "2", name: "Rider"}),
+        expect.objectContaining({id: "2", name: "User"}),
       ]),
     );
   });
@@ -42,7 +42,7 @@ describe("role endpoints", () => {
     expect(res.body.data).toMatchObject({
       id: USER,
       role: "2",
-      name: "Rider",
+      name: "User",
     });
   });
 

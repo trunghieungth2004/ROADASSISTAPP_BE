@@ -6,6 +6,7 @@ interface AuthedRequest extends Request {
   uid?: string;
   userId?: string;
   userRole?: string;
+  userServices?: string[];
 }
 
 const stubRequireAuth = (
@@ -17,10 +18,16 @@ const stubRequireAuth = (
   authed.uid = "test-user";
   authed.userId = "test-user";
   authed.userRole = "1";
+  authed.userServices = [];
   next();
 };
 
 const stubRequireRole =
+  () => (_req: Request, _res: Response, next: NextFunction): void => {
+    next();
+  };
+
+const stubRequireService =
   () => (_req: Request, _res: Response, next: NextFunction): void => {
     next();
   };
@@ -50,7 +57,11 @@ const integrationRequireAuth = async (
       });
       return;
     }
-    const data = doc.data() as {role?: string; status?: string};
+    const data = doc.data() as {
+      role?: string;
+      status?: string;
+      services?: string[];
+    };
     if (data.status !== STATUS_USER.ACTIVE) {
       res.status(403).json({
         statusCode: 403,
@@ -63,11 +74,42 @@ const integrationRequireAuth = async (
     authed.uid = token;
     authed.userId = token;
     authed.userRole = data.role;
+    authed.userServices = Array.isArray(data.services) ? data.services : [];
     next();
   } catch (err) {
     next(err);
   }
 };
+
+const integrationRequireService =
+  (...services: string[]) =>
+    (req: Request, res: Response, next: NextFunction): void => {
+      const authed = req as AuthedRequest;
+      if (!authed.userRole) {
+        res.status(401).json({
+          statusCode: 401,
+          status: "ERROR",
+          message: "Authentication required",
+        });
+        return;
+      }
+      if (authed.userRole === "1") {
+        next();
+        return;
+      }
+      const held = Array.isArray(authed.userServices) ?
+        authed.userServices :
+        [];
+      if (!services.some((service) => held.includes(service))) {
+        res.status(403).json({
+          statusCode: 403,
+          status: "ERROR",
+          message: "Service license required",
+        });
+        return;
+      }
+      next();
+    };
 
 const integrationRequireRole =
   (role: string | string[]) =>
@@ -98,6 +140,8 @@ const integrationRequireRole =
 export {
   stubRequireAuth,
   stubRequireRole,
+  stubRequireService,
   integrationRequireAuth,
   integrationRequireRole,
+  integrationRequireService,
 };

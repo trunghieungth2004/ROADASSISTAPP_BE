@@ -1,10 +1,11 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {SERVICE_ROLE} from "../constants/status";
 import * as userController from "../controller/userController";
 
 export default (
   app: Express,
-  {requireAuth, requireRole, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, requireService, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/users/register",
@@ -26,6 +27,7 @@ export default (
   app.put(
     "/users/activeVehicle",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.setActiveVehicle}),
     userController.setActiveVehicle,
   );
@@ -63,20 +65,30 @@ export default (
     userController.updateStatus,
   );
   app.put(
+    "/users/services",
+    requireAuth,
+    requireRole("1"),
+    validate({body: schemas.updateUserServices}),
+    userController.updateServices,
+  );
+  app.put(
     "/users/profile",
     requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.updateProfile}),
     userController.updateProfile,
   );
   app.put(
     "/users/volunteer",
     requireAuth,
+    requireService(SERVICE_ROLE.VOLUNTEER),
     validate({body: schemas.volunteerToggle}),
     userController.setVolunteerAvailability,
   );
   app.post(
     "/users/volunteer/heartbeat",
     requireAuth,
+    requireService(SERVICE_ROLE.VOLUNTEER),
     validate({body: schemas.volunteerHeartbeat}),
     userController.volunteerHeartbeat,
   );

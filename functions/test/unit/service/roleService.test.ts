@@ -32,13 +32,13 @@ describe("roleService.getRoleByUser", () => {
     } as never);
     jest.mocked(roleRepository.findById).mockResolvedValue({
       id: "2",
-      name: "Rider",
+      name: "User",
       description: "Standard",
     } as never);
     await expect(getRoleByUser("u1")).resolves.toEqual({
       id: "u1",
       role: "2",
-      name: "Rider",
+      name: "User",
       description: "Standard",
     });
   });

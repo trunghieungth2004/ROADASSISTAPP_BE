@@ -1,5 +1,6 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
+import {STATUS_USER} from "../../constants/status";
 import {cleanAll, seedUser, PREFIX} from "../utils/seed";
 
 const app = buildIntegrationApp();
@@ -9,7 +10,7 @@ const USER = `${PREFIX}-user-1`;
 
 beforeAll(async () => {
   await cleanAll();
-  await seedUser(USER, "2");
+  await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "TOW"]);
 });
 
 afterAll(async () => {

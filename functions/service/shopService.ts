@@ -5,7 +5,7 @@ import {
   encodeGeohash,
   haversineMeters,
 } from "../utils/geo";
-import {NEAR_SHOPS_MAX} from "../constants/status";
+import {NEAR_SHOPS_MAX, SERVICE_ROLE} from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
 
 import {ForbiddenError, NotFoundError} from "../utils/errors";
@@ -84,6 +84,12 @@ const createShop = async ({
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
+  if (user.role !== ROLE_ADMIN) {
+    const held = Array.isArray(user.services) ? user.services : [];
+    if (!held.includes(SERVICE_ROLE.SHOP)) {
+      throw new ForbiddenError("Shop license required");
+    }
+  }
   return shopRepository.create({
     name,
     lat,

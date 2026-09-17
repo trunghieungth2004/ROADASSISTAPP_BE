@@ -107,6 +107,24 @@ const findByStatus = async (
   return results;
 };
 
+const findByUserId = async (
+  userId: string,
+  limit = 50,
+): Promise<DispatchTicket[]> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("userId", "==", userId)
+    .get();
+  const results: DispatchTicket[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as DispatchTicket),
+  );
+  results.sort((a, b) =>
+    String(b.createdAt ?? "") < String(a.createdAt ?? "") ? -1 : 1,
+  );
+  return results.slice(0, limit);
+};
+
 const findActiveForUid = async (
   uid: string,
 ): Promise<DispatchTicket[]> => {
@@ -146,4 +164,4 @@ const findActiveForShop = async (
 };
 
 export {create, findById, updateStatus, update, findByStatus,
-  findActiveForUid, findActiveForShop};
+  findByUserId, findActiveForUid, findActiveForShop};

@@ -1,5 +1,6 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
+import {STATUS_USER} from "../../constants/status";
 import {
   cleanAll,
   seedUser,
@@ -12,10 +13,12 @@ const app = buildIntegrationApp();
 const bearer = (uid: string) => `Bearer ${uid}`;
 
 const USER = `${PREFIX}-user-1`;
+const VOLUNLICENSED = `${PREFIX}-unlicensed`;
 
 beforeAll(async () => {
   await cleanAll();
-  await seedUser(USER, "2");
+  await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "SHOP"]);
+  await seedUser(VOLUNLICENSED, "2");
 });
 
 afterAll(async () => {
@@ -49,6 +52,23 @@ describe("dispatch endpoints", () => {
     expect(res.body.data.id).toBe(ticketId);
   });
 
+  it("POST /dispatch/mine lists only the caller tickets", async () => {
+    const mine = await request(app)
+      .post("/dispatch/mine")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(mine.status).toBe(200);
+    const ids = (mine.body.data as {id: string}[]).map((t) => t.id);
+    expect(ids).toContain(ticketId);
+    const other = await request(app)
+      .post("/dispatch/mine")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({});
+    expect(other.status).toBe(200);
+    const otherIds = (other.body.data as {id: string}[]).map((t) => t.id);
+    expect(otherIds).not.toContain(ticketId);
+  });
+
   it("PUT /dispatch/status advances the ticket", async () => {
     const res = await request(app)
       .put("/dispatch/status")
@@ -65,6 +85,32 @@ describe("dispatch endpoints", () => {
       .send({ticketId, status: "FLYING"});
     expect(res.status).toBe(400);
   });
+
+  it("PUT /dispatch/status rejects strangers with 403", async () => {
+    const res = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({ticketId, status: "2"});
+    expect(res.status).toBe(403);
+  });
+
+  it("POST /dispatch/near requires a provider license", async () => {
+    const denied = await request(app)
+      .post("/dispatch/near")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    expect(denied.status).toBe(403);
+    const onboard = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({service: "VOLUNTEER"});
+    expect(onboard.status).toBe(200);
+    const allowed = await request(app)
+      .post("/dispatch/near")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    expect(allowed.status).toBe(200);
+  });
 });
 
 describe("dispatch assist flow", () => {
@@ -73,7 +119,7 @@ describe("dispatch assist flow", () => {
   let flowTicket = "";
 
   it("seeds a volunteer and a tow shop", async () => {
-    await seedUser(VOL, "2");
+    await seedUser(VOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
     const toggle = await request(app)
       .put("/users/volunteer")
       .set("Authorization", bearer(VOL))
@@ -239,8 +285,8 @@ describe("dispatch vehicle and capability flow", () => {
   let towId = "";
 
   it("seeds bike-only and car-capable volunteers", async () => {
-    await seedUser(BIKE, "2");
-    await seedUser(CARVOL, "2");
+    await seedUser(BIKE, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
+    await seedUser(CARVOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
     const bike = await request(app)
       .put("/users/volunteer")
       .set("Authorization", bearer(BIKE))

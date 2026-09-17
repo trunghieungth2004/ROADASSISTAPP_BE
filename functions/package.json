@@ -18,6 +18,8 @@
     "db:init": "npm run build && node lib/scripts/db.init.js",
     "db:seed-places": "npm run build && node lib/scripts/seed-places.js",
     "db:init:emulator": "FUNCTIONS_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=demo npm run db:init",
+    "db:backfill-services": "npm run build && node lib/scripts/backfill-services.js",
+    "db:backfill-services:emulator": "FUNCTIONS_EMULATOR=true FIRESTORE_EMULATOR_HOST=localhost:8080 GCLOUD_PROJECT=demo npm run db:backfill-services",
     "queue:init": "npm run build && node lib/scripts/createTaskQueue.js",
     "valhalla:setup": "bash ../infra/valhalla/setup.sh",
     "valhalla:remove": "bash ../infra/valhalla/remove.sh",
