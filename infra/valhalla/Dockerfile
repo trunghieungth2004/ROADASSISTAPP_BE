@@ -1,9 +1,10 @@
 FROM ghcr.io/valhalla/valhalla:latest
 
-ARG OSM_URL=https://download.geofabrik.de/asia/vietnam-latest.osm.pbf
-
+# region.osm.pbf is fetched (with resume + checksum) by setup.sh for local
+# builds and by cloudbuild.yaml for Cloud Build, then COPYed in. Never
+# ADD a remote URL here: BuildKit fails revalidating geofabrik ETags.
 WORKDIR /data
-ADD ${OSM_URL} /data/region.osm.pbf
+COPY region.osm.pbf /data/region.osm.pbf
 
 RUN set -eux; \
   valhalla_build_config \

@@ -69,6 +69,10 @@ node_modules/
 infra/osrm/*.osm.pbf
 infra/osrm/data/
 
+# Valhalla OSM extract (fetched at build time, baked into the image)
+infra/valhalla/*.osm.pbf
+infra/valhalla/*.osm.pbf.md5
+
 # Jest report artifacts
 junit.xml
 test-report/

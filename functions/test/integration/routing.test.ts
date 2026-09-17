@@ -81,7 +81,7 @@ describe("routing endpoints", () => {
       status: "2",
       lat: 10.76,
       lng: 106.66,
-      radiusMeters: 300,
+      radiusMeters: 100,
     });
     const res = await request(app)
       .post("/routes")
@@ -195,6 +195,17 @@ describe("routing endpoints", () => {
 });
 
 describe("routing vehicle costing", () => {
+  beforeEach(() => {
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => valhallaRoute(geometry, 2450, 512),
+    } as unknown as Response);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("POST /routes solves car vehicles with auto", async () => {
     const fetchSpy = jest.spyOn(global, "fetch");
     const res = await request(app)

@@ -3,6 +3,33 @@
 First-time and routine deploys of the RoadAssist backend. Cloud layout is
 described in [INFRASTRUCTURE.md](./INFRASTRUCTURE.md).
 
+## One command
+
+```bash
+npm run deploy:all   # from functions/
+```
+
+Runs, in order: routing engine (`setup.sh -cl`: local docker build, push,
+Cloud Run deploy, smoke test) → `firebase deploy --only functions,
+firestore:indexes` → `db:init` (role/status seeds). One-time ops
+(`seed-places`, `backfill-services`, `queue:init`, `push:setup`) are
+printed as reminders, never auto-run. Full engine teardown (local
+container, Cloud Run service, images, `.env` URL) is `npm run
+engine:remove` (`infra/valhalla/remove.sh`; `valhalla:remove` alias).
+
+The script snapshots your local `VALHALLA_URL` from `functions/.env`
+first and restores it afterwards (trap-guarded, so even a failed deploy
+can't leave it behind) — otherwise the deploy would repoint your next
+emulator run at Cloud Run. Fast path for function-only changes:
+`npm run deploy` (the `firebase.json` predeploy hook no longer touches
+the engine — gates only: `lint`, `build`, `test:all`). Engine only:
+`npm run engine:deploy` (`-cl`); local engine for emulator work:
+`npm run engine:dev` (`-ll`, writes `VALHALLA_URL=http://localhost:8002`).
+Raw `firebase deploy` likewise skips engine provisioning: run `npm run
+engine:deploy` first when the Dockerfile changed. The legacy
+`SKIP_VALHALLA_SETUP=1`/`SKIP_OSRM_SETUP=1` flags are still honored by
+`setup.sh` for direct invocations.
+
 ## Prerequisites
 
 - `gcloud` authed against `roadassistapp-c2e37` (override with `GCLOUD_PROJECT`), with billing enabled.
@@ -13,6 +40,7 @@ described in [INFRASTRUCTURE.md](./INFRASTRUCTURE.md).
     --project=roadassistapp-c2e37
   ```
 - `firebase` CLI authed, Node 22, `functions/` dependencies installed.
+- `docker` with 6G+ free disk (the `-cl` engine build runs locally).
 - Firestore database created in `asia-southeast1` (console, one time).
 
 ## Deploy
@@ -23,11 +51,11 @@ firebase deploy
 
 The functions `predeploy` hook (see `firebase.json`) runs, in order:
 1. `lint`, `build`, `test:all` — gates.
-2. `bash infra/valhalla/setup.sh` — provisions the routing engine, then writes `VALHALLA_URL` into `functions/.env` so the function deploy picks it up.
 
-Skips: `SKIP_VALHALLA_SETUP=1 firebase deploy` bypasses the engine step
-(CI/offline; the function keeps whatever `VALHALLA_URL` `.env` already has).
-The legacy `SKIP_OSRM_SETUP=1` is honored as an alias.
+Engine provisioning is not part of predeploy: run `npm run
+engine:deploy` (or full `npm run deploy:all`) beforehand so
+`VALHALLA_URL` in `functions/.env` points at a live engine — otherwise
+the deployed functions keep whatever URL `.env` already has.
 
 ## What setup.sh does (idempotent, fast when unchanged)
 
@@ -49,9 +77,14 @@ functions cannot reach `localhost`).
 2. Ensures the Artifact Registry repo
    `asia-southeast1-docker.pkg.dev/<project>/valhalla/valhalla-vietnam`
    (cloud/local only).
-3. Builds (`gcloud builds submit` in cloud mode, `docker build` +
+3. Fetches the Vietnam extract with resume + md5 check
+   (`curl` in setup.sh for local/dev, a `busybox` step in
+   cloudbuild.yaml for cloud mode — never `ADD <url>` in the
+   Dockerfile, whose ETag revalidation BuildKit chokes on) into
+   `infra/valhalla/region.osm.pbf` (gitignored), then builds
+   (`gcloud builds submit` in cloud mode, `docker build` +
    `docker push` in local mode, `docker build` in dev mode) only when
-   the tag is absent — Vietnam extract → `valhalla_build_tiles`
+   the tag is absent — extract → `valhalla_build_tiles`
    (`motor_scooter` needs no custom profile) → `valhalla_build_admins`
    → `valhalla_build_extract`, tiles baked into the image as
    `tiles.tar` (served from the tar so cold starts stay fast).

@@ -359,11 +359,11 @@ const getRoute = async ({
     source,
   }).catch((err: unknown) => {
     if (!isConflictError(err)) throw err;
-    logBlocked("primary-blocked", {
-      key,
-      userId,
-      kind: err instanceof RouteBlockedError ? "hazard" : "width",
-    });
+
+    let kind = "endpoint";
+    if (err instanceof RouteBlockedError) kind = "hazard";
+    else if (err instanceof WidthBlockedError) kind = "width";
+    logBlocked("primary-blocked", {key, userId, kind});
     firstError = err;
     return null;
   });

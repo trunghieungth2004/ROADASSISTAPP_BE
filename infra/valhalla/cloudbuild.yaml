@@ -1,9 +1,12 @@
 steps:
+- name: 'busybox:stable'
+  args:
+  - 'sh'
+  - '-c'
+  - 'wget -c -t 5 "$_OSM_URL" -O region.osm.pbf && wget -qO- "$_OSM_URL.md5" > region.osm.pbf.md5 && test "$(cut -d" " -f1 region.osm.pbf.md5)" = "$(md5sum region.osm.pbf | cut -d" " -f1)"'
 - name: 'gcr.io/cloud-builders/docker'
   args:
   - 'build'
-  - '--build-arg'
-  - 'OSM_URL=$_OSM_URL'
   - '-t'
   - '$_IMAGE'
   - '.'

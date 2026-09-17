@@ -66,16 +66,34 @@ echo "[valhalla] mode: $MODE"
 TAG="vietnam-$(sha256sum "$ROOT/infra/valhalla/Dockerfile" | cut -c1-12)"
 IMAGE_PREFIX="$LOCATION-docker.pkg.dev/$PROJECT/$REPO/valhalla-vietnam"
 IMAGE="$IMAGE_PREFIX:$TAG"
+PBF="$ROOT/infra/valhalla/region.osm.pbf"
+
+fetch_pbf() {
+  echo "[valhalla] fetching $OSM_URL"
+  curl -fSL --retry 5 --retry-all-errors -C - -o "$PBF" "$OSM_URL"
+  curl -fsSL -o "$PBF.md5" "$OSM_URL.md5"
+  want="$(awk '{print $1}' "$PBF.md5")"
+  got="$(md5sum "$PBF" | awk '{print $1}')"
+  if [ "$want" != "$got" ]; then
+    echo "[valhalla] checksum mismatch for region.osm.pbf, removing download" >&2
+    rm -f "$PBF" "$PBF.md5"
+    exit 1
+  fi
+  echo "[valhalla] checksum OK"
+}
 
 command -v gcloud >/dev/null || { echo "[valhalla] gcloud not found" >&2; exit 1; }
 
 if [ "$MODE" != "cloud" ]; then
   command -v docker >/dev/null || { echo "[valhalla] docker not found (needed for mode $MODE)" >&2; exit 1; }
+  command -v curl >/dev/null || { echo "[valhalla] curl not found (needed for mode $MODE)" >&2; exit 1; }
+  command -v md5sum >/dev/null || { echo "[valhalla] md5sum not found (needed for mode $MODE)" >&2; exit 1; }
   FREE_GB="$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc '0-9')"
   if [ "${FREE_GB:-0}" -lt 6 ]; then
     echo "[valhalla] only ${FREE_GB:-0}G free on $ROOT, need 6G+ for a local build. Free space ('docker system prune') and retry." >&2
     exit 1
   fi
+  fetch_pbf
 fi
 
 if [ "$MODE" != "dev" ]; then
@@ -91,7 +109,7 @@ if [ "$MODE" = "dev" ]; then
     echo "[valhalla] local image exists: $IMAGE"
   else
     echo "[valhalla] building $IMAGE locally"
-    docker build --build-arg "OSM_URL=$OSM_URL" -t "$IMAGE" "$ROOT/infra/valhalla"
+    docker build -t "$IMAGE" "$ROOT/infra/valhalla"
   fi
   if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     echo "[valhalla] removing existing container $CONTAINER"
@@ -105,7 +123,7 @@ elif ! gcloud artifacts docker images describe "$IMAGE" \
   if [ "$MODE" = "local" ]; then
     echo "[valhalla] building $IMAGE locally"
     gcloud auth configure-docker "$LOCATION-docker.pkg.dev" --quiet
-    docker build --build-arg "OSM_URL=$OSM_URL" -t "$IMAGE" "$ROOT/infra/valhalla"
+    docker build -t "$IMAGE" "$ROOT/infra/valhalla"
     echo "[valhalla] pushing $IMAGE"
     docker push "$IMAGE"
   else

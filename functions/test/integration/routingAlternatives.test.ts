@@ -39,6 +39,14 @@ const alt2 = {
     [106.7, 10.78],
   ],
 };
+const detourGeom = {
+  type: "LineString",
+  coordinates: [
+    [106.66, 10.76],
+    [106.69, 10.79],
+    [106.7, 10.78],
+  ],
+};
 
 beforeAll(async () => {
   await cleanAll();
@@ -100,6 +108,23 @@ describe("routing alternatives", () => {
   });
 
   it("POST /routes detours a hazard-blocked alternative", async () => {
+    jest.mocked(global.fetch).mockImplementation(async (_url, init) => {
+      const sent = JSON.parse(
+        ((init as RequestInit)?.body as string) ?? "{}",
+      ) as {exclude_polygons?: unknown[]};
+      const route =
+        Array.isArray(sent.exclude_polygons) &&
+        sent.exclude_polygons.length > 0 ?
+          valhallaRoute(detourGeom, 2700, 590) :
+          valhallaRoute(primary, 2450, 512, [
+            {geometry: alt1, distanceMeters: 2600, durationSeconds: 560},
+            {geometry: alt2, distanceMeters: 2800, durationSeconds: 610},
+          ]);
+      return {
+        ok: true,
+        json: async () => route,
+      } as unknown as Response;
+    });
     const floodId = await seedFlag({
       type: "FLOOD",
       status: "2",
@@ -116,7 +141,7 @@ describe("routing alternatives", () => {
     expect(res.body.data.routes[0].geometry).toEqual(primary);
     expect(res.body.data.routes[1].geometry).toEqual(alt1);
     expect(res.body.data.routes[2]).toMatchObject({source: "detour"});
-    expect(res.body.data.routes[2].geometry).toEqual(primary);
+    expect(res.body.data.routes[2].geometry).toEqual(detourGeom);
     expect(res.body.data.routes[2].hazards[0]).toMatchObject({
       flagId: floodId,
       type: "FLOOD",
