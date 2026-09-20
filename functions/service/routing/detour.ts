@@ -90,6 +90,7 @@ const routeSafely = async ({
   baseDistance,
   baseDuration,
   baseSource,
+  baseSteps,
   blocking,
   warnings,
 }: {
@@ -106,6 +107,7 @@ const routeSafely = async ({
   baseDistance: number | undefined;
   baseDuration: number | undefined;
   baseSource: string;
+  baseSteps?: RouteOption["steps"];
   blocking: closureService.BlockingZone[];
   warnings: unknown;
 }): Promise<RouteOption> => {
@@ -153,6 +155,7 @@ const routeSafely = async ({
       geometry: baseGeometry,
       source: baseSource,
       warnings: withTightZones(width, baseTight, warnings),
+      steps: baseSteps,
     };
   }
   if (!queue.every(hasCoords)) {

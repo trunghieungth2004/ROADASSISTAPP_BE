@@ -82,6 +82,41 @@ const parseGeometry = (stored: unknown): unknown => {
   }
 };
 
+const stepsOf = (stored: unknown): RouteOption["steps"] => {
+  if (!Array.isArray(stored)) return undefined;
+  const out: NonNullable<RouteOption["steps"]> = [];
+  for (const s of stored) {
+    const rec = s as {
+      at?: unknown;
+      kind?: unknown;
+      street?: unknown;
+      distMeters?: unknown;
+      durationSec?: unknown;
+    };
+    if (
+      !Array.isArray(rec.at) ||
+      typeof rec.at[0] !== "number" ||
+      typeof rec.at[1] !== "number" ||
+      typeof rec.kind !== "string" ||
+      typeof rec.distMeters !== "number" ||
+      typeof rec.durationSec !== "number"
+    ) {
+      continue;
+    }
+    const step: NonNullable<RouteOption["steps"]>[number] = {
+      at: [rec.at[0], rec.at[1]],
+      kind: rec.kind,
+      distMeters: rec.distMeters,
+      durationSec: rec.durationSec,
+    };
+    if (typeof rec.street === "string" && rec.street.length > 0) {
+      step.street = rec.street;
+    }
+    out.push(step);
+  }
+  return out;
+};
+
 const readCachedRoutes = (entry: {
   routes?: unknown;
   geometry?: unknown;
@@ -93,6 +128,7 @@ const readCachedRoutes = (entry: {
         geometry?: unknown;
         distanceMeters?: number;
         durationSeconds?: number;
+        steps?: unknown;
       }>
     | null;
   if (Array.isArray(stored)) {
@@ -100,6 +136,7 @@ const readCachedRoutes = (entry: {
       geometry: parseGeometry(r.geometry),
       distanceMeters: r.distanceMeters,
       durationSeconds: r.durationSeconds,
+      steps: stepsOf(r.steps),
     }));
   }
   return [];
@@ -154,6 +191,7 @@ const buildPrimary = async ({
       geometry: base.geometry,
       source,
       warnings,
+      steps: base.steps,
     };
   }
   return await routeSafely({
@@ -170,6 +208,7 @@ const buildPrimary = async ({
     baseDistance: base.distanceMeters,
     baseDuration: base.durationSeconds,
     baseSource: source,
+    baseSteps: base.steps,
     blocking: zones,
     warnings,
   });
@@ -212,6 +251,7 @@ const buildAlternative = async ({
         geometry: base.geometry,
         source,
         warnings,
+        steps: base.steps,
       };
     }
     const probe = await probeWidth(base.geometry, width);
@@ -229,6 +269,7 @@ const buildAlternative = async ({
       geometry: base.geometry,
       source,
       warnings: withTightZones(width, probe.tight, warnings),
+      steps: base.steps,
     };
   }
   try {
@@ -246,6 +287,7 @@ const buildAlternative = async ({
       baseDistance: base.distanceMeters,
       baseDuration: base.durationSeconds,
       baseSource: source,
+      baseSteps: base.steps,
       blocking: zones,
       warnings,
     });
@@ -259,6 +301,7 @@ const buildAlternative = async ({
         source,
         hazards: zones,
         warnings: await withWidthFallback(base.geometry, width, warnings),
+        steps: base.steps,
       };
     }
     throw err;
@@ -329,6 +372,7 @@ const getRoute = async ({
       geometry: r.geometry,
       distanceMeters: r.distanceMeters,
       durationSeconds: r.durationSeconds,
+      steps: r.steps,
     }));
     await routingCacheRepository.save(key, {
       originLat,
@@ -404,6 +448,7 @@ const getRoute = async ({
           width,
           analysis.warnings,
         ),
+        steps: raw.steps,
       });
     } else {
       if (firstError) throw firstError;

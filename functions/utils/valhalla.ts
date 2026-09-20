@@ -7,10 +7,115 @@ interface LatLng {
 
 type Ring = Array<[number, number]>;
 
+interface RouteStep {
+  at: [number, number];
+  kind: string;
+  street?: string;
+  distMeters: number;
+  durationSec: number;
+}
+
+const maneuverKind = (type: unknown): string => {
+  switch (type) {
+  case 1:
+  case 2:
+  case 3:
+    return "start";
+  case 4:
+  case 5:
+  case 6:
+    return "destination";
+  case 7:
+  case 8:
+  case 22:
+  case 23:
+  case 24:
+    return "continue";
+  case 9:
+    return "slight-right";
+  case 16:
+    return "slight-left";
+  case 10:
+    return "turn-right";
+  case 15:
+    return "turn-left";
+  case 11:
+    return "sharp-right";
+  case 14:
+    return "sharp-left";
+  case 12:
+  case 13:
+    return "uturn";
+  case 17:
+  case 18:
+  case 19:
+    return "ramp";
+  case 20:
+  case 21:
+    return "exit";
+  case 25:
+    return "merge";
+  case 26:
+  case 27:
+    return "roundabout";
+  case 28:
+  case 29:
+    return "ferry";
+  default:
+    return "other";
+  }
+};
+
+const maneuversOf = (
+  leg: unknown,
+  localToGlobal: number[],
+  coords: Array<[number, number]>,
+): RouteStep[] => {
+  const raw = (leg as {maneuvers?: unknown})?.maneuvers;
+  if (!Array.isArray(raw)) return [];
+  const out: RouteStep[] = [];
+  for (const m of raw) {
+    const rec = m as {
+      type?: unknown;
+      street_names?: unknown;
+      begin_shape_index?: unknown;
+      length?: unknown;
+      time?: unknown;
+    };
+    if (typeof rec.type !== "number") continue;
+    const local = rec.begin_shape_index;
+    if (
+      typeof local !== "number" ||
+      local < 0 ||
+      local >= localToGlobal.length
+    ) {
+      continue;
+    }
+    const at = coords[localToGlobal[local]];
+    if (!at) continue;
+    const names = Array.isArray(rec.street_names) ? rec.street_names : [];
+    const firstName = names[0];
+    let street: string | undefined;
+    if (typeof firstName === "string" && firstName.length > 0) {
+      street = firstName;
+    }
+    out.push({
+      at: [at[0], at[1]],
+      kind: maneuverKind(rec.type),
+      ...(street === undefined ? {} : {street}),
+      distMeters:
+        typeof rec.length === "number" ? Math.max(0, rec.length * 1000) : 0,
+      durationSec: typeof rec.time === "number" ? Math.max(0, rec.time) : 0,
+    });
+  }
+  return out;
+};
+
 interface ValhallaRoute {
   geometry: {type: "LineString"; coordinates: Array<[number, number]>};
   distanceMeters: number;
   durationSeconds: number;
+  steps?: RouteStep[];
 }
 
 class ServiceError extends Error {
@@ -111,11 +216,13 @@ const parseTrip = (trip: unknown): ValhallaRoute => {
     throw new ServiceError("No route found", 404);
   }
   const coords: Array<[number, number]> = [];
+  const steps: RouteStep[] = [];
   for (const leg of legs) {
     const shape = (leg as {shape?: unknown})?.shape;
     if (typeof shape !== "string" || shape.length === 0) {
       throw new ServiceError("No route found", 404);
     }
+    const localToGlobal: number[] = [];
     for (const pt of decodePolyline6(shape)) {
       const prev = coords[coords.length - 1];
       if (
@@ -123,10 +230,13 @@ const parseTrip = (trip: unknown): ValhallaRoute => {
         Math.abs(prev[0] - pt[0]) < 1e-9 &&
         Math.abs(prev[1] - pt[1]) < 1e-9
       ) {
+        localToGlobal.push(coords.length - 1);
         continue;
       }
+      localToGlobal.push(coords.length);
       coords.push(pt);
     }
+    for (const s of maneuversOf(leg, localToGlobal, coords)) steps.push(s);
   }
   if (coords.length === 0) {
     throw new ServiceError("No route found", 404);
@@ -143,6 +253,7 @@ const parseTrip = (trip: unknown): ValhallaRoute => {
     geometry: {type: "LineString", coordinates: coords},
     distanceMeters,
     durationSeconds,
+    steps,
   };
 };
 
@@ -294,4 +405,6 @@ export {
   LatLng,
   Ring,
   ValhallaRoute,
+  RouteStep,
+  maneuverKind,
 };

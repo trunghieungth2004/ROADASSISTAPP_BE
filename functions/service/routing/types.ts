@@ -6,6 +6,13 @@ interface RouteOption {
   via?: {lat: number; lng: number};
   hazards?: unknown;
   warnings?: unknown;
+  steps?: Array<{
+    at: [number, number];
+    kind: string;
+    street?: string;
+    distMeters: number;
+    durationSec: number;
+  }>;
 }
 
 interface RouteList {
@@ -17,6 +24,7 @@ interface BaseRoute {
   geometry: unknown;
   distanceMeters?: number;
   durationSeconds?: number;
+  steps?: RouteOption["steps"];
 }
 
 export {RouteOption, RouteList, BaseRoute};

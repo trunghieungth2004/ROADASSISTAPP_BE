@@ -22,9 +22,13 @@ const tripBody = (
   shapes: string[],
   length = 2.45,
   time = 512,
+  maneuvers: unknown[][] = [],
 ): Record<string, unknown> => ({
   trip: {
-    legs: shapes.map((shape) => ({shape})),
+    legs: shapes.map((shape, i) => ({
+      shape,
+      ...(maneuvers[i] === undefined ? {} : {maneuvers: maneuvers[i]}),
+    })),
     summary: {length, time},
   },
 });
@@ -377,5 +381,102 @@ describe("dedupeRoutes", () => {
   it("keeps routes with unparseable geometry", () => {
     const weird = [{geometry: null, distanceMeters: 1, durationSeconds: 1}];
     expect(dedupeRoutes(weird)).toEqual(weird);
+  });
+});
+
+describe("route steps", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("extracts maneuver kinds, streets and positions", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      okResponse(
+        tripBody([SHAPE_A], 2.45, 512, [
+          [
+            {
+              type: 10,
+              street_names: ["Le Loi"],
+              begin_shape_index: 1,
+              length: 1.2,
+              time: 300,
+            },
+            {
+              type: 4,
+              street_names: [],
+              begin_shape_index: 2,
+              length: 0,
+              time: 0,
+            },
+            {type: "left"},
+            {type: 8},
+          ],
+        ]),
+      ),
+    );
+    const res = await postRoute([
+      {lat: 10.7626, lng: 106.6602},
+      {lat: 10.7758, lng: 106.7019},
+    ]);
+    expect(res.steps).toEqual([
+      {
+        at: [106.68, 10.77],
+        kind: "turn-right",
+        street: "Le Loi",
+        distMeters: 1200,
+        durationSec: 300,
+      },
+      {
+        at: [106.7019, 10.7758],
+        kind: "destination",
+        distMeters: 0,
+        durationSec: 0,
+      },
+    ]);
+  });
+
+  it("maps second-leg maneuvers across the merged junction", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(
+      okResponse(
+        tripBody([SHAPE_A, "onupSwcqojEoeGgjb@"], 4.9, 900, [
+          [],
+          [
+            {
+              type: 15,
+              street_names: ["Nguyen Hue"],
+              begin_shape_index: 0,
+              length: 0.5,
+              time: 60,
+            },
+          ],
+        ]),
+      ),
+    );
+    const res = await postRoute([
+      {lat: 10.7626, lng: 106.6602},
+      {lat: 10.77, lng: 106.68},
+      {lat: 10.7758, lng: 106.7019},
+    ]);
+    expect(res.geometry.coordinates).toHaveLength(4);
+    expect(res.steps).toEqual([
+      {
+        at: [106.7019, 10.7758],
+        kind: "turn-left",
+        street: "Nguyen Hue",
+        distMeters: 500,
+        durationSec: 60,
+      },
+    ]);
+  });
+
+  it("returns no steps when the trip has none", async () => {
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(okResponse(tripBody([SHAPE_A], 2.45, 512)));
+    const res = await postRoute([
+      {lat: 10.7626, lng: 106.6602},
+      {lat: 10.7758, lng: 106.7019},
+    ]);
+    expect(res.steps).toEqual([]);
   });
 });

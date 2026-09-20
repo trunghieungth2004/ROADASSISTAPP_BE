@@ -819,12 +819,23 @@ Route between two points for the caller's vehicle width and type (`vehicleType`,
         "distanceMeters": 2450.5,
         "durationSeconds": 512.3,
         "geometry": { "type": "LineString", "coordinates": [] },
-        "source": "valhalla"
+        "source": "valhalla",
+        "steps": [
+          {
+            "at": [106.68, 10.77],
+            "kind": "turn-right",
+            "street": "Le Loi",
+            "distMeters": 1200,
+            "durationSec": 300
+          }
+        ]
       }
     ]
   }
 }
 ```
+
+Each option carries `steps` — turn-by-turn maneuvers parsed from the Valhalla `legs[].maneuvers[]` response and normalized server-side. `at` is the maneuver position as `[lng, lat]` resolved against the returned geometry; `kind` is one of `start`, `destination`, `continue`, `slight-right`, `slight-left`, `turn-right`, `turn-left`, `sharp-right`, `sharp-left`, `uturn`, `ramp`, `exit`, `merge`, `roundabout`, `ferry`, `other`; `street` is the first Valhalla `street_names` entry and is omitted for unnamed segments; `distMeters` / `durationSec` are the maneuver leg length and time. `steps` is omitted when the final geometry was re-solved by the detour path (maneuvers would misalign with the modified polyline) and on `detour`-sourced options; cached options served from entries written before this field existed also lack it — clients must tolerate a missing `steps` array and fall back to geometry-derived guidance.
 
 Stop-less requests return up to 5 options in `routes` (same per-option shape, Valhalla `alternates: 4`); requests with `stops` return exactly 1. Engine alternates with geometry identical to an already-seen route are dropped before caching, so duplicate options never reach the client.
 
