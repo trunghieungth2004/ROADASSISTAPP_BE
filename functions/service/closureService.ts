@@ -100,16 +100,29 @@ const analyzeRoute = async (
     typeof ownerUid === "string" &&
     ownerUid !== "" &&
     f.reporterUid === ownerUid;
+  const votedUp = (f: {votes?: unknown}): boolean => {
+    if (typeof ownerUid !== "string" || ownerUid === "") return false;
+    const votes = f.votes;
+    if (typeof votes !== "object" || votes === null) return false;
+    return (
+      typeof (votes as Record<string, unknown>)[ownerUid] === "number" &&
+      ((votes as Record<string, number>)[ownerUid] as number) > 0
+    );
+  };
+  const countsForUser = (f: {
+    reporterUid?: unknown;
+    votes?: unknown;
+  }): boolean => isOwn(f) || votedUp(f);
   const blockingCandidates = typed
     .filter(
       (f) =>
         BLOCKING_STATUSES.includes(f.status) ||
-        (f.status === STATUS_FLAGS.SUGGESTED && isOwn(f)),
+        (f.status === STATUS_FLAGS.SUGGESTED && countsForUser(f)),
     )
     .map(toZone);
   const warningCandidates = typed
     .filter(
-      (f) => f.status === STATUS_FLAGS.SUGGESTED && !isOwn(f),
+      (f) => f.status === STATUS_FLAGS.SUGGESTED && !countsForUser(f),
     )
     .map(toZone);
   return {

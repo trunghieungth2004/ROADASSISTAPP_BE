@@ -277,7 +277,8 @@ const getNear = cacheManager.wrap(
       lat: number;
       lng: number;
       radiusMeters?: number;
-    }) => `${lat},${lng},${radiusMeters ?? 2000}`,
+    }) =>
+      `${lat.toFixed(3)},${lng.toFixed(3)},${radiusMeters ?? 2000}`,
   },
 ) as unknown as (arg: {
   lat: number;

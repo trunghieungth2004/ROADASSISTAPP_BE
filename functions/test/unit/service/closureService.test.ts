@@ -145,6 +145,21 @@ describe("closureService.findBlocking", () => {
     ] as never);
     await expect(findBlocking(line, "u1")).resolves.toEqual([]);
   });
+
+  it("blocks a suggested flag the caller voted up", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "voted", status: "1", reporterUid: "u2", votes: {u1: 1}}),
+    ] as never);
+    const zones = await findBlocking(line, "u1");
+    expect(zones.map((z) => z.flagId)).toEqual(["voted"]);
+  });
+
+  it("ignores suggested flags the caller voted down", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "down", status: "1", reporterUid: "u2", votes: {u1: -1}}),
+    ] as never);
+    await expect(findBlocking(line, "u1")).resolves.toEqual([]);
+  });
 });
 
 describe("closureService.analyzeRoute", () => {
@@ -174,6 +189,15 @@ describe("closureService.analyzeRoute", () => {
       radiusMeters: 200,
       distanceMeters: expect.any(Number),
     });
+  });
+
+  it("moves voted-up suggested flags from warnings to blocking", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      flood({id: "voted", status: "1", reporterUid: "u2", votes: {u1: 1}}),
+    ] as never);
+    const {blocking, warnings} = await analyzeRoute(line, "u1");
+    expect(blocking.map((z) => z.flagId)).toEqual(["voted"]);
+    expect(warnings).toEqual([]);
   });
 });
 
