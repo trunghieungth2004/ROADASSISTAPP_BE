@@ -122,13 +122,13 @@ describe("closureService.findBlocking", () => {
     await expect(findBlocking(line)).resolves.toEqual([]);
   });
 
-  it("sorts multiple hits by distance", async () => {
+  it("sorts multiple hits by along-route progress", async () => {
     jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
       flood({id: "edge", lat: 10.761, lng: 106.661, radiusMeters: 500}),
       flood({id: "center", lat: 10.77, lng: 106.68}),
     ] as never);
     const zones = await findBlocking(line);
-    expect(zones.map((z) => z.flagId)).toEqual(["center", "edge"]);
+    expect(zones.map((z) => z.flagId)).toEqual(["edge", "center"]);
   });
 
   it("blocks the reporter's own suggested flag", async () => {

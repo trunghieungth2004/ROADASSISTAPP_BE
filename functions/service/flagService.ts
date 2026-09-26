@@ -132,6 +132,7 @@ const createFlag = async ({
     note,
   });
   cacheManager.del(NS);
+  await enqueueHazardPush(flag.id, flag.type, STATUS_FLAGS.SUGGESTED);
   return flag;
 };
 
@@ -286,6 +287,18 @@ const getNear = cacheManager.wrap(
   radiusMeters?: number;
 }) => Promise<FlagRecord[]>;
 
+const getById = async (flagId: string): Promise<FlagRecord | null> => {
+  const flag = await flagRepository.findById(flagId);
+  if (!flag) return null;
+  if (
+    flag.status === STATUS_FLAGS.EXPIRED ||
+    flag.status === STATUS_FLAGS.REJECTED
+  ) {
+    return null;
+  }
+  return stripVoters(flag);
+};
+
 const getMine = async (userId: string): Promise<FlagRecord[]> => {
   const flags = await flagRepository.findByReporterUid(userId);
   return flags
@@ -345,6 +358,16 @@ const unflagFlag = async ({
   await flagRepository.deleteById(flagId);
   cacheManager.del(NS, flagId);
   cacheManager.del(NS);
+  await enqueueHazardPush(flag.id, flag.type, "REMOVED", {
+    type: flag.type,
+    lat: flag.lat as number,
+    lng: flag.lng as number,
+    radiusMeters: effectiveRadiusMeters(
+      flag.type,
+      flag.radiusMeters as number | null | undefined,
+    ),
+    removed: true,
+  });
   return {unflagged: 1};
 };
 
@@ -362,6 +385,7 @@ export {
   confirmFlag,
   denyFlag,
   getNear,
+  getById,
   getMine,
   getAllFlags,
   moderateFlag,

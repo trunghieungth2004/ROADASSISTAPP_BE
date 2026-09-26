@@ -37,6 +37,8 @@ const emit = (
 ): void => {
   const entry = {
     ts: new Date().toISOString(),
+    severity:
+      level === "error" ? "ERROR" : level === "warn" ? "WARNING" : "INFO",
     level,
     scope,
     msg,

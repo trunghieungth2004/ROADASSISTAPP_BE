@@ -35,6 +35,13 @@ export default (
     flagController.getNear,
   );
   app.post(
+    "/flags/get",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.getFlagById}),
+    flagController.getById,
+  );
+  app.post(
     "/flags/mine",
     requireAuth,
     validate({body: schemas.getMyFlags}),

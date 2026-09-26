@@ -99,7 +99,17 @@ describe("lineStringHitsCircles", () => {
     ]);
     expect(hits).toHaveLength(1);
     expect(hits[0].flagId).toBe("f1");
-    expect(hits[0].distanceMeters).toBeCloseTo(0, 6);
+    expect(hits[0].distanceMeters).toBeGreaterThan(5000);
+    expect(hits[0].distanceMeters).toBeLessThan(6000);
+  });
+
+  it("reports along-route progress, not miss distance", () => {
+    const hits = lineStringHitsCircles(line, [
+      {flagId: "off", lat: 10.701, lng: 106.65, radiusMeters: 300},
+    ]);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].distanceMeters).toBeGreaterThan(5000);
+    expect(hits[0].distanceMeters).toBeLessThan(6000);
   });
 
   it("misses a zone far from the line", () => {
@@ -109,13 +119,13 @@ describe("lineStringHitsCircles", () => {
     expect(hits).toEqual([]);
   });
 
-  it("respects the boundary and sorts by distance", () => {
+  it("respects the boundary and sorts by along-route progress", () => {
     const hits = lineStringHitsCircles(line, [
       {flagId: "far", lat: 10.702, lng: 106.65, radiusMeters: 300},
       {flagId: "near", lat: 10.7, lng: 106.66, radiusMeters: 200},
       {flagId: "out", lat: 10.71, lng: 106.65, radiusMeters: 200},
     ]);
-    expect(hits.map((h) => h.flagId)).toEqual(["near", "far"]);
+    expect(hits.map((h) => h.flagId)).toEqual(["far", "near"]);
   });
 
   it("hits a route fully contained in a zone", () => {

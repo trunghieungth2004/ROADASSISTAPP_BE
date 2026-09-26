@@ -62,6 +62,20 @@ const getNear = async (req: Request, res: Response) => {
   }
 };
 
+const getById = async (req: Request, res: Response) => {
+  try {
+    const {flagId} = req.body;
+    const result = await flagService.getById(flagId);
+    if (!result) {
+      sendSuccess(res, null, {message: "Flag not found", statusCode: 404});
+      return;
+    }
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const getMine = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -124,6 +138,7 @@ export {
   confirmFlag,
   denyFlag,
   getNear,
+  getById,
   getMine,
   getAllFlags,
   moderateFlag,

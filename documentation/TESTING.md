@@ -55,9 +55,9 @@ functions/
     │       ├── routing/
     │       │   ├── getRoute.test.ts
     │       │   ├── alternatives.test.ts
-│       │   ├── detour.test.ts
-│       │   ├── corridor.test.ts
-│       │   └── widthGate.test.ts
+    │       ├── detour.test.ts
+    │       ├── corridor.test.ts
+    │       └── widthGate.test.ts
     │       ├── closureService.test.ts
     │       ├── shopService.test.ts
     │       ├── diagnosticService.test.ts

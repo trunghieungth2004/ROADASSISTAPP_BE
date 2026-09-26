@@ -683,6 +683,21 @@ List active flags near a point (`"4"` Expired and `"5"` Rejected are excluded).
 
 ---
 
+### `POST /flags/get` **(Auth + `RIDER` license)**
+
+Fetch one flag by ID for push-alert rendering (voters stripped, like near).
+`"4"` Expired and `"5"` Rejected return `404` with `data: null` and message
+`"Flag not found"`.
+
+**Request:**
+```json
+{ "flagId": "flag1" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { ...flag... } }`
+
+---
+
 ### `POST /flags/all` **(Admin)**
 
 List all flags, newest first (up to 100), including `"4"` Expired and `"5"` Rejected. Backs the admin moderation queue. No body schema.
@@ -899,7 +914,7 @@ Removing the blocking flag (`POST /flags/unflag` by its reporter, or expiry) unb
 
 ## Push
 
-Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); flag transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job that fans out to riders whose active route still crosses the flag. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off.
+Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); fresh reports (`"1"`) and transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job per status that fans out to riders whose active route still crosses the flag, excluding the reporter. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off. Full pipeline in [`PIPELINE.md`](./PIPELINE.md).
 
 ### `POST /push/register` **(Auth + `RIDER` license)**
 

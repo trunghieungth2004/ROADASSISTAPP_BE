@@ -154,6 +154,9 @@ const schemas = {
   }),
   getFlagsNear: locationBody().append({radiusMeters: numOpt()}),
   getMyFlags: emptyBody(),
+  getFlagById: Joi.object({
+    flagId: strReq(),
+  }),
   confirmFlag: Joi.object({
     flagId: strReq(),
   }),
@@ -219,6 +222,11 @@ const schemas = {
   }),
   deliverPush: Joi.object({
     flagId: strReq(),
+    type: Joi.string().optional(),
+    lat: latAttr().optional(),
+    lng: langAttr().optional(),
+    radiusMeters: Joi.number().min(25).max(3000).optional(),
+    removed: Joi.boolean().optional(),
   }),
   createShop: Joi.object({
     name: strReq(),

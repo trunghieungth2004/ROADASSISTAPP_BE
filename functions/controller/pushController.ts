@@ -37,8 +37,22 @@ const deliver = async (req: Request, res: Response) => {
       );
       return;
     }
-    const {flagId} = req.body as {flagId: string};
-    const result = await pushService.deliverHazardPush(flagId);
+    const {flagId, type, lat, lng, radiusMeters, removed} = req.body as {
+      flagId: string;
+      type?: string;
+      lat?: number;
+      lng?: number;
+      radiusMeters?: number;
+      removed?: boolean;
+    };
+    const result = await pushService.deliverHazardPush({
+      flagId,
+      type,
+      lat,
+      lng,
+      radiusMeters,
+      removed,
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);

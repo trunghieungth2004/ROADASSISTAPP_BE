@@ -142,6 +142,25 @@ export const pointToSegmentMeters = (
   return Math.hypot(px - t * dx, py - t * dy);
 };
 
+export const projectionFraction = (
+  lat: number,
+  lng: number,
+  segLat1: number,
+  segLng1: number,
+  segLat2: number,
+  segLng2: number,
+): number => {
+  const mPerDegLat = 110574;
+  const mPerDegLng = 111320 * Math.cos((segLat1 * Math.PI) / 180);
+  const px = (lng - segLng1) * mPerDegLng;
+  const py = (lat - segLat1) * mPerDegLat;
+  const dx = (segLng2 - segLng1) * mPerDegLng;
+  const dy = (segLat2 - segLat1) * mPerDegLat;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return 0;
+  return Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq));
+};
+
 interface CircleZone {
   lat: number;
   lng: number;
@@ -201,26 +220,43 @@ export const lineStringHitsCircles = <T extends CircleZone>(
     }
     if (!hit) continue;
     let min = Infinity;
+    let progress = 0;
+    let cum = 0;
     for (let i = 0; i < coords.length; i++) {
       const [lng, lat] = coords[i];
       if (i === 0) {
-        min = Math.min(min, haversineMeters(zone.lat, zone.lng, lat, lng));
+        const d = haversineMeters(zone.lat, zone.lng, lat, lng);
+        if (d < min) {
+          min = d;
+          progress = 0;
+        }
         continue;
       }
       const [prevLng, prevLat] = coords[i - 1];
-      min = Math.min(
-        min,
-        pointToSegmentMeters(
-          zone.lat,
-          zone.lng,
-          prevLat,
-          prevLng,
-          lat,
-          lng,
-        ),
+      const segLen = haversineMeters(prevLat, prevLng, lat, lng);
+      const t = projectionFraction(
+        zone.lat,
+        zone.lng,
+        prevLat,
+        prevLng,
+        lat,
+        lng,
       );
+      const d = pointToSegmentMeters(
+        zone.lat,
+        zone.lng,
+        prevLat,
+        prevLng,
+        lat,
+        lng,
+      );
+      if (d < min) {
+        min = d;
+        progress = cum + t * segLen;
+      }
+      cum += segLen;
     }
-    hits.push({...zone, distanceMeters: min});
+    hits.push({...zone, distanceMeters: progress});
   }
   return hits.sort((a, b) => a.distanceMeters - b.distanceMeters);
 };

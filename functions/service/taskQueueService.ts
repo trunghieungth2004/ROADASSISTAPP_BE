@@ -31,6 +31,13 @@ const enqueueHazardPush = async (
   flagId: string,
   type: string,
   status: string,
+  extra?: {
+    type?: string;
+    lat?: number;
+    lng?: number;
+    radiusMeters?: number;
+    removed?: boolean;
+  },
 ): Promise<{enqueued: boolean}> => {
   if (!tasksEnabled() || !BLOCKING_TYPES.includes(type)) {
     return {enqueued: false};
@@ -55,7 +62,9 @@ const enqueueHazardPush = async (
           httpMethod: "POST",
           url,
           headers: {"Content-Type": "application/json"},
-          body: Buffer.from(JSON.stringify({flagId})).toString("base64"),
+          body: Buffer.from(
+            JSON.stringify({flagId, ...extra}),
+          ).toString("base64"),
           oidcToken: {serviceAccountEmail},
         },
       },

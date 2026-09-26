@@ -69,6 +69,23 @@ describe("flagService.createFlag", () => {
     );
   });
 
+  it("enqueues a hazard push for the new report", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      trustScore: 10,
+    } as never);
+    jest.mocked(flagRepository.create).mockResolvedValue({
+      id: "f9",
+      type: "FLOOD",
+    } as never);
+    await createFlag({userId: "u1", type: "FLOOD", lat: 1, lng: 2});
+    expect(taskQueueService.enqueueHazardPush).toHaveBeenCalledWith(
+      "f9",
+      "FLOOD",
+      "1",
+    );
+  });
+
   it("rejects a flag covering an own saved route destination", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
@@ -701,6 +718,28 @@ describe("flagService.unflagFlag", () => {
       expect(flagRepository.deleteById).toHaveBeenCalledWith("f1");
     },
   );
+
+  it("enqueues a removal push carrying task coords", async () => {
+    jest.mocked(flagRepository.findById).mockResolvedValue({
+      id: "f1",
+      type: "FLOOD",
+      status: "2",
+      lat: 10.77,
+      lng: 106.68,
+      radiusMeters: 100,
+      reporterUid: "u1",
+    } as never);
+    jest.mocked(flagRepository.deleteById).mockResolvedValue(undefined);
+    await expect(
+      unflagFlag({flagId: "f1", userId: "u1"}),
+    ).resolves.toEqual({unflagged: 1});
+    expect(taskQueueService.enqueueHazardPush).toHaveBeenCalledWith(
+      "f1",
+      "FLOOD",
+      "REMOVED",
+      expect.objectContaining({lat: 10.77, lng: 106.68, removed: true}),
+    );
+  });
 });
 
 describe("flagService.expireFlags", () => {
