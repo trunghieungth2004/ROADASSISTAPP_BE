@@ -577,6 +577,20 @@ describe("flagService.getNear", () => {
       "d",
     ]);
   });
+  it("drops flags past their TTL even when still marked active", async () => {
+    const future = {toMillis: () => Date.now() + 60000};
+    const past = {toMillis: () => Date.now() - 1000};
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      {id: "a", status: "1", ttlExpiresAt: future},
+      {id: "b", status: "1", ttlExpiresAt: past},
+      {id: "c", status: "2"},
+    ] as never);
+    const result = await getNear({lat: 10.7, lng: 106.6});
+    expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
+      "a",
+      "c",
+    ]);
+  });
 });
 
 describe("flagService.getMine", () => {
@@ -592,6 +606,20 @@ describe("flagService.getMine", () => {
     expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
       "a",
       "b",
+    ]);
+  });
+  it("drops flags past their TTL even when still marked active", async () => {
+    const future = {toMillis: () => Date.now() + 60000};
+    const past = {toMillis: () => Date.now() - 1000};
+    jest.mocked(flagRepository.findByReporterUid).mockResolvedValue([
+      {id: "a", status: "1", ttlExpiresAt: future},
+      {id: "b", status: "2", ttlExpiresAt: past},
+      {id: "c", status: "1"},
+    ] as never);
+    const result = await getMine("u1");
+    expect(result.map((f) => (f as {id: string}).id).sort()).toEqual([
+      "a",
+      "c",
     ]);
   });
 });

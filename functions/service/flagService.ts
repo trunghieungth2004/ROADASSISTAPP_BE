@@ -247,6 +247,16 @@ const stripVoters = (flag: FlagRecord): FlagRecord => {
   return rest;
 };
 
+const isPastTtl = (flag: FlagRecord): boolean => {
+  const ttl = flag.ttlExpiresAt as unknown;
+  if (!ttl) return false;
+  if (ttl instanceof Date) return ttl.getTime() <= Date.now();
+  if (typeof ttl !== "object") return false;
+  const toMillis = (ttl as {toMillis?: unknown}).toMillis;
+  if (typeof toMillis !== "function") return false;
+  return (ttl as {toMillis: () => number}).toMillis() <= Date.now();
+};
+
 const getNear = cacheManager.wrap(
   async ({
     lat,
@@ -264,7 +274,8 @@ const getNear = cacheManager.wrap(
       .filter(
         (f) =>
           f.status !== STATUS_FLAGS.EXPIRED &&
-          f.status !== STATUS_FLAGS.REJECTED,
+          f.status !== STATUS_FLAGS.REJECTED &&
+          !isPastTtl(f),
       )
       .map(stripVoters);
   },
@@ -305,7 +316,8 @@ const getMine = async (userId: string): Promise<FlagRecord[]> => {
     .filter(
       (f) =>
         f.status !== STATUS_FLAGS.EXPIRED &&
-        f.status !== STATUS_FLAGS.REJECTED,
+        f.status !== STATUS_FLAGS.REJECTED &&
+        !isPastTtl(f),
     )
     .map(stripVoters);
 };

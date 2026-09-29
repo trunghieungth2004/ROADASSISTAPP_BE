@@ -25,6 +25,7 @@ import diagnosticRoutes from "./routes/diagnosticRoutes";
 import dispatchRoutes from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
+import * as flagService from "./service/flagService";
 
 const app = express();
 
@@ -143,4 +144,17 @@ export const api = functions.https.onRequest(
     maxInstances: 20,
   },
   app,
+);
+
+export const sweepExpiredFlags = functions.scheduler.onSchedule(
+  {
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Ho_Chi_Minh",
+    region: "asia-southeast1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    await flagService.expireFlags();
+  },
 );
