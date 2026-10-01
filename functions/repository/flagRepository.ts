@@ -2,7 +2,7 @@ import {db, FieldValue, Timestamp} from "../config/firebase";
 import {STATUS_FLAGS} from "../constants/status";
 import {encodeGeohash} from "../utils/geo";
 import {
-  reconcileReporterPoints,
+  reconcilePoints,
 } from "../utils/points";
 
 interface FlagRecord {
@@ -193,7 +193,7 @@ const reconcileReporterAward = async (flagId: string): Promise<void> => {
       flag.pointsAwarded :
       0;
     const votes = flag.votes as Record<string, number> | undefined;
-    const {earned, delta} = reconcileReporterPoints(
+    const {earned, delta} = reconcilePoints(
       votes,
       flag.status,
       prev,

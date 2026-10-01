@@ -18,7 +18,7 @@ import {
   POINTS_PER_CONFIRMED,
   POINTS_PER_DOWNVOTE,
   POINTS_PER_UPVOTE,
-  reconcileReporterPoints,
+  reconcilePoints,
 } from "../../../service/flagService";
 
 jest.mock("../../../repository/flagRepository");
@@ -620,15 +620,15 @@ describe("flagService.getNear", () => {
   });
 });
 
-describe("flagService.reconcileReporterPoints", () => {
+describe("flagService.reconcilePoints", () => {
   it("awards one point per upvote weight", () => {
     expect(
-      reconcileReporterPoints({u2: 1, u3: 1.5}, "1", 0),
+      reconcilePoints({u2: 1, u3: 1.5}, "1", 0),
     ).toEqual({earned: 2 * POINTS_PER_UPVOTE, delta: 2});
   });
   it("adds the confirmed bonus", () => {
     expect(
-      reconcileReporterPoints({u2: 1}, "2", 1),
+      reconcilePoints({u2: 1}, "2", 1),
     ).toEqual({
       earned: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
       delta: POINTS_PER_CONFIRMED,
@@ -636,33 +636,33 @@ describe("flagService.reconcileReporterPoints", () => {
   });
   it("claws back changed votes through a negative delta", () => {
     expect(
-      reconcileReporterPoints({u2: -1}, "1", 1),
+      reconcilePoints({u2: -1}, "1", 1),
     ).toEqual({earned: -POINTS_PER_DOWNVOTE, delta: -2});
   });
   it("deducts each deny symmetrically", () => {
     expect(
-      reconcileReporterPoints({u2: -1, u3: -1}, "1", 0),
+      reconcilePoints({u2: -1, u3: -1}, "1", 0),
     ).toEqual({earned: -2 * POINTS_PER_DOWNVOTE, delta: -2});
   });
   it("nets mixed votes to zero", () => {
     expect(
-      reconcileReporterPoints({u2: 1, u3: -1}, "1", 0),
+      reconcilePoints({u2: 1, u3: -1}, "1", 0),
     ).toEqual({earned: 0, delta: 0});
   });
   it("withholds the bonus on a net-zero confirmed flag", () => {
     expect(
-      reconcileReporterPoints({u2: 1, u3: -1}, "2", 0),
+      reconcilePoints({u2: 1, u3: -1}, "2", 0),
     ).toEqual({earned: 0, delta: 0});
   });
   it("pays the net on an overvoted confirmed flag", () => {
     const votes = {a: 1, b: 1, c: 1, d: -1, e: -1};
-    expect(reconcileReporterPoints(votes, "2", 0)).toEqual({
+    expect(reconcilePoints(votes, "2", 0)).toEqual({
       earned: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
       delta: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
     });
   });
   it("ignores missing maps", () => {
-    expect(reconcileReporterPoints(undefined, "1", 0)).toEqual({
+    expect(reconcilePoints(undefined, "1", 0)).toEqual({
       earned: 0,
       delta: 0,
     });

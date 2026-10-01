@@ -1,4 +1,4 @@
-# Reporter Points
+# Points
 
 Display-only reputation for hazard reporters. Points are earned from vote
 outcomes on a reporter's flags and shown on the profile and hazard rows.

@@ -6,7 +6,7 @@ export const POINTS_PER_CONFIRMED = 5;
 
 export type PointsLedger = {earned: number; delta: number};
 
-export const reconcileReporterPoints = (
+export const reconcilePoints = (
   votes: Record<string, number> | undefined,
   status: string,
   prevAwarded: number,

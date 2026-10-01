@@ -443,5 +443,5 @@ export {
   POINTS_PER_UPVOTE,
   POINTS_PER_DOWNVOTE,
   POINTS_PER_CONFIRMED,
-  reconcileReporterPoints,
+  reconcilePoints,
 } from "../utils/points";
