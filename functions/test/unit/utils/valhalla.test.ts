@@ -1,6 +1,7 @@
 import {haversineMeters} from "../../../utils/geo";
 import {
   circleToRing,
+  costingForMode,
   costingForVehicle,
   decodePolyline6,
   dedupeRoutes,
@@ -332,6 +333,15 @@ describe("postRoutes", () => {
     expect(costingForVehicle(undefined)).toBe("motor_scooter");
     expect(isCarVehicle("CAR")).toBe(true);
     expect(isCarVehicle("CUB")).toBe(false);
+  });
+
+  it("prefers the foot mode over the vehicle type", () => {
+    expect(costingForMode("foot", "SCOOTER")).toBe("pedestrian");
+    expect(costingForMode("foot", "CAR")).toBe("pedestrian");
+    expect(costingForMode("foot", undefined)).toBe("pedestrian");
+    expect(costingForMode(undefined, "CAR")).toBe("auto");
+    expect(costingForMode("scooter", "CAR")).toBe("auto");
+    expect(costingForMode(undefined, undefined)).toBe("motor_scooter");
   });
 
   it("drops alternates with geometry identical to the primary", async () => {

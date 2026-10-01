@@ -318,6 +318,37 @@ describe("routingService.getRoute", () => {
     expect(mockPostRoutes.mock.calls[1][1]).toEqual([]);
   });
 
+  it("routes foot mode with the pedestrian costing and no width gate", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue(null);
+    const geometry: Line = {type: "LineString", coordinates: [[1, 2]]};
+    mockPostRoutes.mockResolvedValue([
+      {geometry, distanceMeters: 800, durationSeconds: 600},
+    ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [],
+      warnings: [],
+    });
+    const res = await getRoute({...base, width: 0.5, mode: "foot"});
+    expect(res.routes[0]).toMatchObject({
+      distanceMeters: 800,
+      durationSeconds: 600,
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(1);
+    expect(mockPostRoutes).toHaveBeenCalledWith(
+      [originStop, destStop],
+      [],
+      5,
+      "pedestrian",
+    );
+    expect(
+      alleySegmentRepository.findByGeohashPrefixes,
+    ).not.toHaveBeenCalled();
+  });
+
   it("sends stops in order as locations", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",

@@ -7,7 +7,7 @@ const getRoute = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {originLat, originLng, destLat, destLng, stops, width,
-      vehicleType} = req.body;
+      vehicleType, mode} = req.body;
     const result = await routingService.getRoute({
       userId,
       originLat,
@@ -17,6 +17,7 @@ const getRoute = async (req: Request, res: Response) => {
       stops,
       width,
       vehicleType,
+      mode,
     });
     sendSuccess(res, result);
   } catch (error) {

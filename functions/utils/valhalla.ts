@@ -130,6 +130,7 @@ const VALHALLA_URL = process.env.VALHALLA_URL || "http://localhost:8002";
 const VALHALLA_TIMEOUT_MS = 15000;
 const COSTING_SCOOTER = "motor_scooter";
 const COSTING_AUTO = "auto";
+const COSTING_PEDESTRIAN = "pedestrian";
 const VALHALLA_COSTING = COSTING_SCOOTER;
 const autoMaxDistance = (): number =>
   Number(process.env.VALHALLA_AUTO_MAX_DISTANCE ?? "");
@@ -141,6 +142,11 @@ const isCarVehicle = (vehicleType?: string): boolean =>
 
 const costingForVehicle = (vehicleType?: string): string =>
   isCarVehicle(vehicleType) ? COSTING_AUTO : COSTING_SCOOTER;
+
+const costingForMode = (mode?: string, vehicleType?: string): string => {
+  if (mode === "foot") return COSTING_PEDESTRIAN;
+  return costingForVehicle(vehicleType);
+};
 
 const decodePolyline6 = (encoded: string): Array<[number, number]> => {
   const factor = 1e6;
@@ -396,10 +402,12 @@ export {
   dedupeRoutes,
   isCarVehicle,
   costingForVehicle,
+  costingForMode,
   VALHALLA_URL,
   VALHALLA_COSTING,
   COSTING_SCOOTER,
   COSTING_AUTO,
+  COSTING_PEDESTRIAN,
   autoMaxDistance,
   ServiceError,
   LatLng,

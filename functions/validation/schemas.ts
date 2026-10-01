@@ -188,6 +188,7 @@ const schemas = {
     vehicleType: Joi.string()
       .valid(...Object.values(VEHICLE_TYPE))
       .optional(),
+    mode: Joi.string().valid("scooter", "car", "foot").optional(),
   }),
   saveRoute: Joi.object({
     name: Joi.string().max(120).allow("", null).optional(),

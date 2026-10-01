@@ -4,7 +4,7 @@ import * as activeRouteRepository from
   "../repository/activeRouteRepository";
 import * as userRepository from "../repository/userRepository";
 import * as closureService from "./closureService";
-import {postRoutes, dedupeRoutes, costingForVehicle} from
+import {postRoutes, dedupeRoutes, costingForMode} from
   "../utils/valhalla";
 import type {LatLng} from "../utils/valhalla";
 import {
@@ -317,6 +317,7 @@ const getRoute = async ({
   stops,
   width,
   vehicleType,
+  mode,
 }: {
   userId: string;
   originLat: number;
@@ -326,13 +327,16 @@ const getRoute = async ({
   stops?: LatLng[];
   width?: number;
   vehicleType?: string;
+  mode?: string;
 }): Promise<RouteList> => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
 
   const stopList = stops ?? [];
-  const widthBucket = widthToBucket(width);
-  const costing = costingForVehicle(vehicleType);
+  const foot = mode === "foot";
+  const effectiveWidth = foot ? undefined : width;
+  const widthBucket = widthToBucket(effectiveWidth);
+  const costing = costingForMode(mode, vehicleType);
   const key = buildKey(
     originLat,
     originLng,
@@ -396,7 +400,7 @@ const getRoute = async ({
     destLat,
     destLng,
     stops: stopList,
-    width,
+    width: effectiveWidth,
     costing,
     key,
     userId,
@@ -420,7 +424,7 @@ const getRoute = async ({
       destLat,
       destLng,
       stops: stopList,
-      width,
+      width: effectiveWidth,
       costing,
       key,
       userId,
@@ -445,7 +449,7 @@ const getRoute = async ({
         hazards: analysis.blocking,
         warnings: await withWidthFallback(
           raw.geometry,
-          width,
+          effectiveWidth,
           analysis.warnings,
         ),
         steps: raw.steps,
