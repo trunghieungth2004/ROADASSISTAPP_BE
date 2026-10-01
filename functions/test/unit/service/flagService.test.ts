@@ -15,6 +15,10 @@ import {
   moderateFlag,
   unflagFlag,
   expireFlags,
+  POINTS_PER_CONFIRMED,
+  POINTS_PER_DOWNVOTE,
+  POINTS_PER_UPVOTE,
+  reconcileReporterPoints,
 } from "../../../service/flagService";
 
 jest.mock("../../../repository/flagRepository");
@@ -590,6 +594,78 @@ describe("flagService.getNear", () => {
       "a",
       "c",
     ]);
+  });
+  it("keeps reporterUid for the requester and handles others", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      {id: "a", status: "1", reporterUid: "u1"},
+      {id: "b", status: "1", reporterUid: "u2"},
+    ] as never);
+    const result = await getNear({
+      lat: 10.71,
+      lng: 106.61,
+      requesterUid: "u1",
+    });
+    const own = result.find((f) => (f as {id: string}).id === "a") as {
+      reporterUid?: string;
+      reporterHandle?: string;
+    };
+    expect(own.reporterUid).toBe("u1");
+    expect(own.reporterHandle).toBeUndefined();
+    const other = result.find((f) => (f as {id: string}).id === "b") as {
+      reporterUid?: string;
+      reporterHandle?: string;
+    };
+    expect(other.reporterUid).toBeUndefined();
+    expect(other.reporterHandle).toBe("rider-u2");
+  });
+});
+
+describe("flagService.reconcileReporterPoints", () => {
+  it("awards one point per upvote weight", () => {
+    expect(
+      reconcileReporterPoints({u2: 1, u3: 1.5}, "1", 0),
+    ).toEqual({earned: 2 * POINTS_PER_UPVOTE, delta: 2});
+  });
+  it("adds the confirmed bonus", () => {
+    expect(
+      reconcileReporterPoints({u2: 1}, "2", 1),
+    ).toEqual({
+      earned: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
+      delta: POINTS_PER_CONFIRMED,
+    });
+  });
+  it("claws back changed votes through a negative delta", () => {
+    expect(
+      reconcileReporterPoints({u2: -1}, "1", 1),
+    ).toEqual({earned: -POINTS_PER_DOWNVOTE, delta: -2});
+  });
+  it("deducts each deny symmetrically", () => {
+    expect(
+      reconcileReporterPoints({u2: -1, u3: -1}, "1", 0),
+    ).toEqual({earned: -2 * POINTS_PER_DOWNVOTE, delta: -2});
+  });
+  it("nets mixed votes to zero", () => {
+    expect(
+      reconcileReporterPoints({u2: 1, u3: -1}, "1", 0),
+    ).toEqual({earned: 0, delta: 0});
+  });
+  it("withholds the bonus on a net-zero confirmed flag", () => {
+    expect(
+      reconcileReporterPoints({u2: 1, u3: -1}, "2", 0),
+    ).toEqual({earned: 0, delta: 0});
+  });
+  it("pays the net on an overvoted confirmed flag", () => {
+    const votes = {a: 1, b: 1, c: 1, d: -1, e: -1};
+    expect(reconcileReporterPoints(votes, "2", 0)).toEqual({
+      earned: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
+      delta: POINTS_PER_UPVOTE + POINTS_PER_CONFIRMED,
+    });
+  });
+  it("ignores missing maps", () => {
+    expect(reconcileReporterPoints(undefined, "1", 0)).toEqual({
+      earned: 0,
+      delta: 0,
+    });
   });
 });
 

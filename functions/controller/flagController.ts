@@ -53,9 +53,15 @@ const denyFlag = async (req: Request, res: Response) => {
 
 const getNear = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {lat, lng} = req.body;
     const radiusMeters = req.body.radiusMeters ?? 2000;
-    const result = await flagService.getNear({lat, lng, radiusMeters});
+    const result = await flagService.getNear({
+      lat,
+      lng,
+      radiusMeters,
+      requesterUid: userId,
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -64,8 +70,9 @@ const getNear = async (req: Request, res: Response) => {
 
 const getById = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {flagId} = req.body;
-    const result = await flagService.getById(flagId);
+    const result = await flagService.getById(flagId, userId);
     if (!result) {
       sendSuccess(res, null, {message: "Flag not found", statusCode: 404});
       return;

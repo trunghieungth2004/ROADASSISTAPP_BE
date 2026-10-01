@@ -9,6 +9,7 @@ interface UserRecord {
   phone?: string;
   status?: string;
   trustScore?: number;
+  points?: number;
   volunteerAvailable?: boolean;
   volunteerRadiusKm?: number;
   capability?: string;

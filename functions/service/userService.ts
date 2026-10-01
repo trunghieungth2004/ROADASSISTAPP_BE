@@ -194,6 +194,7 @@ const me = async (userId: string) => {
       role: user.role,
       status: user.status ?? null,
       trustScore: user.trustScore ?? 0,
+      points: user.points ?? 0,
       volunteerAvailable: user.volunteerAvailable === true,
       volunteerRadiusKm: user.volunteerRadiusKm ?? 5,
       capability: user.capability ?? "SOLO_BIKE",

@@ -120,4 +120,5 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if
 - [Status Codes](./documentation/STATUS.md) — Numeric status codes, the statuses collection, POST /statuses
 - [Caching](./documentation/CACHE.md) — In-process LRU namespaces + Firestore route cache
 - [Pipeline](./documentation/PIPELINE.md) — Hazard push pipeline (Cloud Tasks + FCM)
+- [Reporter Points](./documentation/REPORTER_POINTS.md) — Display-only reputation, reconciliation, reporter scope
 - [Testing](./documentation/TESTING.md) — Jest unit/integration harness

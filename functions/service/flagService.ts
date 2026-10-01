@@ -9,6 +9,7 @@ import {
   haversineMeters,
 } from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
+import {reporterHandle} from "../utils/points";
 import {effectiveRadiusMeters} from "./closureService";
 import {enqueueHazardPush} from "./taskQueueService";
 
@@ -189,6 +190,7 @@ const castSignedFlagVote = async (
     await flagRepository.updateStatus(flagId, STATUS_FLAGS.CONFIRMED);
     cacheManager.del(NS, flagId);
     await enqueueHazardPush(flagId, flag.type, STATUS_FLAGS.CONFIRMED);
+    await flagRepository.reconcileReporterAward(flagId);
     return {
       ...cast.flag,
       voteCount: newCount,
@@ -201,6 +203,7 @@ const castSignedFlagVote = async (
     if (cast.flag.status === STATUS_FLAGS.SUGGESTED) {
       await flagRepository.updateStatus(flagId, STATUS_FLAGS.REJECTED);
       cacheManager.del(NS, flagId);
+      await flagRepository.reconcileReporterAward(flagId);
       return {
         ...cast.flag,
         voteCount: newCount,
@@ -212,6 +215,7 @@ const castSignedFlagVote = async (
     if (cast.flag.status === STATUS_FLAGS.CONFIRMED) {
       await flagRepository.updateStatus(flagId, STATUS_FLAGS.SUGGESTED);
       cacheManager.del(NS, flagId);
+      await flagRepository.reconcileReporterAward(flagId);
       return {
         ...cast.flag,
         voteCount: newCount,
@@ -222,6 +226,7 @@ const castSignedFlagVote = async (
     }
   }
   cacheManager.del(NS, flagId);
+  await flagRepository.reconcileReporterAward(flagId);
   return {
     ...cast.flag,
     voteCount: newCount,
@@ -257,15 +262,31 @@ const isPastTtl = (flag: FlagRecord): boolean => {
   return (ttl as {toMillis: () => number}).toMillis() <= Date.now();
 };
 
+const toPublicFlag = (
+  flag: FlagRecord,
+  requesterUid: string | undefined,
+): FlagRecord => {
+  const pub = stripVoters(flag);
+  const reporterUid = pub.reporterUid as string | undefined;
+  if (reporterUid !== undefined && reporterUid === requesterUid) {
+    return pub;
+  }
+  delete (pub as Partial<FlagRecord>).reporterUid;
+  if (reporterUid === undefined) return pub;
+  return {...pub, reporterHandle: reporterHandle(reporterUid)};
+};
+
 const getNear = cacheManager.wrap(
   async ({
     lat,
     lng,
     radiusMeters = 2000,
+    requesterUid,
   }: {
     lat: number;
     lng: number;
     radiusMeters?: number;
+    requesterUid?: string;
   }) => {
     const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
     const unique = cellsCoveringBounds(bounds);
@@ -277,7 +298,8 @@ const getNear = cacheManager.wrap(
           f.status !== STATUS_FLAGS.REJECTED &&
           !isPastTtl(f),
       )
-      .map(stripVoters);
+      .map(stripVoters)
+      .map((f) => toPublicFlag(f, requesterUid));
   },
   {
     namespace: NS,
@@ -285,20 +307,27 @@ const getNear = cacheManager.wrap(
       lat,
       lng,
       radiusMeters,
+      requesterUid,
     }: {
       lat: number;
       lng: number;
       radiusMeters?: number;
+      requesterUid?: string;
     }) =>
-      `${lat.toFixed(3)},${lng.toFixed(3)},${radiusMeters ?? 2000}`,
+      `${lat.toFixed(3)},${lng.toFixed(3)},${radiusMeters ?? 2000},` +
+      `${requesterUid ?? "-"}`,
   },
 ) as unknown as (arg: {
   lat: number;
   lng: number;
   radiusMeters?: number;
+  requesterUid?: string;
 }) => Promise<FlagRecord[]>;
 
-const getById = async (flagId: string): Promise<FlagRecord | null> => {
+const getById = async (
+  flagId: string,
+  requesterUid?: string,
+): Promise<FlagRecord | null> => {
   const flag = await flagRepository.findById(flagId);
   if (!flag) return null;
   if (
@@ -307,7 +336,7 @@ const getById = async (flagId: string): Promise<FlagRecord | null> => {
   ) {
     return null;
   }
-  return stripVoters(flag);
+  return toPublicFlag(flag, requesterUid);
 };
 
 const getMine = async (userId: string): Promise<FlagRecord[]> => {
@@ -387,6 +416,7 @@ const expireFlags = async (): Promise<number> => {
   const expired = await flagRepository.findExpired();
   for (const flag of expired) {
     await flagRepository.updateStatus(flag.id, STATUS_FLAGS.EXPIRED);
+    await flagRepository.reconcileReporterAward(flag.id);
     cacheManager.del(NS, flag.id);
   }
   return expired.length;
@@ -408,3 +438,10 @@ export {
   ForbiddenError,
   NotFoundError,
 };
+
+export {
+  POINTS_PER_UPVOTE,
+  POINTS_PER_DOWNVOTE,
+  POINTS_PER_CONFIRMED,
+  reconcileReporterPoints,
+} from "../utils/points";

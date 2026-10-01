@@ -1,6 +1,9 @@
 import {db, FieldValue, Timestamp} from "../config/firebase";
 import {STATUS_FLAGS} from "../constants/status";
 import {encodeGeohash} from "../utils/geo";
+import {
+  reconcileReporterPoints,
+} from "../utils/points";
 
 interface FlagRecord {
   id: string;
@@ -15,6 +18,7 @@ interface FlagRecord {
   radiusMeters?: number;
   ttlExpiresAt: Date;
   reporterUid: string;
+  pointsAwarded?: number;
   [key: string]: unknown;
 }
 
@@ -177,6 +181,35 @@ const updateStatus = async (flagId: string, status: string): Promise<void> => {
   await db.collection("flags").doc(flagId).update({status});
 };
 
+const reconcileReporterAward = async (flagId: string): Promise<void> => {
+  await db.runTransaction(async (tx) => {
+    const flagRef = db.collection("flags").doc(flagId);
+    const snap = await tx.get(flagRef);
+    if (!snap.exists) return;
+    const flag = {id: snap.id, ...snap.data()} as FlagRecord;
+    const reporterUid = flag.reporterUid as string | undefined;
+    if (!reporterUid) return;
+    const prev = typeof flag.pointsAwarded === "number" ?
+      flag.pointsAwarded :
+      0;
+    const votes = flag.votes as Record<string, number> | undefined;
+    const {earned, delta} = reconcileReporterPoints(
+      votes,
+      flag.status,
+      prev,
+    );
+    if (delta === 0 && flag.pointsAwarded !== undefined) return;
+    tx.update(flagRef, {pointsAwarded: earned});
+    if (delta === 0) return;
+    const userRef = db.collection("users").doc(reporterUid);
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) return;
+    const data = userSnap.data() ?? {};
+    const current = typeof data.points === "number" ? data.points : 0;
+    tx.update(userRef, {points: Math.max(0, current + delta)});
+  });
+};
+
 const deleteById = async (flagId: string): Promise<void> => {
   await db.collection("flags").doc(flagId).delete();
 };
@@ -210,6 +243,7 @@ export {
   castVote,
   castSignedVote,
   updateStatus,
+  reconcileReporterAward,
   deleteById,
   findExpired,
   RULE_OF_THREE,
