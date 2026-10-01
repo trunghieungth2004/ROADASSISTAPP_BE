@@ -405,11 +405,14 @@ const acceptAsShop = async (
   if (shop.accepting === false) {
     throw new ValidationError("Shop is not accepting requests");
   }
-  await dispatchRepository.update(ticketId, {
+  const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
     assignedKind: HELPER_KIND.SHOP,
     status: STATUS_DISPATCH.MATCHED,
   });
+  if (!claimed) {
+    throw new ValidationError("Ticket is no longer pending");
+  }
   if (shop.type === "TOW") {
     await shopRepository.update(shopId, {accepting: false});
   }
@@ -442,11 +445,14 @@ const acceptAsVolunteer = async (userId: string, ticketId: string) => {
   if (active.length > 0) {
     throw new ValidationError("Volunteer is already on a ticket");
   }
-  await dispatchRepository.update(ticketId, {
+  const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedUid: userId,
     assignedKind: HELPER_KIND.VOLUNTEER,
     status: STATUS_DISPATCH.MATCHED,
   });
+  if (!claimed) {
+    throw new ValidationError("Ticket is no longer pending");
+  }
   return {matched: true, kind: HELPER_KIND.VOLUNTEER};
 };
 

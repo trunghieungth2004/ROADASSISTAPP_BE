@@ -91,6 +91,23 @@ const update = async (
   await db.collection("dispatch_tickets").doc(id).update(fields);
 };
 
+const claimForAssignment = async (
+  ticketId: string,
+  fields: Record<string, unknown>,
+): Promise<boolean> => {
+  let claimed = false;
+  await db.runTransaction(async (tx) => {
+    const ref = db.collection("dispatch_tickets").doc(ticketId);
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const data = snap.data() ?? {};
+    if (data.status !== STATUS_DISPATCH.PENDING) return;
+    tx.update(ref, fields);
+    claimed = true;
+  });
+  return claimed;
+};
+
 const findByStatus = async (
   status: string,
   limit = 200,
@@ -163,5 +180,5 @@ const findActiveForShop = async (
   return results;
 };
 
-export {create, findById, updateStatus, update, findByStatus,
-  findByUserId, findActiveForUid, findActiveForShop};
+export {create, findById, updateStatus, update, claimForAssignment,
+  findByStatus, findByUserId, findActiveForUid, findActiveForShop};

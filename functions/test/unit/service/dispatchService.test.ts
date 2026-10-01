@@ -660,16 +660,40 @@ describe("dispatchService.acceptDispatch", () => {
     jest.mocked(dispatchRepository.findActiveForUid).mockResolvedValue(
       [],
     );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
     await expect(
       acceptDispatch({userId: "vol1", ticketId: "t1"}),
     ).resolves.toEqual({matched: true, kind: "VOLUNTEER"});
-    expect(dispatchRepository.update).toHaveBeenCalledWith(
+    expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
       "t1",
       expect.objectContaining({
         assignedUid: "vol1",
         status: "2",
       }),
     );
+  });
+
+  it("loses the race when the ticket is claimed first", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "vol1",
+      services: ["VOLUNTEER"],
+      volunteerAvailable: true,
+    } as never);
+    jest.mocked(dispatchRepository.findActiveForUid).mockResolvedValue(
+      [],
+    );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      false,
+    );
+    await expect(
+      acceptDispatch({userId: "vol1", ticketId: "t1"}),
+    ).rejects.toMatchObject({statusCode: 400});
   });
 
   it("rejects shop accepts from strangers", async () => {
@@ -738,6 +762,9 @@ describe("dispatchService.acceptDispatch", () => {
       role: "2",
       services: ["SHOP"],
     } as never);
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
     await expect(
       acceptDispatch({
         userId: "op1",
