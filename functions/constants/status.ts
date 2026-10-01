@@ -75,7 +75,6 @@ const VOLUNTEER_CAPABILITY = {
 const SERVICE_ROLE = {
   RIDER: "RIDER",
   SHOP: "SHOP",
-  MOBILE: "MOBILE",
   TOW: "TOW",
   VOLUNTEER: "VOLUNTEER",
 } as const;

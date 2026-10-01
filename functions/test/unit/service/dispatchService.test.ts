@@ -880,6 +880,41 @@ describe("dispatchService.deliverDispatchPush", () => {
       "vol1",
     );
   });
+
+  it("notifies the rider on matched tickets", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "2",
+      userId: "rider1",
+      ticketType: "SOS",
+    } as never);
+    jest.mocked(fcmTokenRepository.findByUserId).mockResolvedValue({
+      userId: "rider1",
+      tokens: ["tok1"],
+      updatedAt: "now",
+    });
+    await expect(deliverDispatchPush("t1")).resolves.toEqual({
+      delivered: 0,
+      skipped: false,
+    });
+    expect(fcmTokenRepository.findByUserId).toHaveBeenCalledWith(
+      "rider1",
+    );
+  });
+
+  it("skips rider push on cancelled tickets", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "5",
+      userId: "rider1",
+    } as never);
+    await expect(deliverDispatchPush("t1")).resolves.toEqual({
+      delivered: 0,
+      skipped: true,
+    });
+  });
 });
 
 describe("dispatchService vehicle and capability", () => {

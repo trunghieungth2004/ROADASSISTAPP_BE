@@ -2,10 +2,12 @@ import {Express} from "express";
 import {RouteDeps} from "../types/routes";
 import {SERVICE_ROLE} from "../constants/status";
 import * as pushController from "../controller/pushController";
+import {requireDeliverSecret} from "../middleware/deliverAuth";
 
 const mountPushDeliver = (app: Express, {validate, schemas}: RouteDeps) => {
   app.post(
     "/push/deliver",
+    requireDeliverSecret,
     validate({body: schemas.deliverPush}),
     pushController.deliver,
   );

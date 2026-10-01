@@ -255,6 +255,11 @@ const setOnboarded = async ({
   if (!(Object.values(SERVICE_ROLE) as string[]).includes(license)) {
     throw new ValidationError("Unknown service license");
   }
+  if (license !== SERVICE_ROLE.RIDER) {
+    throw new ForbiddenError(
+      "Provider licenses are granted by an administrator",
+    );
+  }
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   const current = Array.isArray(user.services) ? user.services : [];

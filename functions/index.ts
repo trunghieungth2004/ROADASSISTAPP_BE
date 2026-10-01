@@ -26,6 +26,7 @@ import dispatchRoutes from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 import * as flagService from "./service/flagService";
+import * as userService from "./service/userService";
 
 const app = express();
 
@@ -156,5 +157,18 @@ export const sweepExpiredFlags = functions.scheduler.onSchedule(
   },
   async () => {
     await flagService.expireFlags();
+  },
+);
+
+export const sweepStaleVolunteers = functions.scheduler.onSchedule(
+  {
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Ho_Chi_Minh",
+    region: "asia-southeast1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    await userService.sweepStaleVolunteers();
   },
 );

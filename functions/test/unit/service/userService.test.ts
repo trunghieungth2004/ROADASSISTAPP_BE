@@ -382,7 +382,7 @@ describe("userService.setOnboarded", () => {
     ).rejects.toMatchObject({statusCode: 404});
   });
 
-  it("marks onboarding and accumulates service roles", async () => {
+  it("refuses self-grant of provider licenses", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       onboarded: true,
@@ -390,15 +390,11 @@ describe("userService.setOnboarded", () => {
     } as never);
     await expect(
       setOnboarded({userId: "u1", role: "VOLUNTEER"}),
-    ).resolves.toEqual({
-      updated: 1,
-      onboarded: true,
-      services: ["RIDER", "VOLUNTEER"],
-    });
-    expect(userRepository.updateOnboarded).toHaveBeenCalledWith("u1", {
-      onboarded: true,
-      services: ["RIDER", "VOLUNTEER"],
-    });
+    ).rejects.toMatchObject({statusCode: 403});
+    await expect(
+      setOnboarded({userId: "u1", service: "SHOP"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
   });
 
   it("does not duplicate an existing service role", async () => {
@@ -415,17 +411,17 @@ describe("userService.setOnboarded", () => {
     });
   });
 
-  it("accepts the renamed service field", async () => {
+  it("accepts the renamed service field for riders", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
-      services: ["RIDER"],
+      services: [],
     } as never);
     await expect(
-      setOnboarded({userId: "u1", service: "SHOP"}),
+      setOnboarded({userId: "u1", service: "RIDER"}),
     ).resolves.toEqual({
       updated: 1,
       onboarded: true,
-      services: ["RIDER", "SHOP"],
+      services: ["RIDER"],
     });
   });
 

@@ -2,6 +2,7 @@ import {Express} from "express";
 import {RouteDeps} from "../types/routes";
 import {SERVICE_ROLE} from "../constants/status";
 import * as dispatchController from "../controller/dispatchController";
+import {requireDeliverSecret} from "../middleware/deliverAuth";
 
 export default (
   app: Express,
@@ -69,6 +70,7 @@ export default (
   );
   app.post(
     "/dispatch/deliver",
+    requireDeliverSecret,
     validate({body: schemas.deliverDispatch}),
     dispatchController.deliverDispatch,
   );

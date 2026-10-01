@@ -24,6 +24,17 @@ const ALREADY_EXISTS_CODE = 6;
 const tasksEnabled = (): boolean =>
   process.env.CLOUD_TASKS_ENABLED === "true";
 
+const deliverSecret = (): string => process.env.PUSH_DELIVER_SECRET ?? "";
+
+const deliverHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const secret = deliverSecret();
+  if (secret !== "") headers["X-Push-Secret"] = secret;
+  return headers;
+};
+
 const sanitizeTaskId = (raw: string): string =>
   raw.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 400);
 
@@ -61,7 +72,7 @@ const enqueueHazardPush = async (
         httpRequest: {
           httpMethod: "POST",
           url,
-          headers: {"Content-Type": "application/json"},
+          headers: deliverHeaders(),
           body: Buffer.from(
             JSON.stringify({flagId, ...extra}),
           ).toString("base64"),
@@ -81,6 +92,7 @@ const enqueueHazardPush = async (
 
 const enqueueDispatchPush = async (
   ticketId: string,
+  taskSuffix = "",
 ): Promise<{enqueued: boolean}> => {
   if (!tasksEnabled()) return {enqueued: false};
   const project =
@@ -101,7 +113,7 @@ const enqueueDispatchPush = async (
       location,
       DISPATCH_QUEUE_NAME,
     );
-    const taskId = sanitizeTaskId(`dispatch-${ticketId}`);
+    const taskId = sanitizeTaskId(`dispatch-${ticketId}${taskSuffix}`);
     await client.createTask({
       parent,
       task: {
@@ -114,7 +126,7 @@ const enqueueDispatchPush = async (
         httpRequest: {
           httpMethod: "POST",
           url,
-          headers: {"Content-Type": "application/json"},
+          headers: deliverHeaders(),
           body: Buffer.from(JSON.stringify({ticketId})).toString("base64"),
           oidcToken: {serviceAccountEmail},
         },

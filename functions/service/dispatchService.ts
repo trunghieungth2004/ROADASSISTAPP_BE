@@ -262,6 +262,13 @@ const updateDispatchStatus = async ({
   }
   await dispatchRepository.updateStatus(id, status);
   if (
+    status === STATUS_DISPATCH.MATCHED ||
+    status === STATUS_DISPATCH.ARRIVED ||
+    status === STATUS_DISPATCH.RESOLVED
+  ) {
+    await enqueueDispatchPush(id, `-status-${status}`);
+  }
+  if (
     (status === STATUS_DISPATCH.RESOLVED ||
       status === STATUS_DISPATCH.CANCELLED) &&
     typeof ticket.assignedShopId === "string" &&
@@ -512,6 +519,52 @@ const updateDispatchDestination = async ({
   return dispatchRepository.findById(ticketId);
 };
 
+const STATUS_PUSH_BODY: Record<string, string> = {
+  [STATUS_DISPATCH.MATCHED]: "A helper accepted your request — tap to view",
+  [STATUS_DISPATCH.ARRIVED]: "Your helper has arrived",
+  [STATUS_DISPATCH.RESOLVED]: "Your request was resolved",
+};
+
+const deliverStatusPush = async (
+  ticket: Record<string, unknown> & {id: string},
+): Promise<{delivered: number; skipped: boolean}> => {
+  const body = STATUS_PUSH_BODY[ticket.status as string];
+  if (!body || typeof ticket.userId !== "string") {
+    return {delivered: 0, skipped: true};
+  }
+  const record = await fcmTokenRepository.findByUserId(ticket.userId);
+  const tokens = (record?.tokens as string[] | undefined) ?? [];
+  let delivered = 0;
+  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
+    const chunk = tokens.slice(i, i + SEND_CHUNK);
+    const response = await messaging.sendEach(
+      chunk.map((token) => ({
+        token,
+        notification: {
+          title: "SOS update",
+          body,
+        },
+        data: {
+          ticketId: ticket.id,
+          status: ticket.status as string,
+        },
+      })),
+    );
+    delivered += response.successCount ?? 0;
+    const dead: string[] = [];
+    response.responses.forEach((r, idx) => {
+      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
+        const token = chunk[idx];
+        if (token !== undefined) dead.push(token);
+      }
+    });
+    if (dead.length > 0 && typeof ticket.userId === "string") {
+      await fcmTokenRepository.removeTokens(ticket.userId, dead);
+    }
+  }
+  return {delivered, skipped: false};
+};
+
 const deliverDispatchPush = async (
   ticketId: string,
 ): Promise<{delivered: number; skipped: boolean}> => {
@@ -519,7 +572,7 @@ const deliverDispatchPush = async (
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) return {delivered: 0, skipped: true};
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
-    return {delivered: 0, skipped: true};
+    return deliverStatusPush(ticket);
   }
   let candidates = (ticket.candidates as string[] | undefined) ?? [];
   if (candidates.length === 0) {
