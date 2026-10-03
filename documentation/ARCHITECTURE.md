@@ -55,7 +55,8 @@
 ┌────────────────────────────────────────────────────┐
 │          Database (Firebase Firestore)             │
 │  users, roles, flags, alley_segments, routing_cache│
-│  fcm_tokens, active_routes, landmarks, shops, ...  │
+│  fcm_tokens, active_routes, landmarks, providers, │
+│  provider_locations, provider_reports, ...      │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -103,12 +104,14 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 | `users` | doc ID = Auth uid; `email`, `displayName`, `role` (`"1"` admin / `"2"` rider), `status` (`"1"` active / `"0"` inactive), `trustScore` (number), `createdAt` (ISO) |
 | `roles` | doc ID = role code; `name`, `description`; seeded by `npm run db:init` (`functions/scripts/db.init.ts` from `functions/constants/roles.ts`) |
 | `statuses` | doc ID = `<domain>:<code>`; `domain`, `code`, `name`, `description`, `order`; seeded by `npm run db:init` (from `functions/constants/status.ts`); read via `POST /statuses` grouped by domain |
-| `users/{uid}/vehicle_profiles` | auto ID; `type` (`SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK`), `baseWidth`, `baseHeight`, `towVehicleType?` (`CAR`/`VAN`/`TRUCK`, one per user), `createdAt` |
+| `users/{uid}/vehicle_profiles` | auto ID; `type` (`SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK`), `baseWidth`, `baseHeight`, `createdAt` |
 | `users/{uid}/vehicle_profiles/{pid}/ride_configs` | auto ID; `configType` (`SOLO`, `PASSENGER`, `CARGO`), `estWidth?`, `estHeight?`, `createdAt` |
 | `alley_segments` | auto ID; `lat`, `lng`, `geoHash` (precision 9), `geoCell` (precision 4, exact-match search key), `baseWidth?`, `wireHeight?`, `inclinePct?`, `tier` (`TIER1`, `TIER2`, `TIER3`), `verifiedCount`, `createdAt` |
 | `flags` | auto ID; `type` (`ACCIDENT`, `FLOOD`, `OBSTRUCTION`), `status` (`"1"` Suggested / `"2"` Confirmed / `"3"` Locked / `"4"` Expired / `"5"` Rejected), `geoHash` (precision 7), `geoCell` (precision 5), `lat`, `lng`, `voteCount`, `radiusMeters?` (impact radius for routing blocks, m), `reporterUid`, `reporterTrust`, `note?`, `createdAt` (ISO), `ttlExpiresAt` (Timestamp); reporter retracts via `POST /flags/unflag` (hard delete, never on `"3"`) |
 | `landmarks` | auto ID; `lat`, `lng`, `displayLabel`, `embedding?` (client-supplied vector), `geoHash` (precision 8), `geoCell` (precision 6), `createdAt` |
-| `shops` | auto ID; `name`, `lat`, `lng`, `type` (`SHOP`, `MOBILE`, `TOW`), `openHours`, `accepting`, `hasTow`, `towVehicleType`/`towVehicleWidth`, `operatorUid`, `geoHash` (precision 8), `geoCell` (precision 6), `createdAt` |
+| `providers` | `SHOP`: auto ID; `TOW`: doc id = normalized plate (uppercased, non-alphanumerics stripped; reserved with atomic `create`). `kind` (`SHOP`/`TOW`), `operatorUid` (assigned at creation, never moves), `name`, `lat`, `lng`, `label?`, `openHours?` (shops), `plate`/`plateRaw`/`vehicleType`/`vehicleWidth?` (tows, immutable), `status` (`PENDING`/`ACTIVE`/`DENIED`), `suspended` + `suspendedAt`/`suspendedReason`/`suspendedBy`, `accepting`, `ratingAvg`/`ratingCount`, `geoHash` (precision 8), `geoCell` (precision 6), `createdAt` |
+| `provider_locations` | doc id = provider id; `lat`, `lng`, `geoHash` (8), `geoCell` (6), `lastSeen`; 15-minute freshness (`PROVIDER_FRESH_MS`); swept hourly; cleared on `accepting: false`, suspension, or denial |
+| `provider_reports` | auto ID; `providerId`, `providerKind`, `targetUid`, `reportedBy` (uid only — never a display name), `ticketId?`, `reason` (`FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `OTHER`), `note?`, `status` (`OPEN`/`RESOLVED`/`DISMISSED`), `resolution?`, `createdAt`, `decidedAt?`, `decidedBy?` |
 | `diagnostics` | auto ID; `userId`, `category` (`FLAT_TIRE`, `FLUID_LEAK`, `CHAIN_SLACK`, `SPARK_CAP`), `imagePath`, `createdAt` |
 | `dispatch_tickets` | auto ID; `userId`, `ticketType` (`MECHANIC`, `TOW`, `SOS`), `status` (`"1"` Pending / `"2"` Matched / `"3"` Arrived / `"4"` Resolved / `"5"` Cancelled), `lat`, `lng`, `diagnosticId?`, `createdAt` |
 | `routing_cache` | doc ID = deterministic route key; `originLat/Lng`, `destLat/Lng`, `widthBucket`, `costing`, `geometry` (JSON string — Firestore rejects nested arrays), `distanceMeters?`, `durationSeconds?`, `cachedAt` (ISO), `expiresAt` (ISO, `ROUTING_CACHE_TTL_SECONDS`, default 30d; enforced in code, legacy docs without it stay valid) |
@@ -117,19 +120,28 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 
 ## Firestore Indexes
 
-Spatial reads use single-field `geoHash in [...]` queries (no composite index needed). One composite index is required and must exist before `POST /flags/expire` can run:
+Spatial reads use single-field `geoCell in [...]` queries (no composite index needed). Composite indexes are required for multi-field queries and must be deployed (`firebase deploy --only firestore:indexes`) before the matching endpoints can run in production (the emulator tolerates their absence, so CI stays green while prod fails — check this file first on any `FAILED_PRECONDITION`):
 
 | Collection | Fields | Purpose |
 |---|---|---|
 | `flags` | `status` ASC + `ttlExpiresAt` ASC | `findExpired` (`status in [...]` + `ttlExpiresAt <= now`) |
-
-The index file (`firestore.indexes.json`, deployed via `firebase deploy --only firestore:indexes`) carries the entry above — deploy it before relying on flag expiry.
+| `flags` | `reporterUid` ASC + `createdAt` DESC | reporter flag history |
+| `saved_routes` | `userId` ASC + `createdAt` DESC | route history |
+| `saved_places` | `userId` ASC + `createdAt` DESC | saved-place history |
+| `saved_places` | `userId` ASC + `lat` ASC + `lng` ASC | coord dedupe on `POST /places/save` |
+| `ratings` | `targetId` ASC + `targetKind` ASC | rating aggregates |
+| `ratings` | `targetId` ASC + `targetKind` ASC + `byUserId` ASC + `ticketId` ASC | one-rating-per-target dedupe |
+| `provider_reports` | `status` ASC + `createdAt` ASC | open-report queue |
+| `provider_reports` | `providerId` ASC + `reportedBy` ASC + `status` ASC | report dedupe |
+| `provider_reports` | `providerId` ASC + `status` ASC | open-report counts |
 
 ## Key Design Decisions
 
 - **Numeric roles**: `"1"` = admin, `"2"` = user (default on register). Single source of truth in `functions/constants/roles.ts` (`ROLE_ADMIN`/`ROLE_USER`, `ROLES` map). The `roles` collection mirrors that map for clients (`npm run db:init` upserts it; `npm run db:init:emulator` targets the local emulator); `POST /roles/all` lists the mapping, `POST /roles/user` resolves one user to `{id, role, name, description}`. Admin-only routes: user management, `/alleys/moderate`, `/flags/all`, `/flags/moderate`, `/flags/expire`.
-- **Service licenses**: provider capabilities live in cumulative `users.services` (`RIDER`/`SHOP`/`MOBILE`/`TOW`/`VOLUNTEER`, `functions/constants/status.ts:75`), enforced by `requireService(...)` route middleware plus service-level checks (`functions/middleware/auth.ts`; request carries `userServices`, admins bypass). `RIDER` is the base license (granted at register/self-heal, backfilled to all active users); every other license gates its provider surface (`VOLUNTEER` → availability/heartbeat/near/volunteer-accept; `SHOP` → shop CRUD/near/shop-accept; `TOW` → tow designation). Granted via `PUT /users/onboard` (`{service}`, legacy `{role}` accepted), managed via admin `PUT /users/services`, backfilled once with `npm run db:backfill-services`. Ticket reads/writes are additionally participant-scoped (`/dispatch/one`, `/dispatch/status`: rider, assignee, operator, or admin).
-- **Geohash spatial search**: every near-query builds a 3×3 cell grid over the radius bounds, encodes each cell center, and fans out exact-match `geoCell in` queries chunked to ≤30 prefixes (Firestore `in` is exact-match, not prefix-match, hence the truncated `geoCell` field alongside the full-precision `geoHash`); landmark/shop results are then filtered by exact haversine distance. Stored precisions: segments 9, flags 7, landmarks 8, shops 8; search cell precisions: alleys 4, flags 5, landmarks/shops 6.
+- **Service licenses**: provider capabilities live in cumulative `users.services` (`RIDER`/`VOLUNTEER`, `functions/constants/status.ts`), enforced by `requireService(...)` route middleware plus service-level checks (`functions/middleware/auth.ts`; request carries `userServices`, admins bypass). `RIDER` is the base license (granted at register/self-heal); `VOLUNTEER` gates availability/heartbeat/volunteer-accept. Shops and tow operators are not licenses — they are [provider records](#) (`providers` collection; creating the record is the grant). Granted via `PUT /users/onboard` (`{service}`, legacy `{role}` accepted), managed via admin `PUT /users/services`. Sensitive provider admin endpoints re-check `role === "1"` inside the service, not just in route middleware. Ticket reads/writes are additionally participant-scoped (`/dispatch/one`, `/dispatch/status`: rider, assignee, operator, or admin).
+- **Geohash spatial search**: every near-query covers the radius bounds with exhaustive `cellsCoveringBounds` and fans out exact-match `geoCell in` queries chunked to ≤30 prefixes (Firestore `in` is exact-match, not prefix-match, hence the truncated `geoCell` field alongside the full-precision `geoHash`); results are then filtered by exact haversine distance. Stored precisions: segments 9, flags 7, landmarks 8, providers 8; search cell precisions: alleys 4, flags 5, landmarks/providers 6. (The old 3×3 centre-sample grid missed cells past ~1 km and was removed.)
+- **Kind ↔ ticket-type mapping**: `TOW` tickets accept `TOW` providers only, `MECHANIC` tickets accept `SHOP` providers only, `SOS` tickets take no provider (volunteer-only). Enforced in `acceptAsShop`, `selectDispatch`, and `resolveDestination`; both clients already filter by kind, so this is defence-in-depth.
+- **Wire-name debt (deliberate)**: `shopId`, `destinationShopId`, `suggestedShopId`, `assignedShopId`, `HELPER_KIND.SHOP`, and `RATING_TARGET.SHOP` all address `providers` records. Renaming them is a breaking change across BE + mobile + web + stored tickets for zero user-visible gain, so the names stay and this paragraph documents the mapping.
 - **Short status codes**: every status (`users`, `flags`, `dispatch_tickets`) is a one-char code, resolved to names via `POST /statuses` (`functions/constants/status.ts` → `statuses` collection, seeded by `npm run db:init`). Joi enums and services validate against the constants, so stored codes and accepted codes can never drift.
 - **Flag consensus (Rule-of-3)**: each confirm adds weight 1 (+0.5 when the reporter's trust ≥ 50); at count ≥ 3 the flag flips to `"2"` (Confirmed). `"3"` (Locked) flags ignore further votes. Per-type TTLs (ACCIDENT 1h, FLOOD 6h, OBSTRUCTION 3h, default 3h) drive `ttlExpiresAt`; the expire endpoint flips lapsed `"1"`/`"2"`/`"3"` flags to `"4"` (Expired).
 - **Passability model** (`computePassability`): unknown width → neutral 50; vehicle wider than segment → incompatible 10; otherwise margin-based scores 90 (`WIDE`) / 70 (`TIGHT`) / 50 (`VERY_TIGHT`).

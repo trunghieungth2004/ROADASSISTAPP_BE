@@ -266,14 +266,19 @@ const toPublicFlag = (
   flag: FlagRecord,
   requesterUid: string | undefined,
 ): FlagRecord => {
+  const voters = Array.isArray(flag.voters) ? flag.voters : [];
+  const consensus = {
+    consensusThreshold: CONSENSUS_THRESHOLD,
+    confirmerCount: voters.length,
+  };
   const pub = stripVoters(flag);
   const reporterUid = pub.reporterUid as string | undefined;
   if (reporterUid !== undefined && reporterUid === requesterUid) {
-    return pub;
+    return {...pub, ...consensus};
   }
   delete (pub as Partial<FlagRecord>).reporterUid;
-  if (reporterUid === undefined) return pub;
-  return {...pub, reporterHandle: reporterHandle(reporterUid)};
+  if (reporterUid === undefined) return {...pub, ...consensus};
+  return {...pub, reporterHandle: reporterHandle(reporterUid), ...consensus};
 };
 
 const getNear = cacheManager.wrap(

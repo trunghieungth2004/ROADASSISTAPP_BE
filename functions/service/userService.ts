@@ -3,10 +3,12 @@ import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
 import * as volunteerLocationRepository from
   "../repository/volunteerLocationRepository";
-import * as shopRepository from "../repository/shopRepository";
+import * as providerLocationRepository from
+  "../repository/providerLocationRepository";
 import * as cacheManager from "../utils/cacheManager";
 import {ROLE_ADMIN, ROLE_USER} from "../constants/roles";
-import {SERVICE_ROLE, VOLUNTEER_FRESH_MS} from "../constants/status";
+import {PROVIDER_FRESH_MS, SERVICE_ROLE, VOLUNTEER_FRESH_MS} from
+  "../constants/status";
 import {auth} from "../config/firebase";
 
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -174,7 +176,13 @@ const volunteerHeartbeat = async ({
 
 const sweepStaleVolunteers = async (): Promise<number> => {
   const cutoff = new Date(Date.now() - VOLUNTEER_FRESH_MS).toISOString();
-  return volunteerLocationRepository.deleteStale(cutoff);
+  const providerCutoff =
+    new Date(Date.now() - PROVIDER_FRESH_MS).toISOString();
+  const [volunteers, providers] = await Promise.all([
+    volunteerLocationRepository.deleteStale(cutoff),
+    providerLocationRepository.deleteStale(providerCutoff),
+  ]);
+  return volunteers + providers;
 };
 
 const me = async (userId: string) => {
@@ -255,9 +263,10 @@ const setOnboarded = async ({
   if (!(Object.values(SERVICE_ROLE) as string[]).includes(license)) {
     throw new ValidationError("Unknown service license");
   }
-  if (license !== SERVICE_ROLE.RIDER) {
+  if (license !== SERVICE_ROLE.RIDER &&
+    license !== SERVICE_ROLE.VOLUNTEER) {
     throw new ForbiddenError(
-      "Provider licenses are granted by an administrator",
+      "Provider access comes from a provider record",
     );
   }
   const user = await userRepository.findById(userId);
@@ -295,19 +304,6 @@ const updateServices = async ({
   );
   const revoked = new Set(revoke ?? []);
   const services = granted.filter((license) => !revoked.has(license));
-  let unlistedShops = 0;
-  if (
-    current.includes(SERVICE_ROLE.SHOP) &&
-    !services.includes(SERVICE_ROLE.SHOP)
-  ) {
-    const operated = await shopRepository.findByOperator(targetUserId);
-    for (const shop of operated) {
-      if (shop.accepting !== false) {
-        await shopRepository.update(shop.id, {accepting: false});
-        unlistedShops += 1;
-      }
-    }
-  }
   let volunteerCleared = false;
   if (
     current.includes(SERVICE_ROLE.VOLUNTEER) &&
@@ -325,7 +321,7 @@ const updateServices = async ({
   });
   cacheManager.del(USER_NS, targetUserId);
   cacheManager.del(USER_NS, "__all__");
-  return {updated: 1, services, unlistedShops, volunteerCleared};
+  return {updated: 1, services, volunteerCleared};
 };
 
 export {

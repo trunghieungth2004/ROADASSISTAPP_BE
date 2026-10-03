@@ -3,6 +3,7 @@ import {
   RATING_MAX,
   RATING_MIN,
   RATING_TARGET,
+  PROVIDER_REPORT_REASON,
   SERVICE_ROLE,
   SHOP_SEARCH_MAX_RADIUS,
   STATUS_DISPATCH,
@@ -104,13 +105,7 @@ const schemas = {
     profileId: strReq(),
     ...rideConfigFields,
   }),
-  setTowVehicle: Joi.object({
-    profileId: strReq(),
-    towVehicleType: Joi.string()
-      .valid(...Object.values(TOW_VEHICLE_TYPE))
-      .allow(null)
-      .optional(),
-  }),
+
   getAllVehicleProfiles: emptyBody(),
   getAlleySegment: Joi.object({
     segmentId: strReq(),
@@ -229,43 +224,81 @@ const schemas = {
     radiusMeters: Joi.number().min(25).max(3000).optional(),
     removed: Joi.boolean().optional(),
   }),
-  createShop: Joi.object({
+  createProvider: Joi.object({
+    kind: Joi.string().valid("SHOP", "TOW").required(),
     name: strReq(),
     lat: latAttr(),
     lng: langAttr(),
-    type: Joi.string().valid("SHOP", "MOBILE", "TOW").required(),
-    openHours: dayHoursPattern().allow("", null).optional(),
-    hasTow: Joi.boolean().optional(),
-    towVehicleType: Joi.string()
-      .valid(...Object.values(TOW_VEHICLE_TYPE))
-      .optional(),
-    towVehicleWidth: Joi.number().min(0.3).max(3).optional(),
-    operatorUid: strOpt(),
+    label: Joi.string().trim().max(140).allow("", null).optional(),
+    openHours: Joi.when("kind", {
+      is: "SHOP",
+      then: dayHoursPattern().allow("", null).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    plate: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.string().trim().min(4).max(16).required(),
+      otherwise: Joi.forbidden(),
+    }),
+    vehicleType: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.string()
+        .valid(...Object.values(TOW_VEHICLE_TYPE))
+        .required(),
+      otherwise: Joi.forbidden(),
+    }),
+    vehicleWidth: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.number().min(0.3).max(3).optional(),
+      otherwise: Joi.forbidden(),
+    }),
   }),
-  updateShop: Joi.object({
-    shopId: strReq(),
+  updateProvider: Joi.object({
+    providerId: strReq(),
     name: Joi.string().trim().min(1).max(120).optional(),
+    label: Joi.string().trim().max(140).allow("", null).optional(),
     openHours: dayHoursPattern().allow("", null).optional(),
     accepting: Joi.boolean().optional(),
-    hasTow: Joi.boolean().optional(),
-    towVehicleType: Joi.string()
-      .valid(...Object.values(TOW_VEHICLE_TYPE))
-      .allow(null)
-      .optional(),
-    towVehicleWidth: Joi.number().min(0.3).max(3).allow(null).optional(),
-    operatorUid: strOpt(),
+    lat: latAttr().optional(),
+    lng: langAttr().optional(),
   }),
-  nearShops: locationBody().append({
+  nearProviders: locationBody().append({
     radiusMeters: Joi.number()
       .min(200)
       .max(SHOP_SEARCH_MAX_RADIUS)
       .optional(),
-    type: Joi.string().valid("SHOP", "MOBILE", "TOW").optional(),
+    kind: Joi.string().valid("SHOP", "TOW").optional(),
     acceptingOnly: Joi.boolean().optional(),
     openOnly: Joi.boolean().optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
   }),
-  myShops: emptyBody(),
+  myProviders: emptyBody(),
+  reviewProvider: Joi.object({
+    providerId: strReq(),
+    approve: Joi.boolean().required(),
+    reviewNote: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  reportProvider: Joi.object({
+    providerId: strReq(),
+    reason: Joi.string()
+      .valid(...Object.values(PROVIDER_REPORT_REASON))
+      .required(),
+    note: Joi.string().trim().max(280).allow("", null).optional(),
+    ticketId: strOpt(),
+  }),
+  listReports: emptyBody(),
+  dismissReport: Joi.object({
+    reportId: strReq(),
+  }),
+  suspendProvider: Joi.object({
+    providerId: strReq(),
+    reason: Joi.string().trim().max(280).allow("", null).optional(),
+    reportId: strOpt(),
+  }),
+  restoreProvider: Joi.object({
+    providerId: strReq(),
+  }),
+  updateProviderLocation: locationBody(),
   searchPlaces: Joi.object({
     q: Joi.string().trim().min(2).max(80).required(),
     limit: Joi.number().integer().min(1).max(10).optional(),
@@ -348,7 +381,7 @@ const schemas = {
       .min(200)
       .max(SHOP_SEARCH_MAX_RADIUS)
       .optional(),
-    kind: Joi.string().valid("SHOP", "MOBILE", "TOW").optional(),
+    kind: Joi.string().valid("SHOP", "TOW").optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
     accessWidthMeters: Joi.number().min(0).max(20).optional(),
   }),

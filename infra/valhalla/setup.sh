@@ -82,7 +82,11 @@ fetch_pbf() {
   echo "[valhalla] checksum OK"
 }
 
-command -v gcloud >/dev/null || { echo "[valhalla] gcloud not found" >&2; exit 1; }
+if [ "$MODE" != "dev" ]; then
+  # shellcheck source=../../scripts/lib/gcloud-auth.sh
+  . "$ROOT/scripts/lib/gcloud-auth.sh"
+  require_gcloud_auth "valhalla" || exit 1
+fi
 
 if [ "$MODE" != "cloud" ]; then
   command -v docker >/dev/null || { echo "[valhalla] docker not found (needed for mode $MODE)" >&2; exit 1; }

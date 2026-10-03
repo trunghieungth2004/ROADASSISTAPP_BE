@@ -14,7 +14,7 @@ const valid: Record<string, unknown> = {
   updateUserTrust: {targetUserId: "u1", trustScore: 60},
   updateUserStatus: {targetUserId: "u1", status: "0"},
   setOnboarded: {service: "VOLUNTEER"},
-  updateUserServices: {targetUserId: "u1", grant: ["SHOP"]},
+  updateUserServices: {targetUserId: "u1", grant: ["VOLUNTEER"]},
   updateProfile: {displayName: "New Name"},
   createVehicleProfile: {type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
   addRideConfig: {profileId: "p1", configType: "CARGO"},
@@ -47,8 +47,8 @@ const valid: Record<string, unknown> = {
     destLng: 106.7019,
     geometry: {type: "LineString", coordinates: [[106.6602, 10.7626]]},
   },
-  createShop: {name: "Shop", lat: 10.7626, lng: 106.6602, type: "SHOP"},
-  nearShops: {lat: 10.7626, lng: 106.6602},
+  createProvider: {kind: "SHOP", name: "Shop", lat: 10.7626, lng: 106.6602},
+  nearProviders: {lat: 10.7626, lng: 106.6602},
   createDiagnostic: {category: "FLAT_TIRE", imagePath: "a.jpg"},
   getDiagnostic: {diagnosticId: "d1"},
   createDispatch: {ticketType: "TOW", lat: 10.7, lng: 106.6},
@@ -62,7 +62,6 @@ const valid: Record<string, unknown> = {
   dispatchOffers: {lat: 10.7, lng: 106.6, kind: "TOW"},
   volunteerToggle: {available: true},
   volunteerHeartbeat: {lat: 10.7, lng: 106.6},
-  setTowVehicle: {profileId: "p1", towVehicleType: "CAR"},
   submitRating: {
     targetId: "vol1",
     targetKind: "VOLUNTEER",
@@ -70,7 +69,12 @@ const valid: Record<string, unknown> = {
     score: 5,
   },
   deliverDispatch: {ticketId: "t1"},
-  updateShop: {shopId: "s1", accepting: false},
+  updateProvider: {providerId: "p1", accepting: false},
+  reportProvider: {providerId: "p1", reason: "SPAM"},
+  dismissReport: {reportId: "r1"},
+  suspendProvider: {providerId: "p1", reason: "spam"},
+  restoreProvider: {providerId: "p1"},
+  updateProviderLocation: {lat: 10.7, lng: 106.6},
   getRoles: {},
   getRoleByUser: {},
   getStatuses: {},
@@ -114,11 +118,17 @@ describe("schemas reject invalid input", () => {
 
   it("setOnboarded accepts service or legacy role, not neither", () => {
     expect(
-      table.setOnboarded.validate({service: "TOW"}).error,
+      table.setOnboarded.validate({service: "VOLUNTEER"}).error,
     ).toBeUndefined();
     expect(
-      table.setOnboarded.validate({role: "TOW"}).error,
+      table.setOnboarded.validate({role: "VOLUNTEER"}).error,
     ).toBeUndefined();
+    expect(
+      table.setOnboarded.validate({service: "TOW"}).error,
+    ).toBeDefined();
+    expect(
+      table.setOnboarded.validate({service: "SHOP"}).error,
+    ).toBeDefined();
     expect(table.setOnboarded.validate({}).error).toBeDefined();
     expect(
       table.setOnboarded.validate({service: "PILOT"}).error,
@@ -130,7 +140,7 @@ describe("schemas reject invalid input", () => {
       table.updateUserServices.validate({targetUserId: "u1"}).error,
     ).toBeDefined();
     expect(
-      table.updateUserServices.validate({grant: ["SHOP"]}).error,
+      table.updateUserServices.validate({grant: ["VOLUNTEER"]}).error,
     ).toBeDefined();
     expect(
       table.updateUserServices.validate(
@@ -278,45 +288,101 @@ describe("schemas reject invalid input", () => {
     ).toBeDefined();
   });
 
-  it("shop schemas reject bad type", () => {
+  it("provider schemas reject bad kind", () => {
     const base = {lat: 10.7, lng: 106.6};
     expect(
-      table.createShop.validate({...base, name: "S", type: "BAR"}).error,
+      table.createProvider.validate({...base, name: "S", kind: "BAR"}).error,
     ).toBeDefined();
     expect(
-      table.nearShops.validate({...base, type: "BAR"}).error,
+      table.nearProviders.validate({...base, kind: "BAR"}).error,
     ).toBeDefined();
     expect(
-      table.nearShops.validate({...base, radiusMeters: 50}).error,
+      table.nearProviders.validate({...base, radiusMeters: 50}).error,
     ).toBeDefined();
     expect(
-      table.createShop.validate({
+      table.createProvider.validate({
         ...base,
         name: "S",
-        type: "TOW",
+        kind: "SHOP",
         openHours: "9-5",
       }).error,
     ).toBeDefined();
     expect(
-      table.createShop.validate({...base, name: "S", type: "PUMP"}).error,
+      table.createProvider.validate({...base, name: "S", kind: "PUMP"}).error,
     ).toBeDefined();
     expect(
-      table.createShop.validate({
+      table.createProvider.validate({
         ...base,
         name: "S",
-        type: "TOW",
-        towVehicleType: "BOAT",
+        kind: "TOW",
+        plate: "30A12345",
+        vehicleType: "BOAT",
       }).error,
     ).toBeDefined();
     expect(
-      table.createShop.validate({
+      table.createProvider.validate({
         ...base,
         name: "S",
-        type: "MOBILE",
-        towVehicleType: "VAN",
-        towVehicleWidth: 2.0,
+        kind: "TOW",
+        plate: "30A12345",
+        vehicleType: "VAN",
+        vehicleWidth: 2.0,
       }).error,
     ).toBeUndefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "TOW",
+        vehicleType: "VAN",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        plate: "30A12345",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        openHours: "MON 08:00-18:00",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.reviewProvider.validate({providerId: "p1"}).error,
+    ).toBeDefined();
+    expect(
+      table.reviewProvider.validate({providerId: "p1", approve: true}).error,
+    ).toBeUndefined();
+    expect(
+      table.reportProvider.validate({
+        providerId: "p1",
+        reason: "NOPE",
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.reportProvider.validate({
+        providerId: "p1",
+        reason: "FAKE_BUSINESS",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.suspendProvider.validate({providerId: "p1"}).error,
+    ).toBeUndefined();
+    expect(
+      table.restoreProvider.validate({}).error,
+    ).toBeDefined();
+    expect(
+      table.updateProviderLocation.validate({lat: 10.7, lng: 106.6}).error,
+    ).toBeUndefined();
+    expect(
+      table.updateProviderLocation.validate({lat: 10.7}).error,
+    ).toBeDefined();
   });
 
   it("dispatch schemas accept the assist flow", () => {
@@ -374,10 +440,17 @@ describe("schemas reject invalid input", () => {
       table.dispatchOffers.validate({
         lat: 10.7,
         lng: 106.6,
-        kind: "MOBILE",
+        kind: "TOW",
         accessWidthMeters: 2.5,
       }).error,
     ).toBeUndefined();
+    expect(
+      table.dispatchOffers.validate({
+        lat: 10.7,
+        lng: 106.6,
+        kind: "MOBILE",
+      }).error,
+    ).toBeDefined();
     expect(
       table.getRoute.validate({
         originLat: 10.7626,

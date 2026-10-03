@@ -198,14 +198,18 @@ const reconcileReporterAward = async (flagId: string): Promise<void> => {
       flag.status,
       prev,
     );
-    if (delta === 0 && flag.pointsAwarded !== undefined) return;
-    tx.update(flagRef, {pointsAwarded: earned});
-    if (delta === 0) return;
+    if (delta === 0) {
+      if (flag.pointsAwarded === undefined) {
+        tx.update(flagRef, {pointsAwarded: earned});
+      }
+      return;
+    }
     const userRef = db.collection("users").doc(reporterUid);
     const userSnap = await tx.get(userRef);
     if (!userSnap.exists) return;
     const data = userSnap.data() ?? {};
     const current = typeof data.points === "number" ? data.points : 0;
+    tx.update(flagRef, {pointsAwarded: earned});
     tx.update(userRef, {points: Math.max(0, current + delta)});
   });
 };

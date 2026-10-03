@@ -1,12 +1,14 @@
 import * as dispatchRepository from "../repository/dispatchRepository";
 import * as userRepository from "../repository/userRepository";
-import * as shopRepository from "../repository/shopRepository";
+import * as providerRepository from "../repository/providerRepository";
 import * as alleySegmentRepository from
   "../repository/alleySegmentRepository";
 import * as volunteerLocationRepository from
   "../repository/volunteerLocationRepository";
+import * as providerLocationRepository from
+  "../repository/providerLocationRepository";
 import * as fcmTokenRepository from "../repository/fcmTokenRepository";
-import {nearShops} from "./shopService";
+import {nearProviders} from "./providerService";
 import {enqueueDispatchPush} from "./taskQueueService";
 import {messaging} from "../config/firebase";
 import {
@@ -17,6 +19,9 @@ import {
 import {
   HELPER_KIND,
   NEAR_SHOPS_MAX,
+  PROVIDER_FRESH_MS,
+  PROVIDER_KIND,
+  PROVIDER_STATUS,
   SERVICE_ROLE,
   STATUS_DISPATCH,
   VOLUNTEER_CAPABILITY,
@@ -54,16 +59,27 @@ const resolveDestination = async (
   destinationPoint:
     | {lat: number; lng: number; label?: string}
     | undefined,
+  ticketType?: string,
 ): Promise<Record<string, unknown> | undefined> => {
   if (destinationShopId) {
-    const shop = await shopRepository.findById(destinationShopId);
-    if (!shop) throw new NotFoundError("Destination shop not found");
+    const shop = await providerRepository.findById(destinationShopId);
+    if (!shop) throw new NotFoundError("Destination provider not found");
+    if (shop.status !== PROVIDER_STATUS.ACTIVE ||
+      (shop as {suspended?: boolean}).suspended === true) {
+      throw new ValidationError("Destination provider is not available");
+    }
+    if (shop.kind !== PROVIDER_KIND.SHOP) {
+      throw new ValidationError("Destination must be a repair shop");
+    }
+    if (ticketType && ticketType !== "TOW" && ticketType !== "MECHANIC") {
+      throw new ValidationError("This ticket type takes no shop destination");
+    }
     return {
       id: shop.id,
       name: shop.name,
       lat: shop.lat,
       lng: shop.lng,
-      type: shop.type,
+      kind: shop.kind,
     };
   }
   if (destinationPoint) {
@@ -75,6 +91,28 @@ const resolveDestination = async (
     };
   }
   return undefined;
+};
+
+const providerKindForTicket = (ticketType: unknown): string | null => {
+  if (ticketType === "TOW") return PROVIDER_KIND.TOW;
+  if (ticketType === "MECHANIC") return PROVIDER_KIND.SHOP;
+  return null;
+};
+
+const requireProviderForTicket = (
+  shop: {status?: unknown; kind?: unknown; suspended?: unknown},
+  ticketType: unknown,
+): void => {
+  if (shop.status !== PROVIDER_STATUS.ACTIVE || shop.suspended === true) {
+    throw new ForbiddenError("Provider is not available");
+  }
+  const expected = providerKindForTicket(ticketType);
+  if (!expected) {
+    throw new ForbiddenError("Tickets of this type are volunteer-only");
+  }
+  if (shop.kind !== expected) {
+    throw new ValidationError(`Ticket needs a ${expected} provider`);
+  }
 };
 
 const volunteerFitsTicket = (
@@ -168,6 +206,7 @@ const createDispatch = async ({
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
     destinationPoint,
+    ticketType,
   );
   const ticket = await dispatchRepository.create({
     userId,
@@ -206,26 +245,50 @@ const getMyTickets = async (userId: string) => {
 const getDispatch = async (id: string, userId: string) => {
   const ticket = await dispatchRepository.findById(id);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
-  if (ticket.userId === userId) return ticket;
-  if (ticket.assignedUid === userId) return ticket;
-  const caller = await userRepository.findById(userId);
-  if (!caller) throw new NotFoundError("User not found");
-  if (caller.role === ROLE_ADMIN) return ticket;
+  if (ticket.userId !== userId && ticket.assignedUid !== userId) {
+    const caller = await userRepository.findById(userId);
+    if (!caller) throw new NotFoundError("User not found");
+    if (caller.role !== ROLE_ADMIN) {
+      let operator = false;
+      if (
+        typeof ticket.assignedShopId === "string" &&
+        ticket.assignedShopId !== ""
+      ) {
+        const shop = await providerRepository.findById(ticket.assignedShopId);
+        operator = !!shop && shop.operatorUid === userId;
+      }
+      if (!operator) {
+        const held = Array.isArray(caller.services) ? caller.services : [];
+        const operated =
+          (await providerRepository.findByOperator(userId)) ?? [];
+        const operates = held.includes(SERVICE_ROLE.VOLUNTEER) ?
+          true :
+          operated.some(
+            (p) => p.status === PROVIDER_STATUS.ACTIVE,
+          );
+        if (!operates) {
+          throw new ForbiddenError(
+            "Only ticket participants or providers view this",
+          );
+        }
+      }
+    }
+  }
   if (
     typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== ""
   ) {
-    const shop = await shopRepository.findById(ticket.assignedShopId);
-    if (shop && shop.operatorUid === userId) return ticket;
+    const shop = await providerRepository.findById(ticket.assignedShopId);
+    if (
+      shop &&
+      shop.kind === PROVIDER_KIND.TOW &&
+      typeof shop.plate === "string" &&
+      shop.plate !== ""
+    ) {
+      return {...ticket, towPlate: shop.plate};
+    }
   }
-  const held = Array.isArray(caller.services) ? caller.services : [];
-  if (
-    held.includes(SERVICE_ROLE.VOLUNTEER) ||
-    held.includes(SERVICE_ROLE.SHOP)
-  ) {
-    return ticket;
-  }
-  throw new ForbiddenError("Only ticket participants or providers view this");
+  return ticket;
 };
 
 const updateDispatchStatus = async ({
@@ -249,7 +312,7 @@ const updateDispatchStatus = async ({
     typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== ""
   ) {
-    const shop = await shopRepository.findById(ticket.assignedShopId);
+    const shop = await providerRepository.findById(ticket.assignedShopId);
     operator = !!shop && shop.operatorUid === userId;
   }
   if (
@@ -274,11 +337,11 @@ const updateDispatchStatus = async ({
     typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== ""
   ) {
-    const shop = await shopRepository.findById(
+    const shop = await providerRepository.findById(
       ticket.assignedShopId as string,
     );
-    if (shop && shop.type === "TOW" && shop.accepting === false) {
-      await shopRepository.update(shop.id, {accepting: true});
+    if (shop && shop.kind === PROVIDER_KIND.TOW && shop.accepting === false) {
+      await providerRepository.update(shop.id, {accepting: true});
     }
   }
   return {updated: 1};
@@ -299,15 +362,27 @@ const nearDispatch = async ({
   ticketType?: string;
   limit?: number;
 }) => {
-  const pending = await dispatchRepository.findByStatus(
-    STATUS_DISPATCH.PENDING,
-  );
   let capability: unknown;
   if (userId) {
     const me = await userRepository.findById(userId);
-    capability = me?.capability;
+    if (!me) return [];
+    if (me.volunteerAvailable === true) {
+      capability = me.capability;
+    } else {
+      const operated =
+        (await providerRepository.findByOperator(me.id)) ?? [];
+      const activeTow = operated.some(
+        (p) => p.kind === PROVIDER_KIND.TOW &&
+          p.status === PROVIDER_STATUS.ACTIVE,
+      );
+      if (!activeTow) return [];
+      capability = me.capability;
+    }
   }
-  return pending
+  const tickets = await dispatchRepository.findByStatus(
+    STATUS_DISPATCH.PENDING,
+  );
+  return tickets
     .filter((t) => !ticketType || t.ticketType === ticketType)
     .filter((t) =>
       t.ticketType !== "SOS" ||
@@ -340,19 +415,42 @@ const dispatchOffers = async ({
   limit?: number;
   accessWidthMeters?: number;
 }) => {
-  const shops = await nearShops({
+  const shops = await nearProviders({
     lat,
     lng,
-    type: kind,
+    kind,
     radiusMeters,
     acceptingOnly: true,
     openOnly: false,
     limit,
   });
-  return shops.map((shop) => {
-    const towWidth = shop.towVehicleWidth as number | null;
+  const liveById = shops.length > 0 ?
+    await providerLocationRepository.findByIds(shops.map((s) => s.id)) :
+    new Map();
+  const cutoff = Date.now() - PROVIDER_FRESH_MS;
+  const withLive = shops.map((shop) => {
+    const loc = liveById.get(shop.id);
+    let plat = shop.lat as number;
+    let plng = shop.lng as number;
+    let live = false;
+    if (shop.kind === PROVIDER_KIND.TOW && loc &&
+      typeof loc.lat === "number" && typeof loc.lng === "number" &&
+      Date.parse(loc.lastSeen) >= cutoff) {
+      plat = loc.lat;
+      plng = loc.lng;
+      live = true;
+    }
+    const distance = live ?
+      haversineMeters(lat, lng, plat, plng) :
+      (shop.distance as number);
+    return {...shop, lat: plat, lng: plng, distance, live};
+  })
+    .filter((s) => (s.distance as number) <= radiusMeters);
+  withLive.sort((a, b) => (a.distance as number) - (b.distance as number));
+  return withLive.slice(0, limit).map((shop) => {
+    const towWidth = shop.vehicleWidth as number | null;
     const fitsAlley =
-      shop.type === "TOW" &&
+      shop.kind === PROVIDER_KIND.TOW &&
       typeof towWidth === "number" &&
       accessWidthMeters !== undefined ?
         towWidth <= accessWidthMeters :
@@ -378,11 +476,12 @@ const selectDispatch = async ({
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
     throw new ValidationError("Ticket is no longer pending");
   }
-  const shop = await shopRepository.findById(shopId);
-  if (!shop) throw new NotFoundError("Shop not found");
+  const shop = await providerRepository.findById(shopId);
+  if (!shop) throw new NotFoundError("Provider not found");
   if (shop.accepting === false) {
-    throw new ValidationError("Shop is not accepting requests");
+    throw new ValidationError("Provider is not accepting requests");
   }
+  requireProviderForTicket(shop, ticket.ticketType);
   await dispatchRepository.update(ticketId, {
     suggestedShopId: shopId,
     suggestedTs: new Date().toISOString(),
@@ -395,22 +494,24 @@ const acceptAsShop = async (
   ticketId: string,
   shopId: string,
 ) => {
-  const shop = await shopRepository.findById(shopId);
-  if (!shop) throw new NotFoundError("Shop not found");
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  const shop = await providerRepository.findById(shopId);
+  if (!shop) throw new NotFoundError("Provider not found");
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
-  if (caller.role !== ROLE_ADMIN) {
-    const held = Array.isArray(caller.services) ? caller.services : [];
-    if (!held.includes(SERVICE_ROLE.SHOP)) {
-      throw new ForbiddenError("Shop license required");
-    }
-  }
   const operator = shop.operatorUid as string | null;
-  if (operator && operator !== userId && caller.role !== ROLE_ADMIN) {
-    throw new ForbiddenError("Only the operator accepts for this shop");
+  if (operator !== userId && caller.role !== ROLE_ADMIN) {
+    throw new ForbiddenError("Only the operator accepts for this provider");
   }
   if (shop.accepting === false) {
-    throw new ValidationError("Shop is not accepting requests");
+    throw new ValidationError("Provider is not accepting requests");
+  }
+  requireProviderForTicket(shop, ticket.ticketType);
+  if (shop.kind === PROVIDER_KIND.TOW &&
+    (typeof shop.plate !== "string" ||
+      shop.plate === "")) {
+    throw new ForbiddenError("Approved tow provider required");
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
@@ -420,8 +521,8 @@ const acceptAsShop = async (
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }
-  if (shop.type === "TOW") {
-    await shopRepository.update(shopId, {accepting: false});
+  if (shop.kind === PROVIDER_KIND.TOW) {
+    await providerRepository.update(shopId, {accepting: false});
   }
   return {matched: true, kind: HELPER_KIND.SHOP};
 };
@@ -510,6 +611,7 @@ const updateDispatchDestination = async ({
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
     destinationPoint,
+    ticket.ticketType as string,
   );
   await dispatchRepository.update(ticketId, {
     destinationShopId: destinationShopId ?? null,
@@ -575,7 +677,7 @@ const deliverDispatchPush = async (
     return deliverStatusPush(ticket);
   }
   let candidates = (ticket.candidates as string[] | undefined) ?? [];
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && ticket.ticketType === "SOS") {
     candidates = await findCandidates({
       lat: ticket.lat,
       lng: ticket.lng,

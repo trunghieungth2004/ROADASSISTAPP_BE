@@ -3,7 +3,7 @@ import {buildIntegrationApp} from "../utils/app";
 import {
   cleanAll,
   seedUser,
-  seedShop,
+  seedProvider,
   seedLandmark,
   PREFIX,
 } from "../utils/seed";
@@ -16,8 +16,8 @@ const USER = `${PREFIX}-user-1`;
 beforeAll(async () => {
   await cleanAll();
   await seedUser(USER, "2");
-  await seedShop({name: "Demo Moto Repair"});
-  await seedShop({name: "Other Storefront"});
+  await seedProvider({name: "Demo Moto Repair"});
+  await seedProvider({name: "Other Storefront"});
   await seedLandmark({displayLabel: "Demo Landmark Hall"});
 });
 

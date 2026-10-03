@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# One-command backend deploy: routing engine, then functions + indexes,
-# then role/status seeds. Restores the developer's local VALHALLA_URL
-# afterwards so emulator runs keep working.
-#
-#   npm run deploy:all   (from functions/)
-#
-# One-time ops are NOT run here; see the reminders at the end.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/gcloud-auth.sh
+. "$ROOT/scripts/lib/gcloud-auth.sh"
+require_gcloud_auth "deploy" || exit 1
 ENV_FILE="$ROOT/functions/.env"
 
 SNAPSHOT=""
@@ -30,10 +26,6 @@ restore_env() {
 }
 trap restore_env EXIT
 
-command -v gcloud >/dev/null || {
-  echo "[deploy] gcloud not found" >&2
-  exit 1
-}
 command -v firebase >/dev/null || {
   echo "[deploy] firebase CLI not found" >&2
   exit 1
@@ -56,7 +48,5 @@ npm --prefix "$ROOT/functions" run db:init
 
 echo "[deploy] 4/4 done (local VALHALLA_URL restored by trap)"
 echo "[deploy] one-time ops, run manually when needed:"
-echo "  npm run db:seed-places            # directory seed"
-echo "  npm run db:backfill-services -- --dry-run   # license backfill preview"
 echo "  npm run queue:init && npm run push:setup    # tasks + push"
 echo "  npm run valhalla:remove           # tear down the engine"

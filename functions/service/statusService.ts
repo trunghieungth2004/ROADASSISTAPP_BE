@@ -1,6 +1,6 @@
 import * as statusRepository from "../repository/statusRepository";
 
-const GROUP_ORDER = ["users", "flags", "dispatch"];
+const GROUP_ORDER = ["users", "flags", "dispatch", "providers"];
 
 const getStatuses = async () => {
   const statuses = await statusRepository.findAll();

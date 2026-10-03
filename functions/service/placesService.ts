@@ -1,4 +1,4 @@
-import * as shopRepository from "../repository/shopRepository";
+import * as providerRepository from "../repository/providerRepository";
 import * as landmarkRepository from "../repository/landmarkRepository";
 
 export type DirectoryPlace = {
@@ -24,17 +24,19 @@ const searchDirectory = async ({
   const query = q.trim();
   if (!query) throw new ValidationError("Search query is required");
   const [shops, landmarks] = await Promise.all([
-    shopRepository.findByNamePrefix(query, limit),
+    providerRepository.findByNamePrefix(query, limit),
     landmarkRepository.findByLabelPrefix(query, limit),
   ]);
+  const live = shops.filter((s) => s.status === "ACTIVE" &&
+    (s as {suspended?: boolean}).suspended !== true);
   return [
-    ...shops.map((s) => ({
+    ...live.map((s) => ({
       kind: "shop" as const,
       id: s.id,
       label: s.name,
       lat: s.lat,
       lng: s.lng,
-      type: s.type,
+      type: s.kind,
     })),
     ...landmarks.map((l) => ({
       kind: "landmark" as const,

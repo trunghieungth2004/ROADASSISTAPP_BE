@@ -12,8 +12,13 @@ npm run deploy:all   # from functions/
 Runs, in order: routing engine (`setup.sh -cl`: local docker build, push,
 Cloud Run deploy, smoke test) → `firebase deploy --only functions,
 firestore:indexes` → `db:init` (role/status seeds). One-time ops
-(`seed-places`, `backfill-services`, `queue:init`, `push:setup`) are
-printed as reminders, never auto-run. Full engine teardown (local
+(`queue:init`, `push:setup`) are
+printed as reminders, never auto-run. Every script that shells out to
+`gcloud` (`deploy.sh`, `infra/valhalla/setup.sh`, `infra/valhalla/remove.sh`,
+`push:setup`) first proves the credential works via
+`gcloud auth print-access-token` (shared `scripts/lib/gcloud-auth.sh` /
+`functions/scripts/gcloudAuth.ts`) — re-run `gcloud auth login` on failure.
+Full engine teardown (local
 container, Cloud Run service, images, `.env` URL) is `npm run
 engine:remove` (`infra/valhalla/remove.sh`; `valhalla:remove` alias).
 
@@ -132,7 +137,9 @@ skip flag — removal only runs when invoked explicitly, never as part of
 ## After functions deploy
 
 ```bash
-firebase deploy --only firestore:indexes   # flags expiry composite index
+firebase deploy --only firestore:indexes   # composite indexes
+  # (flags expiry + reporter history, saved routes/places incl. coord
+  # dedupe, rating aggregates + dedupe, provider report queue + dedupe)
 cd functions
 npm run db:init                            # seed roles + statuses
 GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup   # hazard-push queue + IAM

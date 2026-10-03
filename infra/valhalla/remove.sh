@@ -9,7 +9,9 @@ REPO="${VALHALLA_REPO:-valhalla}"
 CONTAINER="${VALHALLA_CONTAINER:-valhalla-local}"
 IMAGE_PREFIX="$LOCATION-docker.pkg.dev/$PROJECT/$REPO/valhalla-vietnam"
 
-command -v gcloud >/dev/null || { echo "[valhalla] gcloud not found" >&2; exit 1; }
+# shellcheck source=../../scripts/lib/gcloud-auth.sh
+. "$ROOT/scripts/lib/gcloud-auth.sh"
+require_gcloud_auth "valhalla" || exit 1
 
 if command -v docker >/dev/null 2>&1 && \
   docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then

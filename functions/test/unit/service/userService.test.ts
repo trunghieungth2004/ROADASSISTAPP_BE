@@ -3,7 +3,6 @@ import * as vehicleProfileRepository from
   "../../../repository/vehicleProfileRepository";
 import * as volunteerLocationRepository from
   "../../../repository/volunteerLocationRepository";
-import * as shopRepository from "../../../repository/shopRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {
   register,
@@ -24,7 +23,6 @@ import {
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../repository/vehicleProfileRepository");
 jest.mock("../../../repository/volunteerLocationRepository");
-jest.mock("../../../repository/shopRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -382,7 +380,17 @@ describe("userService.setOnboarded", () => {
     ).rejects.toMatchObject({statusCode: 404});
   });
 
-  it("refuses self-grant of provider licenses", async () => {
+  it("rejects retired provider licenses as unknown", async () => {
+    await expect(
+      setOnboarded({userId: "u1", role: "SHOP"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    await expect(
+      setOnboarded({userId: "u1", service: "TOW"}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(userRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it("self-serves the volunteer license", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       onboarded: true,
@@ -390,11 +398,11 @@ describe("userService.setOnboarded", () => {
     } as never);
     await expect(
       setOnboarded({userId: "u1", role: "VOLUNTEER"}),
-    ).rejects.toMatchObject({statusCode: 403});
-    await expect(
-      setOnboarded({userId: "u1", service: "SHOP"}),
-    ).rejects.toMatchObject({statusCode: 403});
-    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
+    ).resolves.toEqual({
+      updated: 1,
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER"],
+    });
   });
 
   it("does not duplicate an existing service role", async () => {
@@ -455,17 +463,15 @@ describe("userService.updateServices", () => {
       services: ["RIDER", "VOLUNTEER"],
     } as never);
     await expect(
-      updateServices(
-        {targetUserId: "u1", grant: ["SHOP"], revoke: ["VOLUNTEER"]}),
+      updateServices({targetUserId: "u1", revoke: ["VOLUNTEER"]}),
     ).resolves.toEqual({
       updated: 1,
-      services: ["RIDER", "SHOP"],
-      unlistedShops: 0,
+      services: ["RIDER"],
       volunteerCleared: true,
     });
     expect(userRepository.updateOnboarded).toHaveBeenCalledWith("u1", {
       onboarded: true,
-      services: ["RIDER", "SHOP"],
+      services: ["RIDER"],
     });
     expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
       volunteerAvailable: false,
@@ -473,40 +479,17 @@ describe("userService.updateServices", () => {
     expect(volunteerLocationRepository.remove).toHaveBeenCalledWith("u1");
   });
 
-  it("unlists accepting shops when SHOP is revoked", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      onboarded: true,
-      services: ["RIDER", "SHOP"],
-    } as never);
-    jest.mocked(shopRepository.findByOperator).mockResolvedValue([
-      {id: "s1", accepting: true},
-      {id: "s2", accepting: false},
-    ] as never);
-    await expect(
-      updateServices({targetUserId: "u1", revoke: ["SHOP"]}),
-    ).resolves.toMatchObject({
-      updated: 1,
-      services: ["RIDER"],
-      unlistedShops: 1,
-      volunteerCleared: false,
-    });
-    expect(shopRepository.update).toHaveBeenCalledTimes(1);
-    expect(shopRepository.update).toHaveBeenCalledWith("s1", {
-      accepting: false,
-    });
-  });
-
-  it("skips shop writes when SHOP was never held", async () => {
+  it("rejects removed provider licenses as unknown", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       services: ["RIDER"],
     } as never);
     await expect(
-      updateServices({targetUserId: "u1", revoke: ["SHOP"]}),
-    ).resolves.toMatchObject({unlistedShops: 0});
-    expect(shopRepository.findByOperator).not.toHaveBeenCalled();
-    expect(shopRepository.update).not.toHaveBeenCalled();
+      updateServices({targetUserId: "u1", grant: ["SHOP"]}),
+    ).rejects.toMatchObject({statusCode: 400});
+    await expect(
+      updateServices({targetUserId: "u1", grant: ["TOW"]}),
+    ).rejects.toMatchObject({statusCode: 400});
   });
 
   it("rejects unknown licenses", async () => {

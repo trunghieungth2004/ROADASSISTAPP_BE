@@ -34,7 +34,8 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 - [Flags](#flags)
 - [Landmarks](#landmarks)
 - [Routing](#routing)
-- [Shops](#shops)
+- [Providers](#providers)
+- [Places](#places)
 - [Diagnostics](#diagnostics)
 - [Dispatch](#dispatch)
 - [Ratings](#ratings)
@@ -170,7 +171,7 @@ Mark one of your own vehicle profiles as the active routing vehicle. Send `{ "pr
 
 ### `PUT /users/onboard` **(Auth)**
 
-Record an onboarding choice without touching the admin `users.role` field. Sets `onboarded: true` and accumulates the service (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`) into `users.services`. The legacy `role` field is still accepted as a fallback.
+Record an onboarding choice without touching the admin `users.role` field. Sets `onboarded: true` and self-serves `RIDER` and `VOLUNTEER` into `users.services` (`SHOP`/`TOW` return `400`; shops and tow operators are [provider records](#providers), not licenses). The legacy `role` field is still accepted as a fallback.
 
 **Request:**
 ```json
@@ -186,11 +187,11 @@ Record an onboarding choice without touching the admin `users.role` field. Sets 
 
 ### `PUT /users/services` **(Admin)**
 
-Grant or revoke service licenses on any user. At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effects on net loss: revoking a held `SHOP` flips `accepting: false` on every shop the target operates (reported as `unlistedShops`); revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
+Grant or revoke service licenses on any user. At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effect on net loss: revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
 
 **Request:**
 ```json
-{ "targetUserId": "abc123", "grant": ["VOLUNTEER"], "revoke": ["SHOP"] }
+{ "targetUserId": "abc123", "grant": ["VOLUNTEER"], "revoke": ["VOLUNTEER"] }
 ```
 
 **Response `200`:**
@@ -299,23 +300,116 @@ Refresh the volunteer's last-known location for SOS matching. Rejected (`403`) w
 { "statusCode": 200, "status": "SUCCESS", "data": { "uid": "abc123", "lat": 10.7626, "lng": 106.6602, "...": "..." } }
 ```
 
+### `POST /users/volunteers/sweep` **(Admin)**
+
+Delete volunteer and tow live-location rows older than the 15-minute freshness window. Also runs hourly on a schedule. No body schema.
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "swept": 3 } }`
+
+---
 ---
 
 ## Service licenses
 
-Provider capabilities are licensed per user in `users.services` (`RIDER`, `SHOP`, `MOBILE`, `TOW`, `VOLUNTEER`; single source of truth in `functions/constants/status.ts:75`). Enforcement is `requireService(...)` middleware (`functions/middleware/auth.ts`) plus service-level checks; admins (`role "1"`) bypass license gates. Missing licenses return `403 { "message": "Service license required" }`.
+Provider capabilities are licensed per user in `users.services` (`RIDER`, `VOLUNTEER`; single source of truth in `functions/constants/status.ts`). Enforcement is `requireService(...)` middleware (`functions/middleware/auth.ts`) plus service-level checks; admins (`role "1"`) bypass license gates. Missing licenses return `403 { "message": "Service license required" }`.
 
 | License | Grants |
 |---|---|
 | `RIDER` | All base rider mutations (tickets, flags, alleys, landmarks, routes, places, push, diagnostics, vehicles, profile). Granted at register/self-heal; backfilled to every active user |
-| `VOLUNTEER` | `PUT /users/volunteer`, heartbeat, `POST /dispatch/near`, volunteer `POST /dispatch/accept` |
-| `SHOP` | `POST /shops`, `PUT /shops`, `POST /dispatch/near`, shop `POST /dispatch/accept` (plus operator ownership) |
-| `TOW` | `PUT /vehicleProfiles/tow` (clearing a designation needs no license) |
-| `MOBILE` | Reserved, no endpoint consumes it yet |
+| `VOLUNTEER` | `PUT /users/volunteer`, heartbeat, volunteer `POST /dispatch/accept` |
 
-Licenses are granted via `PUT /users/onboard` (`{service}`; legacy `{role}` still accepted) and managed by admins via `PUT /users/services` (grant/revoke). One-time backfill: `npm run db:backfill-services [-- --dry-run]` (same `:emulator` variant pattern as `db:init`); it grants `RIDER` to all active users, `VOLUNTEER` to opted-in volunteers, `SHOP` to shop operators, `TOW` to tow-vehicle owners.
+Shops and tow operators are not licenses — they are [provider records](#providers). `POST /dispatch/near` is auth-only and returns `[]` unless the caller has volunteer mode on or operates an `ACTIVE` `TOW` provider; `POST /dispatch/one` is visible to the ticket rider, assignee, provider operator, admins, and volunteers.
 
-`POST /dispatch/one` is visible to the ticket rider, assignee, shop operator, admins, and licensed providers; `PUT /dispatch/status` to the rider, assignee, operator, or admin.
+Licenses are granted via `PUT /users/onboard` (`{service}` self-serves `RIDER` and `VOLUNTEER`; legacy `{role}` still accepted) and managed by admins via `PUT /users/services` (grant/revoke).
+
+
+## Providers
+
+Repair shops (`SHOP`) and tow operators (`TOW`) are provider records in the top-level `providers` collection — creating the record is the grant, so there is no `SHOP` or `TOW` license. A `SHOP` record is active immediately; a `TOW` record starts `PENDING` and must be approved before it can accept tow jobs. At most one live record per kind per operator: `409` when a `PENDING` or `ACTIVE` record of that kind already exists; a `DENIED` record does not block re-applying. `TOW` records use the normalized plate (uppercased, non-alphanumerics stripped) as the document id, so one plate maps to one account; the id is reserved with an atomic create, so a concurrent duplicate plate also gets `409` instead of overwriting. Plates are immutable after creation. `POST /dispatch/accept` for `TOW` providers requires `ACTIVE` status plus a plate on file. Tow-assigned tickets carry the operator's `towPlate` so the rider can check the vehicle before it arrives. Suspended providers (see below) are hidden from every public listing and cannot accept.
+
+### `POST /providers` **(Auth)**
+
+Create a provider record. `TOW` requires `plate` + `vehicleType`; `SHOP` takes `openHours` and forbids plate/vehicle fields (`400` either way). `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
+
+```json
+{ "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "VAN", "vehicleWidth": 2.0 }
+```
+
+### `POST /providers/mine` **(Auth)**
+
+List the caller's own provider records with their statuses and any denial note.
+
+### `POST /providers/near` **(Auth)**
+
+List `ACTIVE`, non-suspended providers near a point, sorted nearest-first and capped (`limit` 1–20, default 10). Search covers the full radius (exhaustive geocell coverage, not sampled). Each hit carries `distance` and `openNow` (`true`/`false`, or `null` when no hours are set). `radiusMeters` is 200–10000 (default 2000); the walk panel uses 500–2000 m.
+
+```json
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "kind": "SHOP", "acceptingOnly": true, "openOnly": true, "limit": 10 }
+```
+
+### `PUT /providers` **(Auth)**
+
+Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
+
+```json
+{ "providerId": "shop1", "accepting": false }
+```
+
+### `POST /providers/pending` **(Admin)**
+
+List pending providers with applicant name, email, and open-report count (`openReportCount`).
+
+### `POST /providers/review` **(Admin)**
+
+Approve or deny a provider. A second review of an already-decided record is a no-op (`{decided: false}`).
+
+```json
+{ "providerId": "30A12345", "approve": true }
+```
+
+### `POST /providers/report` **(Auth)**
+
+Report a provider. Any authenticated user may report — holding a ticket is deliberately not required, because "this shop doesn't exist" is the most common real report. Reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `OTHER`. Only `ACTIVE`, non-suspended providers are reportable (`400` otherwise); one open report per reporter per provider (`409` on dupe).
+
+```json
+{ "providerId": "30A12345", "reason": "FAKE_BUSINESS", "note": "Empty lot", "ticketId": "tick1" }
+```
+
+### `POST /providers/reports` **(Admin)**
+
+List `OPEN` reports oldest-first with provider name, status, and suspension state.
+
+### `POST /providers/reports/dismiss` **(Admin)**
+
+Dismiss an open report with no action (`{dismissed: false}` when it was already decided).
+
+```json
+{ "reportId": "rep1" }
+```
+
+### `POST /providers/suspend` **(Admin)**
+
+Suspend a provider: sets the `suspended` flag with reason, actor, and timestamp, and clears its live-location row. Suspended providers vanish from `/providers/near`, `/dispatch/offers`, and `/places/search`, and cannot be selected, accepted, or set as a destination. Optionally resolves a report (`reportId`) in the same call. There is deliberately no auto-suspension on report count — the admin list shows the open-report count and the human decides.
+
+```json
+{ "providerId": "30A12345", "reason": "Fake business", "reportId": "rep1" }
+```
+
+### `POST /providers/restore` **(Admin)**
+
+Clear a suspension. Idempotent (`{restored: false}` when the provider was never suspended).
+
+```json
+{ "providerId": "30A12345" }
+```
+
+### `POST /providers/location` **(Auth)**
+
+Ping a tow operator's live position. The body carries no `providerId` — the service resolves the caller's own `TOW` record and requires `ACTIVE`, `accepting`, and non-suspended (`403`/`404` otherwise). Backed by the `provider_locations` collection (doc id = provider id, 15-minute freshness window); stale rows are swept hourly. `POST /dispatch/offers` prefers the live position when fresh and falls back to the registered base; `/providers/near` always uses the registered base.
+
+```json
+{ "lat": 10.7626, "lng": 106.6602 }
+```
 
 ## Roles
 
@@ -463,22 +557,6 @@ Attach a ride configuration (solo/passenger/cargo with estimated footprint) to a
 **Response `201`:**
 ```json
 { "statusCode": 201, "status": "SUCCESS", "message": "Ride config added", "data": { "id": "cfg1", "...": "..." } }
-```
-
----
-
-### `PUT /vehicleProfiles/tow` **(Auth + `TOW` license)**
-
-Designate one of the caller's vehicle profiles as the tow vehicle (`CAR`/`VAN`/`TRUCK`), or unset it with `null`. Setting one clears the flag on all other profiles (one tow vehicle per user). `404` for unknown profiles, `400` for invalid types.
-
-**Request:**
-```json
-{ "profileId": "prof1", "towVehicleType": "CAR" }
-```
-
-**Response `200`:**
-```json
-{ "statusCode": 200, "status": "SUCCESS", "message": "Tow vehicle updated", "data": { "id": "prof1", "towVehicleType": "CAR", "...": "..." } }
 ```
 
 ---
@@ -698,6 +776,14 @@ Fetch one flag by ID for push-alert rendering (voters stripped, like near).
 
 ---
 
+### `POST /flags/mine` **(Auth)**
+
+List the caller's own flags, newest first. No body schema.
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...flags... ] }`
+
+---
+
 ### `POST /flags/all` **(Admin)**
 
 List all flags, newest first (up to 100), including `"4"` Expired and `"5"` Rejected. Backs the admin moderation queue. No body schema.
@@ -910,6 +996,50 @@ Separately, when `width` is provided the resolved route is checked against measu
 
 Removing the blocking flag (`POST /flags/unflag` by its reporter, or expiry) unblocks the next request automatically — no cache invalidation needed.
 
+### `POST /routes/save` **(Auth + `RIDER` license)**
+
+Save a computed route under a name for later reuse. Same coordinates dedupe to one entry.
+
+**Request:**
+```json
+{ "name": "Home run", "originLat": 10.7626, "originLng": 106.6602, "destLat": 10.7758, "destLng": 106.7019 }
+```
+
+### `POST /routes/saved` **(Auth)**
+
+List the caller's saved routes, newest first. No body schema.
+
+### `POST /routes/saved/one` **(Auth)**
+
+Get one saved route by id.
+
+**Request:**
+```json
+{ "routeId": "route1" }
+```
+
+### `PUT /routes/saved` **(Auth + `RIDER` license)**
+
+Rename a saved route.
+
+**Request:**
+```json
+{ "routeId": "route1", "name": "New name" }
+```
+
+### `POST /routes/unsave` **(Auth + `RIDER` license)**
+
+Delete one of the caller's saved routes (`404` when unknown).
+
+**Request:**
+```json
+{ "routeId": "route1" }
+```
+
+### `POST /routes/sweep` **(Admin)**
+
+Delete expired `active_routes` rows. Also runs on a schedule. No body schema.
+
 ---
 
 ## Push
@@ -947,67 +1077,13 @@ Enqueued automatically — guarded by the `X-CloudTasks-QueueName: hazard-push` 
 
 ---
 
-## Shops
+## Places
 
-Repair shops (`SHOP`), mobile shops (`MOBILE`, service on the move), and tow providers (`TOW`) share the `shops` collection. Providers carry `openHours` (`"HH:MM-HH:MM"`), an `accepting` availability toggle, an optional `hasTow` flag on repair shops, tow-vehicle details (`towVehicleType` `CAR`/`VAN`/`TRUCK` + `towVehicleWidth` in meters), an `operatorUid` (the account that accepts tickets for the shop), and denormalized `ratingAvg`/`ratingCount`.
-
-### `POST /shops` **(Auth + `SHOP` license)**
-
-Register a repair shop, mobile shop, or tow provider. The caller becomes the `operatorUid` unless one is supplied.
-
-**Request:**
-```json
-{ "name": "Sửa xe Minh", "lat": 10.7626, "lng": 106.6602, "type": "SHOP", "openHours": "06:00-22:00", "hasTow": true }
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | One of `SHOP`, `MOBILE`, `TOW` |
-| `towVehicleType` | string | no | One of `CAR`, `VAN`, `TRUCK` |
-| `towVehicleWidth` | number | no | Tow vehicle width in meters (0.3–3) |
-| `openHours` | string | no | `"HH:MM-HH:MM"`, may cross midnight |
-| `hasTow` | boolean | no | Repair shop also runs a tow vehicle |
-| `operatorUid` | string | no | Defaults to the caller |
-
-**Response `201`:**
-```json
-{ "statusCode": 201, "status": "SUCCESS", "message": "Shop created", "data": { "id": "shop1", "accepting": true, "...": "..." } }
-```
-
----
-
-### `PUT /shops` **(Auth + `SHOP` license)**
-
-Update a provider. Only the `operatorUid` (or an admin) may edit. Used for the availability toggle (`accepting`), hours, tow capability, and the tow vehicle (`towVehicleType`, `towVehicleWidth`).
-
-**Request:**
-```json
-{ "shopId": "shop1", "accepting": false, "openHours": "06:00-22:00" }
-```
-
-**Response `200`:**
-```json
-{ "statusCode": 200, "status": "SUCCESS", "message": "Shop updated", "data": { "updated": 1 } }
-```
-
----
-
-### `POST /shops/near` **(Auth)**
-
-List shops near a point, sorted nearest-first and capped (`limit` 1–20, default 10). Each hit carries `distance` and `openNow` (`true`/`false`, or `null` when no hours are set). `radiusMeters` is 200–10000 (default 2000); the walk panel uses 500–2000.
-
-**Request:**
-```json
-{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "type": "MOBILE", "acceptingOnly": true, "openOnly": true, "limit": 10 }
-```
-
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
-
----
+The directory search reads the `providers` collection (only `ACTIVE`, non-suspended records) plus landmarks — see [Providers](#providers).
 
 ### `POST /places/search` **(Auth)**
 
-Prefix-search the directory (shops, then landmarks) by name. Matching is accent-sensitive on lowercased names (`q` 2–80 chars, `limit` 1–10 per collection, default 5).
+Prefix-search the directory (providers, then landmarks) by name. Matching is accent-sensitive on lowercased names (`q` 2–80 chars, `limit` 1–10 per collection, default 5).
 
 **Request:**
 ```json
@@ -1096,7 +1172,7 @@ Get a diagnostic by ID.
 
 Three assistance tiers share the ticket lifecycle: `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved (or `"5"` Cancelled). Nobody is auto-assigned: volunteers and providers accept at will, and the rider picks from the offer list.
 
-- **Walk:** `POST /shops/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP`/`MOBILE` providers only.
+- **Walk:** `POST /providers/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP` providers only.
 - **Professional:** ticket carries the rider vehicle (`vehicleType`/`vehicleWidth`, so helpers know what they rescue), alley-entrance coords + clearance (`alleySegmentId` → measured `accessWidthMeters`), an optional tow destination (registered `destinationShopId` or free-form `destinationPoint {lat,lng,label}`, snapshotted), and a provider assignment (`assignedShopId`). Tow providers flip `accepting: false` while on a ticket and back on resolve/cancel. Tow offers carry the provider vehicle and a `fitsAlley` label (`true`/`false`, `null` when unknown) against the ticket clearance.
 - **Volunteer:** `SOS` tickets geo-match available volunteers (toggle on, fresh location < 15 min, no active ticket, capability fit: car tickets only match `CAR`-capable volunteers), persist them as `candidates`, fan out via FCM (`dispatch-push` queue, gated by `CLOUD_TASKS_ENABLED`/`FCM_ENABLED`), and surface on the `near` radar.
 
@@ -1140,7 +1216,7 @@ List the caller's own tickets, newest first (all statuses).
 
 ### `POST /dispatch/one` **(Auth)**
 
-Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the assigned shop's operator, admins, and holders of the `VOLUNTEER`/`SHOP` license (`403` otherwise).
+Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the assigned provider's operator, admins, and volunteers (`403` otherwise).
 
 **Request:**
 ```json
@@ -1153,7 +1229,7 @@ Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the ass
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status (validated against the lifecycle enum). Only the ticket rider, the assigned volunteer, the assigned shop's operator, or an admin (`403` otherwise).
+Advance a ticket's status (validated against the lifecycle enum). Only the ticket rider, the assigned volunteer, the assigned provider's operator, or an admin (`403` otherwise).
 
 **Request:**
 ```json
@@ -1167,7 +1243,7 @@ Advance a ticket's status (validated against the lifecycle enum). Only the ticke
 
 ---
 
-### `POST /dispatch/near` **(Auth + `VOLUNTEER`/`SHOP` license)**
+### `POST /dispatch/near` **(Auth)**
 
 Radar: pending tickets near a point, nearest-first with `distance`. Used by volunteers (SOS) and provider apps. `radiusMeters` 200–10000 (default 5000). Car tickets are hidden from bike-only volunteers on the radar.
 
@@ -1182,20 +1258,20 @@ Radar: pending tickets near a point, nearest-first with `distance`. Used by volu
 
 ### `POST /dispatch/offers` **(Auth + `RIDER` license)**
 
-Offer list: accepting providers near a point (sorted nearest-first, capped). `kind` is `SHOP`, `MOBILE`, or `TOW`. `accessWidthMeters` (optional) labels each `TOW` offer with `fitsAlley` (`true`/`false`, `null` when the provider vehicle or clearance is unknown).
+Offer list: accepting providers near a point (sorted nearest-first, capped). `kind` is `SHOP` or `TOW`. `accessWidthMeters` (optional) labels each `TOW` offer with `fitsAlley` (`true`/`false`, `null` when the provider vehicle or clearance is unknown).
 
 **Request:**
 ```json
 { "lat": 10.7626, "lng": 106.6602, "radiusMeters": 5000, "kind": "TOW", "limit": 10, "accessWidthMeters": 2.5 }
 ```
 
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...shops... ] }`
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [ ...providers... ] }`
 
 ---
 
 ### `POST /dispatch/select` **(Auth + `RIDER` license)**
 
-The rider picks a provider for a pending ticket (stays pending until the provider accepts).
+The rider picks a provider for a pending ticket (stays pending until the provider accepts). The provider must be `ACTIVE`, non-suspended, and its kind must match the ticket (`TOW`→`TOW`, `MECHANIC`→`SHOP`; `SOS` takes no provider).
 
 **Request:**
 ```json
@@ -1209,9 +1285,9 @@ The rider picks a provider for a pending ticket (stays pending until the provide
 
 ---
 
-### `POST /dispatch/accept` **(Auth + provider license)**
+### `POST /dispatch/accept` **(Auth)**
 
-Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that shop (requires the `SHOP` license and must be its `operatorUid` or an admin; shop must be accepting). Admins bypass the license checks. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
+Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended). Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC` tickets need a `SHOP` provider, and `SOS` tickets take no provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
 
 **Request:**
 ```json
@@ -1221,6 +1297,17 @@ Accept a pending ticket at will. Without `shopId`, the caller accepts as a volun
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "message": "Ticket accepted", "data": { "matched": true, "kind": "SHOP" } }
+```
+
+---
+
+### `POST /dispatch/destination` **(Auth + `RIDER` license)**
+
+Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP`) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. The chosen destination is snapshotted onto the ticket.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "destinationPoint": { "lat": 10.71, "lng": 106.61, "label": "Home" } }
 ```
 
 ---
@@ -1240,7 +1327,7 @@ Fan out an SOS ticket to candidate volunteers' FCM tokens (`"SOS request near yo
 
 ## Ratings
 
-Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update). Targets are `VOLUNTEER`, `SHOP`, or `RIDER`. Averages denormalize to `ratingAvg`/`ratingCount` on users/shops and onto the ticket (`helperRating`/`riderRating`).
+Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update). Targets are `VOLUNTEER`, `SHOP`, or `RIDER`. Averages denormalize to `ratingAvg`/`ratingCount` on users/providers and onto the ticket (`helperRating`/`riderRating`).
 
 ### `POST /ratings` **(Auth)**
 

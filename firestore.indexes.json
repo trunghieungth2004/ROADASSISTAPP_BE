@@ -33,6 +33,15 @@
       ]
     },
     {
+      "collectionGroup": "saved_places",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "lat", "order": "ASCENDING" },
+        { "fieldPath": "lng", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "ratings",
       "queryScope": "COLLECTION",
       "fields": [
@@ -48,6 +57,31 @@
         { "fieldPath": "targetKind", "order": "ASCENDING" },
         { "fieldPath": "byUserId", "order": "ASCENDING" },
         { "fieldPath": "ticketId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId", "order": "ASCENDING" },
+        { "fieldPath": "reportedBy", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "provider_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "providerId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
       ]
     }
   ],

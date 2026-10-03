@@ -1,6 +1,6 @@
 import * as ratingRepository from "../repository/ratingRepository";
 import * as dispatchRepository from "../repository/dispatchRepository";
-import * as shopRepository from "../repository/shopRepository";
+import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
 import {
@@ -44,7 +44,7 @@ const checkRiderTarget = async (
   if (ticket.assignedUid === byUserId) return;
   const assignedShop = ticket.assignedShopId as string | null;
   if (typeof assignedShop === "string" && assignedShop !== "") {
-    const shop = await shopRepository.findById(assignedShop);
+    const shop = await providerRepository.findById(assignedShop);
     if (shop && shop.operatorUid === byUserId) return;
   }
   throw new ForbiddenError("Only the helper rates the rider");
@@ -113,7 +113,7 @@ const submitRating = async ({
     targetKind,
   );
   if (targetKind === RATING_TARGET.SHOP) {
-    await shopRepository.updateRating(targetId, avg, count);
+    await providerRepository.updateRating(targetId, avg, count);
   } else {
     await userRepository.updateRating(targetId, avg, count);
     cacheManager.del("user", targetId);

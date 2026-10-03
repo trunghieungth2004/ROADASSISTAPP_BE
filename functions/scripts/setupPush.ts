@@ -5,6 +5,7 @@ import {
   projectOf,
   QUEUE_NAME,
 } from "./createTaskQueue";
+import {assertGcloudAuth} from "./gcloudAuth";
 
 const FUNCTION_DEFAULT = "api";
 const REGION_DEFAULT = "asia-southeast1";
@@ -87,6 +88,7 @@ const functionBindingState = (
 };
 
 const main = async (): Promise<void> => {
+  assertGcloudAuth();
   const checkOnly = process.argv.includes("--check");
   const project = projectOf();
   if (project === "") {

@@ -38,6 +38,7 @@ const RATING_MAX = 5;
 
 const VOLUNTEER_FRESH_MS = 15 * 60 * 1000;
 const VOLUNTEER_DEFAULT_RADIUS = 5000;
+const PROVIDER_FRESH_MS = 15 * 60 * 1000;
 const WALK_RADIUS_MIN = 500;
 const WALK_RADIUS_MAX = 2000;
 const SHOP_SEARCH_MAX_RADIUS = 10000;
@@ -74,9 +75,33 @@ const VOLUNTEER_CAPABILITY = {
 
 const SERVICE_ROLE = {
   RIDER: "RIDER",
+  VOLUNTEER: "VOLUNTEER",
+} as const;
+
+const PROVIDER_KIND = {
   SHOP: "SHOP",
   TOW: "TOW",
-  VOLUNTEER: "VOLUNTEER",
+} as const;
+
+const PROVIDER_STATUS = {
+  ACTIVE: "ACTIVE",
+  PENDING: "PENDING",
+  DENIED: "DENIED",
+} as const;
+
+const PROVIDER_REPORT_REASON = {
+  FAKE_BUSINESS: "FAKE_BUSINESS",
+  WRONG_LOCATION: "WRONG_LOCATION",
+  UNSAFE: "UNSAFE",
+  HARASSMENT: "HARASSMENT",
+  SPAM: "SPAM",
+  OTHER: "OTHER",
+} as const;
+
+const PROVIDER_REPORT_STATUS = {
+  OPEN: "OPEN",
+  RESOLVED: "RESOLVED",
+  DISMISSED: "DISMISSED",
 } as const;
 
 interface StatusDefinition {
@@ -188,10 +213,35 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
   ),
 };
 
+const PROVIDER_STATUSES: Record<string, StatusDefinition> = {
+  [PROVIDER_STATUS.PENDING]: definition(
+    "providers",
+    PROVIDER_STATUS.PENDING,
+    "Pending",
+    "Tow provider awaiting admin review",
+    1,
+  ),
+  [PROVIDER_STATUS.ACTIVE]: definition(
+    "providers",
+    PROVIDER_STATUS.ACTIVE,
+    "Active",
+    "Provider visible to riders and able to accept work",
+    2,
+  ),
+  [PROVIDER_STATUS.DENIED]: definition(
+    "providers",
+    PROVIDER_STATUS.DENIED,
+    "Denied",
+    "Provider rejected by admin review",
+    3,
+  ),
+};
+
 const STATUS_GROUPS: Record<string, Record<string, StatusDefinition>> = {
   users: USER_STATUSES,
   flags: FLAG_STATUSES,
   dispatch: DISPATCH_STATUSES,
+  providers: PROVIDER_STATUSES,
 };
 
 export {
@@ -213,9 +263,15 @@ export {
   TOW_VEHICLE_TYPE,
   VOLUNTEER_CAPABILITY,
   SERVICE_ROLE,
+  PROVIDER_KIND,
+  PROVIDER_STATUS,
+  PROVIDER_REPORT_REASON,
+  PROVIDER_REPORT_STATUS,
+  PROVIDER_FRESH_MS,
   USER_STATUSES,
   FLAG_STATUSES,
   DISPATCH_STATUSES,
   STATUS_GROUPS,
+  PROVIDER_STATUSES,
   StatusDefinition,
 };

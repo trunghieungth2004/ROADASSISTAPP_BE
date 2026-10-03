@@ -28,11 +28,4 @@ export default (
     validate({body: schemas.addRideConfig}),
     vehicleProfileController.addRideConfig,
   );
-  app.put(
-    "/vehicleProfiles/tow",
-    requireAuth,
-    requireService(SERVICE_ROLE.TOW),
-    validate({body: schemas.setTowVehicle}),
-    vehicleProfileController.setTowVehicle,
-  );
 };

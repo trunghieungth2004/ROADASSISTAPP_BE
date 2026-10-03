@@ -13,7 +13,9 @@ const ALL_COLLECTIONS = [
   "alley_segments",
   "flags",
   "landmarks",
-  "shops",
+  "providers",
+  "provider_locations",
+  "provider_reports",
   "diagnostics",
   "dispatch_tickets",
   "volunteer_locations",
@@ -21,6 +23,7 @@ const ALL_COLLECTIONS = [
   "fcm_tokens",
   "routing_cache",
   "saved_routes",
+  "saved_places",
 ];
 
 const cleanCollection = async (name: string): Promise<void> => {
@@ -201,23 +204,43 @@ const seedLandmark = async (
   return ref.id;
 };
 
-const seedShop = async (
+const seedProvider = async (
   overrides: Record<string, unknown> = {},
 ): Promise<string> => {
-  const ref = db.collection("shops").doc();
+  const kind = (overrides.kind as string) ?? "SHOP";
+  const plate = overrides.plate as string | undefined;
+  const ref = plate && kind === "TOW" ?
+    db.collection("providers").doc(plate) :
+    db.collection("providers").doc();
   const lat = (overrides.lat as number) ?? BASE_LAT;
   const lng = (overrides.lng as number) ?? BASE_LNG;
-  const name = (overrides.name as string) ?? `Shop ${ref.id}`;
+  const name = (overrides.name as string) ?? `Provider ${ref.id}`;
+  const {kind: _kind, plate: _plate, ...rest} = overrides;
+  void _kind;
+  void _plate;
   await ref.set({
     name,
     nameLower: name.trim().toLowerCase(),
     lat,
     lng,
-    type: "SHOP",
+    kind,
+    operatorUid: `${PREFIX}-user-1`,
+    accepting: true,
+    status: "ACTIVE",
+    suspended: false,
+    suspendedAt: null,
+    suspendedReason: null,
+    suspendedBy: null,
+    plate: null,
+    plateRaw: null,
+    vehicleType: null,
+    vehicleWidth: null,
+    openHours: null,
+    label: null,
     geoHash: encodeGeohash(lat, lng, 8),
     geoCell: encodeGeohash(lat, lng, 6),
     createdAt: new Date().toISOString(),
-    ...overrides,
+    ...rest,
   });
   return ref.id;
 };
@@ -289,7 +312,7 @@ export {
   seedSegment,
   seedFlag,
   seedLandmark,
-  seedShop,
+  seedProvider,
   seedDiagnostic,
   seedTicket,
   seedRoute,

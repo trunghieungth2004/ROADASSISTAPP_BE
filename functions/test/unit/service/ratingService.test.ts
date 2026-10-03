@@ -2,14 +2,14 @@ import * as ratingRepository from
   "../../../repository/ratingRepository";
 import * as dispatchRepository from
   "../../../repository/dispatchRepository";
-import * as shopRepository from "../../../repository/shopRepository";
+import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {submitRating} from "../../../service/ratingService";
 
 jest.mock("../../../repository/ratingRepository");
 jest.mock("../../../repository/dispatchRepository");
-jest.mock("../../../repository/shopRepository");
+jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
 
 beforeEach(() => {
@@ -182,7 +182,7 @@ describe("ratingService.submitRating", () => {
         score: 4,
       }),
     ).resolves.toEqual({avg: 4.5, count: 2, updated: 1});
-    expect(shopRepository.updateRating).toHaveBeenCalledWith(
+    expect(providerRepository.updateRating).toHaveBeenCalledWith(
       "shop9",
       4.5,
       2,
@@ -229,7 +229,7 @@ describe("ratingService.submitRating", () => {
       assignedShopId: "shop1",
       destinationShopId: null,
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
       operatorUid: "op1",
     } as never);

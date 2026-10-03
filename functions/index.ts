@@ -20,7 +20,7 @@ import landmarkRoutes from "./routes/landmarkRoutes";
 import placesRoutes from "./routes/placesRoutes";
 import savedPlaceRoutes from "./routes/savedPlaceRoutes";
 import routingRoutes from "./routes/routingRoutes";
-import shopRoutes from "./routes/shopRoutes";
+import providerRoutes from "./routes/providerRoutes";
 import diagnosticRoutes from "./routes/diagnosticRoutes";
 import dispatchRoutes from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
@@ -71,7 +71,10 @@ const writeLimiter = rateLimiter({
     message: "Too many requests, please try again later",
   },
 });
-app.use(["/flags", "/dispatch", "/routes", "/ratings"], writeLimiter);
+app.use(
+  ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places"],
+  writeLimiter,
+);
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -126,7 +129,7 @@ landmarkRoutes(app, routeDeps);
 placesRoutes(app, routeDeps);
 savedPlaceRoutes(app, routeDeps);
 routingRoutes(app, routeDeps);
-shopRoutes(app, routeDeps);
+providerRoutes(app, routeDeps);
 diagnosticRoutes(app, routeDeps);
 dispatchRoutes(app, routeDeps);
 ratingRoutes(app, routeDeps);

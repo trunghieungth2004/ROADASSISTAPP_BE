@@ -109,12 +109,6 @@ No body schema (lists the authenticated caller's profiles).
 | `estWidth` | number | opt |
 | `estHeight` | number | opt |
 
-### `PUT /vehicleProfiles/tow` — `setTowVehicle`
-| Field | Type | |
-|-------|------|---|
-| `profileId` | string | req |
-| `towVehicleType` | enum: CAR, VAN, TRUCK, or null (unset) | opt |
-
 ---
 
 ## Alley Segments
@@ -264,23 +258,97 @@ Responds `{cached, routes}` — up to 5 options stop-less (`routes[0]` primary),
 
 ---
 
-## Shops (XeAssist stub)
+## Providers
 
-### `POST /shops` — `createShop`
+Provider records in the top-level `providers` collection. Kinds: `SHOP` (fixed premises,
+`ACTIVE` on create) and `TOW` (comes to you, `PENDING` on create, admin approves). `TOW`
+doc id is the normalized plate (uppercased, non-alphanumerics stripped); plates are
+immutable. Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
+Live tow positions live in `provider_locations` (doc id = provider id; 15-minute freshness).
+Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`,
+`UNSAFE`, `HARASSMENT`, `SPAM`, `OTHER`; statuses `OPEN`/`RESOLVED`/`DISMISSED`).
+
+### `POST /providers` — `createProvider`
 | Field | Type | |
 |-------|------|---|
+| `kind` | enum: SHOP, TOW | req |
 | `name` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
-| `type` | enum: SHOP, MOBILE, TOW | req |
+| `label` | string | opt |
+| `openHours` | string (`DAY HH:MM-HH:MM,...`) | SHOP only |
+| `plate` | string | TOW only, req |
+| `vehicleType` | enum: CAR, VAN, TRUCK | TOW only, req |
+| `vehicleWidth` | number (0.3–3) | TOW only, opt |
 
-### `POST /shops/near` — `nearShops`
+### `PUT /providers` — `updateProvider`
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+| `name` | string | opt |
+| `label` | string (allows `""`/`null`) | opt |
+| `lat` | lat | opt (with `lng`) |
+| `lng` | lng | opt (with `lat`) |
+| `openHours` | string (allows `""`/`null`) | opt |
+| `accepting` | boolean | opt |
+
+### `POST /providers/near` — `nearProviders`
 | Field | Type | |
 |-------|------|---|
 | `lat` | lat | req |
 | `lng` | lng | req |
-| `radiusMeters` | number | opt (default 2000) |
-| `type` | enum: SHOP, MOBILE, TOW | opt |
+| `radiusMeters` | number | opt (200–10000, default 2000) |
+| `kind` | enum: SHOP, TOW | opt |
+| `acceptingOnly` | boolean | opt |
+| `openOnly` | boolean | opt |
+| `limit` | number | opt (1–20) |
+
+### `POST /providers/mine` — `myProviders`
+No fields. Returns the caller's own records with statuses, denial notes, and suspension state.
+
+### `POST /providers/pending` — `listPending` (admin)
+No fields. Pending providers with applicant name, email, and `openReportCount`.
+
+### `POST /providers/review` — `reviewProvider` (admin)
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+| `approve` | boolean | req |
+| `reviewNote` | string | opt |
+
+### `POST /providers/report` — `reportProvider`
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+| `reason` | enum: FAKE_BUSINESS, WRONG_LOCATION, UNSAFE, HARASSMENT, SPAM, OTHER | req |
+| `note` | string (max 280) | opt |
+| `ticketId` | string | opt |
+
+### `POST /providers/reports` — `listReports` (admin)
+No fields. Open reports oldest-first with provider context.
+
+### `POST /providers/reports/dismiss` — `dismissReport` (admin)
+| Field | Type | |
+|-------|------|---|
+| `reportId` | string | req |
+
+### `POST /providers/suspend` — `suspendProvider` (admin)
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+| `reason` | string (max 280) | opt |
+| `reportId` | string | opt |
+
+### `POST /providers/restore` — `restoreProvider` (admin)
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+
+### `POST /providers/location` — `updateProviderLocation`
+| Field | Type | |
+|-------|------|---|
+| `lat` | lat | req |
+| `lng` | lng | req |
 
 ---
 

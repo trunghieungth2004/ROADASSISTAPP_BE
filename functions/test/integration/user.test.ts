@@ -219,10 +219,10 @@ describe("service licenses", () => {
     const grant = await request(app)
       .put("/users/services")
       .set("Authorization", bearer(ADMIN))
-      .send({targetUserId: TARGET, grant: ["VOLUNTEER", "SHOP"]});
+      .send({targetUserId: TARGET, grant: ["VOLUNTEER"]});
     expect(grant.status).toBe(200);
     expect(grant.body.data.services).toEqual(
-      expect.arrayContaining(["RIDER", "VOLUNTEER", "SHOP"]),
+      expect.arrayContaining(["RIDER", "VOLUNTEER"]),
     );
     const toggle = await request(app)
       .put("/users/volunteer")
@@ -246,10 +246,23 @@ describe("service licenses", () => {
     const res = await request(app)
       .put("/users/onboard")
       .set("Authorization", bearer(TARGET))
-      .send({service: "TOW"});
+      .send({service: "VOLUNTEER"});
     expect(res.status).toBe(200);
     const doc = await db.collection("users").doc(TARGET).get();
-    expect(doc.data()?.services).toContain("TOW");
+    expect(doc.data()?.services).toContain("VOLUNTEER");
+  });
+
+  it("PUT /users/onboard refuses retired provider licenses", async () => {
+    const shop = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(TARGET))
+      .send({service: "SHOP"});
+    expect(shop.status).toBe(400);
+    const tow = await request(app)
+      .put("/users/onboard")
+      .set("Authorization", bearer(TARGET))
+      .send({service: "TOW"});
+    expect(tow.status).toBe(400);
   });
 });
 

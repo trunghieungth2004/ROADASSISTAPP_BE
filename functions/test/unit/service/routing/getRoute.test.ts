@@ -318,7 +318,7 @@ describe("routingService.getRoute", () => {
     expect(mockPostRoutes.mock.calls[1][1]).toEqual([]);
   });
 
-  it("routes foot mode with the pedestrian costing and no width gate", async () => {
+  it("routes foot mode with pedestrian costing, no width gate", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);

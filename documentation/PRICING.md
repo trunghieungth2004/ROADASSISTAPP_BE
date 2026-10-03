@@ -24,7 +24,7 @@ agreed pricing shape for a future build so the data model grows toward it.
 
 ## Fields the model will need
 
-- `shops`: `serviceFee`, `towBaseFee`, `towPerKmFee`.
+- `providers`: `serviceFee`, `towBaseFee`, `towPerKmFee` (not yet implemented — no fee fields exist on the record today).
 - `dispatch_tickets`: `vehicleType`/`vehicleWidth` (shipped), plus
   `priceEstimate` (+ `priceCurrency: "VND"`) computed at create/select time.
 - Offers: per-offer `priceEstimate` so the rider compares providers.

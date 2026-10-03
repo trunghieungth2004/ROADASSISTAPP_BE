@@ -37,7 +37,6 @@ export default (
   app.post(
     "/dispatch/near",
     requireAuth,
-    requireService(SERVICE_ROLE.VOLUNTEER, SERVICE_ROLE.SHOP),
     validate({body: schemas.nearDispatch}),
     dispatchController.nearDispatch,
   );

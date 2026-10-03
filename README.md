@@ -86,7 +86,7 @@ Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve the c
 
 ## Deploying Indexes
 
-The `flags` expiry query needs a composite index on `(status, ttlExpiresAt)` — declared in `firestore.indexes.json`; deploy it with:
+Multi-field queries need composite indexes — declared in `firestore.indexes.json` (flags expiry + reporter history, saved routes/places incl. coord dedupe, rating aggregates, provider report queue); deploy them with:
 
 ```bash
 firebase deploy --only firestore:indexes

@@ -1,7 +1,7 @@
 import * as dispatchRepository from
   "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
-import * as shopRepository from "../../../repository/shopRepository";
+import * as providerRepository from "../../../repository/providerRepository";
 import * as alleySegmentRepository from
   "../../../repository/alleySegmentRepository";
 import * as volunteerLocationRepository from
@@ -23,7 +23,7 @@ import {
 
 jest.mock("../../../repository/dispatchRepository");
 jest.mock("../../../repository/userRepository");
-jest.mock("../../../repository/shopRepository");
+jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/alleySegmentRepository");
 jest.mock("../../../repository/volunteerLocationRepository");
 jest.mock("../../../repository/fcmTokenRepository");
@@ -158,6 +158,24 @@ describe("dispatchService.getDispatch", () => {
       id: "t1",
     });
   });
+
+  it("attaches the tow plate on tow-assigned tickets", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      assignedShopId: "tow1",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      plate: "30A12345",
+      operatorUid: "op1",
+    } as never);
+    await expect(getDispatch("t1", "rider1")).resolves.toMatchObject({
+      id: "t1",
+      towPlate: "30A12345",
+    });
+  });
 });
 
 describe("dispatchService.updateDispatchStatus", () => {
@@ -217,15 +235,15 @@ describe("dispatchService.updateDispatchStatus", () => {
       role: "2",
       services: ["RIDER"],
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "tow1",
-      type: "TOW",
+      kind: "TOW",
       accepting: false,
     } as never);
     await expect(
       updateDispatchStatus({id: "t1", status: "4", userId: "u1"}),
     ).resolves.toEqual({updated: 1});
-    expect(shopRepository.update).toHaveBeenCalledWith("tow1", {
+    expect(providerRepository.update).toHaveBeenCalledWith("tow1", {
       accepting: true,
     });
   });
@@ -262,12 +280,13 @@ describe("dispatchService.createDispatch extras", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop9",
       name: "Fix",
       lat: 10.7,
       lng: 106.6,
-      type: "SHOP",
+      kind: "SHOP",
+      status: "ACTIVE",
     } as never);
     const ticket = {id: "t1", status: "1"};
     jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
@@ -286,7 +305,7 @@ describe("dispatchService.createDispatch extras", () => {
           name: "Fix",
           lat: 10.7,
           lng: 106.6,
-          type: "SHOP",
+          kind: "SHOP",
         },
       }),
     );
@@ -296,7 +315,7 @@ describe("dispatchService.createDispatch extras", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue(null);
+    jest.mocked(providerRepository.findById).mockResolvedValue(null);
     await expect(
       createDispatch({
         userId: "u1",
@@ -388,6 +407,7 @@ describe("dispatchService.selectDispatch", () => {
     id: "t1",
     userId: "rider1",
     status: "1",
+    ticketType: "MECHANIC",
   };
 
   it("rejects selection by strangers with 403", async () => {
@@ -421,7 +441,7 @@ describe("dispatchService.selectDispatch", () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       ticket as never,
     );
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
       accepting: false,
     } as never);
@@ -438,8 +458,10 @@ describe("dispatchService.selectDispatch", () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       ticket as never,
     );
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
+      kind: "SHOP",
+      status: "ACTIVE",
       accepting: true,
     } as never);
     await expect(
@@ -461,6 +483,7 @@ describe("dispatchService.updateDispatchDestination", () => {
     id: "t1",
     userId: "rider1",
     status: "1",
+    ticketType: "TOW",
   };
 
   it("rejects updates by strangers with 403", async () => {
@@ -503,7 +526,7 @@ describe("dispatchService.updateDispatchDestination", () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       ticket as never,
     );
-    jest.mocked(shopRepository.findById).mockResolvedValue(null);
+    jest.mocked(providerRepository.findById).mockResolvedValue(null);
     await expect(
       updateDispatchDestination({
         userId: "rider1",
@@ -525,18 +548,19 @@ describe("dispatchService.updateDispatchDestination", () => {
         name: "Fix Co",
         lat: 10.7,
         lng: 106.6,
-        type: "SHOP",
+        kind: "SHOP",
       },
     };
     jest.mocked(dispatchRepository.findById)
       .mockResolvedValueOnce(ticket as never)
       .mockResolvedValueOnce(stored as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
       name: "Fix Co",
       lat: 10.7,
       lng: 106.6,
-      type: "SHOP",
+      kind: "SHOP",
+      status: "ACTIVE",
     } as never);
     await expect(
       updateDispatchDestination({
@@ -701,9 +725,10 @@ describe("dispatchService.acceptDispatch", () => {
       id: "t1",
       status: "1",
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
-      type: "SHOP",
+      kind: "SHOP",
+      status: "ACTIVE",
       accepting: true,
       operatorUid: "op1",
     } as never);
@@ -720,14 +745,166 @@ describe("dispatchService.acceptDispatch", () => {
     ).rejects.toMatchObject({statusCode: 403});
   });
 
-  it("rejects shop accepts without the shop license", async () => {
+  it("matches a shop for its operator without a license", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       status: "1",
+      ticketType: "MECHANIC",
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop1",
-      type: "SHOP",
+      kind: "SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "shop1",
+      }),
+    ).resolves.toEqual({matched: true, kind: "SHOP"});
+  });
+
+  it("matches a tow and flips it busy", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "TOW",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "30A12345",
+      kind: "TOW",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      plate: "30A12345",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "tow1",
+      }),
+    ).resolves.toEqual({matched: true, kind: "SHOP"});
+    expect(providerRepository.update).toHaveBeenCalledWith("tow1", {
+      accepting: false,
+    });
+  });
+
+  it("rejects tow accepts without an approved registration", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "TOW",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "30A12345",
+      kind: "TOW",
+      status: "PENDING",
+      accepting: true,
+      operatorUid: "op1",
+      plate: "30A12345",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "tow1",
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a shop accepting a tow ticket with 400", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "TOW",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      kind: "SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "shop1",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a tow accepting a mechanic ticket with 400", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "MECHANIC",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "30A12345",
+      kind: "TOW",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      plate: "30A12345",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "30A12345",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
+  });
+
+  it("rejects provider accepts on SOS tickets with 403", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "SOS",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      kind: "SHOP",
+      status: "ACTIVE",
       accepting: true,
       operatorUid: "op1",
     } as never);
@@ -743,38 +920,35 @@ describe("dispatchService.acceptDispatch", () => {
         shopId: "shop1",
       }),
     ).rejects.toMatchObject({statusCode: 403});
-    expect(dispatchRepository.update).not.toHaveBeenCalled();
+    expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
   });
 
-  it("matches a tow and flips it busy", async () => {
+  it("rejects tow accepts with no plate on file", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       status: "1",
+      ticketType: "TOW",
     } as never);
-    jest.mocked(shopRepository.findById).mockResolvedValue({
+    jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "tow1",
-      type: "TOW",
+      kind: "TOW",
+      status: "ACTIVE",
       accepting: true,
       operatorUid: "op1",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "op1",
       role: "2",
-      services: ["SHOP"],
+      services: ["RIDER"],
     } as never);
-    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
-      true,
-    );
     await expect(
       acceptDispatch({
         userId: "op1",
         ticketId: "t1",
         shopId: "tow1",
       }),
-    ).resolves.toEqual({matched: true, kind: "SHOP"});
-    expect(shopRepository.update).toHaveBeenCalledWith("tow1", {
-      accepting: false,
-    });
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
   });
 });
 
@@ -801,6 +975,8 @@ describe("dispatchService.nearDispatch", () => {
     ] as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "vol1",
+      services: ["VOLUNTEER"],
+      volunteerAvailable: true,
       capability: "SOLO_BIKE",
     } as never);
     const result = await nearDispatch({
@@ -811,6 +987,24 @@ describe("dispatchService.nearDispatch", () => {
     expect(result.map((t) => (t as {id: string}).id)).toEqual(["bike"]);
   });
 
+  it("hides pending tickets from volunteers with mode off", async () => {
+    jest.mocked(dispatchRepository.findByStatus).mockResolvedValue([
+      {id: "near", lat: 10.7626, lng: 106.6602, ticketType: "SOS"},
+    ] as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "vol1",
+      services: ["VOLUNTEER"],
+      volunteerAvailable: false,
+    } as never);
+    const result = await nearDispatch({
+      userId: "vol1",
+      lat: 10.7626,
+      lng: 106.6602,
+    });
+    expect(result).toEqual([]);
+    expect(dispatchRepository.findByStatus).not.toHaveBeenCalled();
+  });
+
   it("shows car tow tickets to operators without a capability", async () => {
     jest.mocked(dispatchRepository.findByStatus).mockResolvedValue([
       {id: "tow", lat: 10.7626, lng: 106.6602, ticketType: "TOW",
@@ -818,7 +1012,12 @@ describe("dispatchService.nearDispatch", () => {
     ] as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "op1",
+      services: ["RIDER"],
+      volunteerAvailable: false,
     } as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {id: "30A12345", kind: "TOW", status: "ACTIVE"},
+    ] as never);
     const result = await nearDispatch({
       userId: "op1",
       lat: 10.7626,
@@ -831,12 +1030,12 @@ describe("dispatchService.nearDispatch", () => {
 
 describe("dispatchService.dispatchOffers", () => {
   it("lists accepting providers nearest first", async () => {
-    jest.mocked(shopRepository.findByGeohashPrefixes).mockResolvedValue(
+    jest.mocked(providerRepository.findByGeohashPrefixes).mockResolvedValue(
       [
-        {id: "near", lat: 10.7626, lng: 106.6602, type: "TOW",
-          accepting: true},
-        {id: "off", lat: 10.7626, lng: 106.6602, type: "TOW",
-          accepting: false},
+        {id: "near", lat: 10.7626, lng: 106.6602, kind: "TOW",
+          status: "ACTIVE", accepting: true},
+        {id: "off", lat: 10.7626, lng: 106.6602, kind: "TOW",
+          status: "ACTIVE", accepting: false},
       ] as never,
     );
     const result = await dispatchOffers({
@@ -1052,14 +1251,16 @@ describe("dispatchService vehicle and capability", () => {
   });
 
   it("labels tow offers with alley fit", async () => {
-    jest.mocked(shopRepository.findByGeohashPrefixes).mockResolvedValue(
+    jest.mocked(providerRepository.findByGeohashPrefixes).mockResolvedValue(
       [
-        {id: "fits", lat: 10.7626, lng: 106.6602, type: "TOW",
-          accepting: true, towVehicleType: "CAR", towVehicleWidth: 1.9},
-        {id: "wide", lat: 10.7626, lng: 106.6602, type: "TOW",
-          accepting: true, towVehicleType: "TRUCK", towVehicleWidth: 2.5},
-        {id: "mech", lat: 10.7626, lng: 106.6602, type: "SHOP",
-          accepting: true},
+        {id: "fits", lat: 10.7626, lng: 106.6602, kind: "TOW",
+          status: "ACTIVE", accepting: true, vehicleType: "CAR",
+          vehicleWidth: 1.9},
+        {id: "wide", lat: 10.7626, lng: 106.6602, kind: "TOW",
+          status: "ACTIVE", accepting: true, vehicleType: "TRUCK",
+          vehicleWidth: 2.5},
+        {id: "mech", lat: 10.7626, lng: 106.6602, kind: "SHOP",
+          status: "ACTIVE", accepting: true},
       ] as never,
     );
     const result = await dispatchOffers({
@@ -1074,10 +1275,11 @@ describe("dispatchService vehicle and capability", () => {
   });
 
   it("leaves alley fit unknown without a clearance", async () => {
-    jest.mocked(shopRepository.findByGeohashPrefixes).mockResolvedValue(
+    jest.mocked(providerRepository.findByGeohashPrefixes).mockResolvedValue(
       [
-        {id: "tow", lat: 10.7626, lng: 106.6602, type: "TOW",
-          accepting: true, towVehicleType: "CAR", towVehicleWidth: 1.9},
+        {id: "tow", lat: 10.7626, lng: 106.6602, kind: "TOW",
+          status: "ACTIVE", accepting: true, vehicleType: "CAR",
+          vehicleWidth: 1.9},
       ] as never,
     );
     const result = await dispatchOffers({

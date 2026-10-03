@@ -17,7 +17,7 @@ const VOLUNLICENSED = `${PREFIX}-unlicensed`;
 
 beforeAll(async () => {
   await cleanAll();
-  await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "SHOP"]);
+  await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
   await seedUser(VOLUNLICENSED, "2");
 });
 
@@ -94,17 +94,29 @@ describe("dispatch endpoints", () => {
     expect(res.status).toBe(403);
   });
 
-  it("POST /dispatch/near requires a provider license", async () => {
+  it("POST /dispatch/near hides tickets from unavailable callers", async () => {
     const denied = await request(app)
       .post("/dispatch/near")
       .set("Authorization", bearer(VOLUNLICENSED))
       .send({lat: BASE_LAT, lng: BASE_LNG});
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(200);
+    expect(denied.body.data).toEqual([]);
     const onboard = await request(app)
       .put("/users/onboard")
       .set("Authorization", bearer(VOLUNLICENSED))
       .send({service: "VOLUNTEER"});
     expect(onboard.status).toBe(200);
+    const stillHidden = await request(app)
+      .post("/dispatch/near")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({lat: BASE_LAT, lng: BASE_LNG});
+    expect(stillHidden.status).toBe(200);
+    expect(stillHidden.body.data).toEqual([]);
+    const toggle = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(VOLUNLICENSED))
+      .send({available: true});
+    expect(toggle.status).toBe(200);
     const allowed = await request(app)
       .post("/dispatch/near")
       .set("Authorization", bearer(VOLUNLICENSED))
@@ -115,27 +127,49 @@ describe("dispatch endpoints", () => {
 
 describe("dispatch assist flow", () => {
   const VOL = `${PREFIX}-volunteer`;
+  const ADMIN = `${PREFIX}-admin`;
   let shopId = "";
+  let destShopId = "";
   let flowTicket = "";
 
   it("seeds a volunteer and a tow shop", async () => {
     await seedUser(VOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
+    await seedUser(ADMIN, "1", STATUS_USER.ACTIVE, 0, ["RIDER"]);
     const toggle = await request(app)
       .put("/users/volunteer")
       .set("Authorization", bearer(VOL))
       .send({available: true});
     expect(toggle.status).toBe(200);
     const shop = await request(app)
-      .post("/shops")
+      .post("/providers")
       .set("Authorization", bearer(USER))
       .send({
+        kind: "TOW",
         name: "Tow Co",
         lat: BASE_LAT,
         lng: BASE_LNG,
-        type: "TOW",
+        plate: "30A-12345",
+        vehicleType: "VAN",
+        vehicleWidth: 2.0,
       });
     expect(shop.status).toBe(201);
     shopId = shop.body.data.id as string;
+    const review = await request(app)
+      .post("/providers/review")
+      .set("Authorization", bearer(ADMIN))
+      .send({providerId: "30A12345", approve: true});
+    expect(review.status).toBe(200);
+    const dest = await request(app)
+      .post("/providers")
+      .set("Authorization", bearer(USER))
+      .send({
+        kind: "SHOP",
+        name: "Fix Shop",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+      });
+    expect(dest.status).toBe(201);
+    destShopId = dest.body.data.id as string;
   });
 
   it("POST /dispatch carries note and destination", async () => {
@@ -147,12 +181,12 @@ describe("dispatch assist flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         note: "Alley gate",
-        destinationShopId: shopId,
+        destinationShopId: destShopId,
       });
     expect(res.status).toBe(201);
     expect(res.body.data.note).toBe("Alley gate");
-    expect(res.body.data.destinationShopId).toBe(shopId);
-    expect(res.body.data.destinationSnapshot.name).toBe("Tow Co");
+    expect(res.body.data.destinationShopId).toBe(destShopId);
+    expect(res.body.data.destinationSnapshot.name).toBe("Fix Shop");
     flowTicket = res.body.data.id as string;
   });
 
@@ -234,6 +268,56 @@ describe("dispatch assist flow", () => {
       .send({ticketId: flowTicket});
     expect(ticket.body.data.status).toBe("2");
     expect(ticket.body.data.assignedShopId).toBe(shopId);
+  });
+
+  it("rejects kind-mismatched accepts with 400", async () => {
+    const ticket = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "MECHANIC",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        vehicleType: "SCOOTER",
+      });
+    expect(ticket.status).toBe(201);
+    const res = await request(app)
+      .post("/dispatch/accept")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: ticket.body.data.id, shopId});
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects unapproved tow accepts with 403", async () => {
+    const FRESH = `${PREFIX}-fresh-tow`;
+    await seedUser(FRESH, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
+    const shop = await request(app)
+      .post("/providers")
+      .set("Authorization", bearer(FRESH))
+      .send({
+        kind: "TOW",
+        name: "Unreviewed Tow",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        plate: "51F-99999",
+        vehicleType: "TRUCK",
+      });
+    expect(shop.status).toBe(201);
+    const ticket = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(FRESH))
+      .send({
+        ticketType: "TOW",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        destinationPoint: {lat: 10.71, lng: 106.61},
+      });
+    expect(ticket.status).toBe(201);
+    const res = await request(app)
+      .post("/dispatch/accept")
+      .set("Authorization", bearer(FRESH))
+      .send({ticketId: ticket.body.data.id, shopId: shop.body.data.id});
+    expect(res.status).toBe(403);
   });
 
   it("resolving restores tow availability", async () => {
@@ -354,20 +438,7 @@ describe("dispatch vehicle and capability flow", () => {
   });
 
   it("labels tow offers with alley fit", async () => {
-    const shop = await request(app)
-      .post("/shops")
-      .set("Authorization", bearer(USER))
-      .send({
-        name: "Car Tow",
-        lat: BASE_LAT,
-        lng: BASE_LNG,
-        type: "TOW",
-        hasTow: true,
-        towVehicleType: "CAR",
-        towVehicleWidth: 1.9,
-      });
-    expect(shop.status).toBe(201);
-    towId = shop.body.data.id as string;
+    towId = "30A12345";
     const wide = await request(app)
       .post("/dispatch/offers")
       .set("Authorization", bearer(USER))
