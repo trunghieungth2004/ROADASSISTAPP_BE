@@ -1,13 +1,15 @@
 import {Request, Response} from "express";
 import * as providerService from "../service/providerService";
+import * as ratingService from "../service/ratingService";
 import {sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
 
 const createProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {kind, name, lat, lng, label, openHours, plate, vehicleType,
-      vehicleWidth} = req.body;
+    const {kind, name, lat, lng, label, openHours, vehicleClasses,
+      serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
+      towPerKmFee} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
         userId,
@@ -18,6 +20,8 @@ const createProvider = async (req: Request, res: Response) => {
         plate,
         vehicleType,
         vehicleWidth,
+        towBaseFee,
+        towPerKmFee,
       }) :
       await providerService.createShopProvider({
         userId,
@@ -26,6 +30,8 @@ const createProvider = async (req: Request, res: Response) => {
         lng,
         label,
         openHours,
+        vehicleClasses,
+        serviceFee,
       });
     sendSuccess(res, result, {message: "Provider created", statusCode: 201});
   } catch (error) {
@@ -36,12 +42,23 @@ const createProvider = async (req: Request, res: Response) => {
 const updateProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {providerId, name, label, openHours, accepting, lat, lng} =
-      req.body;
+    const {providerId, name, label, openHours, vehicleClasses, serviceFee,
+      towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
-      fields: {name, label, openHours, accepting, lat, lng},
+      fields: {
+        name,
+        label,
+        openHours,
+        vehicleClasses,
+        serviceFee,
+        towBaseFee,
+        towPerKmFee,
+        accepting,
+        lat,
+        lng,
+      },
     });
     sendSuccess(res, result, {message: "Provider updated"});
   } catch (error) {
@@ -62,7 +79,7 @@ const myProviders = async (req: Request, res: Response) => {
 const nearProviders = async (req: Request, res: Response) => {
   try {
     const {lat, lng, kind, radiusMeters, acceptingOnly, openOnly,
-      limit} = req.body;
+      vehicleClass, limit} = req.body;
     const result = await providerService.nearProviders({
       lat,
       lng,
@@ -70,6 +87,7 @@ const nearProviders = async (req: Request, res: Response) => {
       radiusMeters,
       acceptingOnly,
       openOnly,
+      vehicleClass,
       limit,
     });
     sendSuccess(res, result);
@@ -194,6 +212,34 @@ const updateProviderLocation = async (req: Request, res: Response) => {
   }
 };
 
+const searchProviders = async (req: Request, res: Response) => {
+  try {
+    const {lat, lng, query, vehicleClass, radiusMeters, limit} = req.body;
+    const result = await providerService.searchProviders({
+      lat,
+      lng,
+      query,
+      vehicleClass,
+      radiusMeters,
+      limit,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const providerRatings = async (req: Request, res: Response) => {
+  try {
+    const {providerId} = req.body;
+    const result = await ratingService.providerRatings(providerId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 export {createProvider, updateProvider, myProviders, nearProviders,
+  searchProviders, providerRatings,
   listPending, reviewProvider, reportProvider, listReports, dismissReport,
   suspendProvider, restoreProvider, updateProviderLocation};

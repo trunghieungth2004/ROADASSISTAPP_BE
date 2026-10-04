@@ -37,14 +37,30 @@ const remove = async (providerId: string): Promise<void> => {
 const findByIds = async (
   providerIds: string[],
 ): Promise<Map<string, ProviderLocation>> => {
-  const out = new Map<string, ProviderLocation>();
-  for (const id of providerIds) {
-    const doc = await db.collection(COLLECTION).doc(id).get();
-    if (doc.exists) {
-      out.set(id, {providerId: id, ...doc.data()} as ProviderLocation);
-    }
+  if (!providerIds || providerIds.length === 0) {
+    return new Map();
   }
-  return out;
+  const IN_CHUNK_SIZE = 30;
+  const map = new Map<string, ProviderLocation>();
+  for (let i = 0; i < providerIds.length; i += IN_CHUNK_SIZE) {
+    const chunk = providerIds.slice(i, i + IN_CHUNK_SIZE);
+    const refs = chunk.map((id) =>
+      db.collection(COLLECTION).doc(id),
+    );
+    const docs = await db.getAll(...refs);
+    docs.forEach((doc) => {
+      if (doc.exists) {
+        map.set(
+          doc.id,
+          {
+            providerId: doc.id,
+            ...doc.data(),
+          } as ProviderLocation,
+        );
+      }
+    });
+  }
+  return map;
 };
 
 const findByGeohashPrefixes = async (

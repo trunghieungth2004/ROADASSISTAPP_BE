@@ -14,10 +14,12 @@ const createDispatch = async (req: Request, res: Response) => {
       alleySegmentId,
       accessWidthMeters,
       note,
+      providerId,
       destinationShopId,
       destinationPoint,
       vehicleType,
       vehicleWidth,
+      vehicleLabel,
     } = req.body;
     const result = await dispatchService.createDispatch({
       userId,
@@ -28,10 +30,12 @@ const createDispatch = async (req: Request, res: Response) => {
       alleySegmentId,
       accessWidthMeters,
       note,
+      providerId,
       destinationShopId,
       destinationPoint,
       vehicleType,
       vehicleWidth,
+      vehicleLabel,
     });
     sendSuccess(res, result, {message: "Dispatch created", statusCode: 201});
   } catch (error) {
@@ -156,6 +160,79 @@ const updateDispatchDestination = async (req: Request, res: Response) => {
   }
 };
 
+const declineDispatch = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, shopId, reason, note} = req.body;
+    const result = await dispatchService.declineDispatch({
+      userId,
+      ticketId,
+      shopId,
+      reason,
+      note,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const updateWorkOrder = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, workType, quotedAmount, finalAmount, invoiceRef} =
+      req.body;
+    const result = await dispatchService.updateWorkOrder({
+      userId,
+      ticketId,
+      workType,
+      quotedAmount,
+      finalAmount,
+      invoiceRef,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const shopRequests = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {shopId} = req.body;
+    const result = await dispatchService.shopRequests({userId, shopId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const shopRecords = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {shopId, limit} = req.body;
+    const result = await dispatchService.shopRecords({
+      userId,
+      shopId,
+      limit,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const feedTickets = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {limit} = req.body;
+    const result = await dispatchService.feedTickets({userId, limit});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
     const {ticketId} = req.body;
@@ -168,5 +245,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
 
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
-  dispatchOffers, selectDispatch, acceptDispatch, updateDispatchDestination,
+  dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
+  updateWorkOrder, shopRequests, shopRecords, feedTickets,
+  updateDispatchDestination,
   deliverDispatch};

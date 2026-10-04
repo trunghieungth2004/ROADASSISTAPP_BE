@@ -109,7 +109,7 @@ Device checklist: real Android device with Play Services, notifications allowed,
 
 ## Known limitation
 
-Push coverage is bounded by the `active_routes` 30-minute TTL. The TTL refreshes only on `POST /routes` — a trip with no reroute loses hazard push once its route doc expires, with no client-visible signal. The 15-minute sweep does not extend coverage; it deletes expired rows sooner, so if anything it makes the expiry arrive marginally earlier. The 3 km proximity poll in the app's navigation screen still covers near-but-off-route hazards, so the app degrades rather than going blind — but polling is not redundant with push, and push is not whole-trip.
+Push coverage is bounded by the `active_routes` 30-minute TTL. The TTL refreshes only on `POST /routes` — a trip with no reroute loses hazard push once its route doc expires, with no client-visible signal. The merged 30-minute sweep (`sweepRoutesAndWalkIns`) does not extend coverage; it deletes expired rows sooner, so if anything it makes the expiry arrive marginally earlier. The 3 km proximity poll in the app's navigation screen still covers near-but-off-route hazards, so the app degrades rather than going blind — but polling is not redundant with push, and push is not whole-trip.
 
 ## Testing
 

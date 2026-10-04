@@ -266,7 +266,7 @@ doc id is the normalized plate (uppercased, non-alphanumerics stripped); plates 
 immutable. Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
 Live tow positions live in `provider_locations` (doc id = provider id; 15-minute freshness).
 Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`,
-`UNSAFE`, `HARASSMENT`, `SPAM`, `OTHER`; statuses `OPEN`/`RESOLVED`/`DISMISSED`).
+`UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`; statuses `OPEN`/`RESOLVED`/`DISMISSED`).
 
 ### `POST /providers` — `createProvider`
 | Field | Type | |
@@ -277,6 +277,7 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `lng` | lng | req |
 | `label` | string | opt |
 | `openHours` | string (`DAY HH:MM-HH:MM,...`) | SHOP only |
+| `vehicleClasses` | array of `SOLO_BIKE`/`CAR` (1–2 unique) | SHOP only, opt (absent means both) |
 | `plate` | string | TOW only, req |
 | `vehicleType` | enum: CAR, VAN, TRUCK | TOW only, req |
 | `vehicleWidth` | number (0.3–3) | TOW only, opt |
@@ -290,6 +291,7 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `lat` | lat | opt (with `lng`) |
 | `lng` | lng | opt (with `lat`) |
 | `openHours` | string (allows `""`/`null`) | opt |
+| `vehicleClasses` | array of `SOLO_BIKE`/`CAR` (1–2 unique) | opt |
 | `accepting` | boolean | opt |
 
 ### `POST /providers/near` — `nearProviders`
@@ -301,6 +303,17 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `kind` | enum: SHOP, TOW | opt |
 | `acceptingOnly` | boolean | opt |
 | `openOnly` | boolean | opt |
+| `vehicleClass` | enum: `SOLO_BIKE`, `CAR` | opt (undeclared shops match all) |
+| `limit` | number | opt (1–20) |
+
+### `POST /providers/search` — `searchProviders`
+| Field | Type | |
+|-------|------|---|
+| `lat` | lat | req |
+| `lng` | lng | req |
+| `query` | string (1–120) | req |
+| `vehicleClass` | enum: `SOLO_BIKE`, `CAR` | opt |
+| `radiusMeters` | number | opt (200–10000, default 10000) |
 | `limit` | number | opt (1–20) |
 
 ### `POST /providers/mine` — `myProviders`
@@ -345,6 +358,11 @@ No fields. Open reports oldest-first with provider context.
 | `providerId` | string | req |
 
 ### `POST /providers/location` — `updateProviderLocation`
+
+### `POST /providers/ratings` — `providerRatings`
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
 | Field | Type | |
 |-------|------|---|
 | `lat` | lat | req |
@@ -372,10 +390,29 @@ No fields. Open reports oldest-first with provider context.
 ### `POST /dispatch` — `createDispatch`
 | Field | Type | |
 |-------|------|---|
-| `ticketType` | enum: MECHANIC, TOW, SOS | req |
+| `ticketType` | enum: MECHANIC, TOW, SOS, WALK_IN | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `diagnosticId` | string (allows `""`/`null`) | opt |
+| `providerId` | string | req for `WALK_IN` |
+| `vehicleLabel` | string (allows `""`/`null`) | opt |
+
+### `POST /dispatch/decline` — `declineDispatch`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `shopId` | string | req |
+| `reason` | enum: `FULL`, `CLOSED`, `PARTS_DELAY`, `OTHER` | req |
+| `note` | string (allows `""`/`null`) | opt |
+
+### `POST /dispatch/work` — `updateWorkOrder`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `workType` | string (allows `""`/`null`) | opt |
+| `quotedAmount` | integer ≥ 0 (VND) | opt |
+| `finalAmount` | integer ≥ 0 (VND) | opt |
+| `invoiceRef` | string (allows `""`/`null`) | opt |
 
 ### `POST /dispatch/one` — `getDispatch`
 | Field | Type | |
@@ -386,7 +423,24 @@ No fields. Open reports oldest-first with provider context.
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
-| `status` | enum: `"1"` Pending, `"2"` Matched, `"3"` Arrived, `"4"` Resolved, `"5"` Cancelled | req |
+| `status` | enum: `"1"` Pending, `"2"` Matched, `"3"` Arrived, `"4"` Resolved, `"5"` Cancelled, `"6"` In progress, `"7"` Ready, `"8"` Declined | req |
+
+### `POST /dispatch/shop/requests`, `POST /dispatch/shop/records` — `shopTickets`
+| Field | Type | |
+|-------|------|---|
+| `shopId` | string | req |
+| `limit` | number | opt for records (1–50) |
+
+## Ratings
+
+### `POST /ratings` — `submitRating`
+Rating a `destinationShopId` requires `fulfilledByShopId` (stamped on `READY`).
+
+### `POST /ratings/reply` — `replyRating`
+| Field | Type | |
+|-------|------|---|
+| `ratingId` | string | req |
+| `reply` | string (1–280) | req |
 
 ---
 

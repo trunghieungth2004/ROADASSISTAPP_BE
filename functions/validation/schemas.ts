@@ -3,6 +3,7 @@ import {
   RATING_MAX,
   RATING_MIN,
   RATING_TARGET,
+  DECLINE_REASON,
   PROVIDER_REPORT_REASON,
   SERVICE_ROLE,
   SHOP_SEARCH_MAX_RADIUS,
@@ -11,6 +12,7 @@ import {
   STATUS_USER,
   TOW_VEHICLE_TYPE,
   VEHICLE_TYPE,
+  VEHICLE_CLASS,
   VOLUNTEER_CAPABILITY,
 } from "../constants/status";
 
@@ -235,6 +237,16 @@ const schemas = {
       then: dayHoursPattern().allow("", null).optional(),
       otherwise: Joi.forbidden(),
     }),
+    vehicleClasses: Joi.when("kind", {
+      is: "SHOP",
+      then: Joi.array()
+        .items(Joi.string().valid(...Object.values(VEHICLE_CLASS)))
+        .min(1)
+        .max(2)
+        .unique()
+        .optional(),
+      otherwise: Joi.forbidden(),
+    }),
     plate: Joi.when("kind", {
       is: "TOW",
       then: Joi.string().trim().min(4).max(16).required(),
@@ -252,12 +264,36 @@ const schemas = {
       then: Joi.number().min(0.3).max(3).optional(),
       otherwise: Joi.forbidden(),
     }),
+    serviceFee: Joi.when("kind", {
+      is: "SHOP",
+      then: Joi.number().integer().min(0).max(999999999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    towBaseFee: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.number().integer().min(0).max(999999999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    towPerKmFee: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.number().integer().min(0).max(99999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
   }),
   updateProvider: Joi.object({
     providerId: strReq(),
     name: Joi.string().trim().min(1).max(120).optional(),
     label: Joi.string().trim().max(140).allow("", null).optional(),
     openHours: dayHoursPattern().allow("", null).optional(),
+    vehicleClasses: Joi.array()
+      .items(Joi.string().valid(...Object.values(VEHICLE_CLASS)))
+      .min(1)
+      .max(2)
+      .unique()
+      .optional(),
+    serviceFee: Joi.number().integer().min(0).max(999999999).optional(),
+    towBaseFee: Joi.number().integer().min(0).max(999999999).optional(),
+    towPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
     accepting: Joi.boolean().optional(),
     lat: latAttr().optional(),
     lng: langAttr().optional(),
@@ -270,6 +306,20 @@ const schemas = {
     kind: Joi.string().valid("SHOP", "TOW").optional(),
     acceptingOnly: Joi.boolean().optional(),
     openOnly: Joi.boolean().optional(),
+    vehicleClass: Joi.string()
+      .valid(...Object.values(VEHICLE_CLASS))
+      .optional(),
+    limit: Joi.number().integer().min(1).max(20).optional(),
+  }),
+  searchProviders: locationBody().append({
+    query: Joi.string().trim().min(1).max(120).required(),
+    vehicleClass: Joi.string()
+      .valid(...Object.values(VEHICLE_CLASS))
+      .optional(),
+    radiusMeters: Joi.number()
+      .min(200)
+      .max(SHOP_SEARCH_MAX_RADIUS)
+      .optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
   }),
   myProviders: emptyBody(),
@@ -322,13 +372,15 @@ const schemas = {
     diagnosticId: strReq(),
   }),
   createDispatch: Joi.object({
-    ticketType: Joi.string().valid("MECHANIC", "TOW", "SOS").required(),
+    ticketType: Joi.string().valid("MECHANIC", "TOW", "SOS", "WALK_IN")
+      .required(),
     lat: latAttr(),
     lng: langAttr(),
     diagnosticId: strOpt(),
     alleySegmentId: strOpt(),
     accessWidthMeters: Joi.number().min(0).max(20).optional(),
     note: Joi.string().max(280).allow("", null).optional(),
+    providerId: strOpt(),
     destinationShopId: strOpt(),
     destinationPoint: Joi.object({
       lat: latAttr(),
@@ -339,6 +391,7 @@ const schemas = {
       .valid(...Object.values(VEHICLE_TYPE))
       .optional(),
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
+    vehicleLabel: Joi.string().trim().max(120).allow("", null).optional(),
   }),
   getDispatch: Joi.object({
     ticketId: strReq(),
@@ -353,6 +406,28 @@ const schemas = {
   acceptDispatch: Joi.object({
     ticketId: strReq(),
     shopId: strOpt(),
+  }),
+  declineDispatch: Joi.object({
+    ticketId: strReq(),
+    shopId: strReq(),
+    reason: Joi.string()
+      .valid(...Object.values(DECLINE_REASON))
+      .required(),
+    note: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  updateWorkOrder: Joi.object({
+    ticketId: strReq(),
+    workType: Joi.string().trim().max(280).allow("", null).optional(),
+    quotedAmount: Joi.number().integer().min(0).max(999999999).optional(),
+    finalAmount: Joi.number().integer().min(0).max(999999999).optional(),
+    invoiceRef: Joi.string().trim().max(120).allow("", null).optional(),
+  }),
+  shopTickets: Joi.object({
+    shopId: strReq(),
+    limit: Joi.number().integer().min(1).max(50).optional(),
+  }),
+  feedTickets: Joi.object({
+    limit: Joi.number().integer().min(1).max(50).optional(),
   }),
   selectDispatch: Joi.object({
     ticketId: strReq(),
@@ -393,6 +468,13 @@ const schemas = {
       .optional(),
   }),
   volunteerHeartbeat: locationBody(),
+  userRatings: Joi.object({
+    userId: strReq(),
+    targetKind: Joi.string()
+      .valid(RATING_TARGET.VOLUNTEER, RATING_TARGET.RIDER)
+      .required(),
+    ticketId: strOpt(),
+  }),
   submitRating: Joi.object({
     targetId: strReq(),
     targetKind: Joi.string()
@@ -404,6 +486,16 @@ const schemas = {
       .min(RATING_MIN)
       .max(RATING_MAX)
       .required(),
+  }),
+  replyRating: Joi.object({
+    ratingId: strReq(),
+    reply: Joi.string().trim().min(1).max(280).required(),
+  }),
+  providerRatings: Joi.object({
+    providerId: strReq(),
+  }),
+  ratingsByTicket: Joi.object({
+    ticketId: strReq(),
   }),
   deliverDispatch: Joi.object({
     ticketId: strReq(),

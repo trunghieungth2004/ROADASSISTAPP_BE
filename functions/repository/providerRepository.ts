@@ -12,11 +12,15 @@ interface Provider {
   lng: number;
   label?: string | null;
   openHours?: string | null;
+  vehicleClasses?: string[] | null;
+  serviceFee?: number | null;
   accepting?: boolean;
   plate?: string | null;
   plateRaw?: string | null;
   vehicleType?: string | null;
   vehicleWidth?: number | null;
+  towBaseFee?: number | null;
+  towPerKmFee?: number | null;
   status: string;
   suspended?: boolean;
   suspendedAt?: string | null;
@@ -43,6 +47,8 @@ const createShop = async (data: {
   lng: number;
   label?: string;
   openHours?: string;
+  vehicleClasses?: string[];
+  serviceFee?: number;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc();
   const doc = {
@@ -55,12 +61,14 @@ const createShop = async (data: {
     lng: data.lng,
     label: data.label ?? null,
     openHours: data.openHours ?? null,
+    vehicleClasses: data.vehicleClasses ?? null,
+    serviceFee: data.serviceFee ?? null,
     accepting: true,
     plate: null,
     plateRaw: null,
     vehicleType: null,
     vehicleWidth: null,
-    status: PROVIDER_STATUS.ACTIVE,
+    status: PROVIDER_STATUS.PENDING,
     suspended: false,
     suspendedAt: null,
     suspendedReason: null,
@@ -89,6 +97,8 @@ const createTow = async (data: {
   plateRaw: string;
   vehicleType: string;
   vehicleWidth?: number | null;
+  towBaseFee?: number;
+  towPerKmFee?: number;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc(data.plate);
   const doc = {
@@ -106,6 +116,8 @@ const createTow = async (data: {
     plateRaw: data.plateRaw,
     vehicleType: data.vehicleType,
     vehicleWidth: data.vehicleWidth ?? null,
+    towBaseFee: data.towBaseFee ?? null,
+    towPerKmFee: data.towPerKmFee ?? null,
     status: PROVIDER_STATUS.PENDING,
     suspended: false,
     suspendedAt: null,

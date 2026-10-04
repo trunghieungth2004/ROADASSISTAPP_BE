@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import * as userService from "../service/userService";
+import * as ratingService from "../service/ratingService";
 import {sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
 
@@ -134,6 +135,22 @@ const sweepVolunteers = async (_req: Request, res: Response) => {
   }
 };
 
+const userRatings = async (req: Request, res: Response) => {
+  try {
+    const {uid: callerId} = req as AuthedRequest;
+    const {userId, targetKind, ticketId} = req.body;
+    const result = await ratingService.userRatings({
+      callerId,
+      userId,
+      targetKind,
+      ticketId,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const getMe = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -168,9 +185,10 @@ const setOnboarded = async (req: Request, res: Response) => {
 
 const updateServices = async (req: Request, res: Response) => {
   try {
+    const {uid: actorId, userRole} = req as AuthedRequest;
     const {targetUserId, grant, revoke} = req.body;
     const result = await userService.updateServices(
-      {targetUserId, grant, revoke});
+      {actorId, isAdmin: userRole === "1", targetUserId, grant, revoke});
     sendSuccess(res, result, {message: "Service licenses updated"});
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -192,4 +210,5 @@ export {
   setVolunteerAvailability,
   volunteerHeartbeat,
   sweepVolunteers,
+  userRatings,
 };

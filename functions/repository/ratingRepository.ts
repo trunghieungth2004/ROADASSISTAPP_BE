@@ -60,6 +60,25 @@ const updateScore = async (
   });
 };
 
+const findById = async (id: string): Promise<Rating | null> => {
+  const doc = await db.collection("ratings").doc(id).get();
+  if (!doc.exists) return null;
+  return {id: doc.id, ...doc.data()} as Rating;
+};
+
+const updateReply = async (
+  id: string,
+  reply: string,
+  repliedBy: string,
+): Promise<void> => {
+  await db.collection("ratings").doc(id).update({
+    reply,
+    repliedBy,
+    repliedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+};
+
 const listByTarget = async (
   targetId: string,
   targetKind: string,
@@ -68,6 +87,18 @@ const listByTarget = async (
     .collection("ratings")
     .where("targetId", "==", targetId)
     .where("targetKind", "==", targetKind)
+    .get();
+  const results: Rating[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Rating),
+  );
+  return results;
+};
+
+const listByTicket = async (ticketId: string): Promise<Rating[]> => {
+  const snap = await db
+    .collection("ratings")
+    .where("ticketId", "==", ticketId)
     .get();
   const results: Rating[] = [];
   snap.forEach((doc) =>
@@ -86,4 +117,5 @@ const aggregate = async (
   return {avg: sum / rows.length, count: rows.length};
 };
 
-export {findExisting, create, updateScore, listByTarget, aggregate};
+export {findExisting, create, updateScore, findById, updateReply,
+  listByTarget, listByTicket, aggregate};

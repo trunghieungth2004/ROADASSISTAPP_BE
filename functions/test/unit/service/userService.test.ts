@@ -452,7 +452,12 @@ describe("userService.updateServices", () => {
   it("throws 404 for an unknown target", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue(null);
     await expect(
-      updateServices({targetUserId: "ghost", grant: ["VOLUNTEER"]}),
+      updateServices({
+        actorId: "admin",
+        isAdmin: true,
+        targetUserId: "ghost",
+        grant: ["VOLUNTEER"],
+      }),
     ).rejects.toMatchObject({statusCode: 404});
   });
 
@@ -463,7 +468,12 @@ describe("userService.updateServices", () => {
       services: ["RIDER", "VOLUNTEER"],
     } as never);
     await expect(
-      updateServices({targetUserId: "u1", revoke: ["VOLUNTEER"]}),
+      updateServices({
+        actorId: "admin",
+        isAdmin: true,
+        targetUserId: "u1",
+        revoke: ["VOLUNTEER"],
+      }),
     ).resolves.toEqual({
       updated: 1,
       services: ["RIDER"],
@@ -479,16 +489,78 @@ describe("userService.updateServices", () => {
     expect(volunteerLocationRepository.remove).toHaveBeenCalledWith("u1");
   });
 
+  it("lets a user revoke its own volunteer license", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER"],
+    } as never);
+    await expect(
+      updateServices({
+        actorId: "u1",
+        isAdmin: false,
+        targetUserId: "u1",
+        revoke: ["VOLUNTEER"],
+      }),
+    ).resolves.toEqual({
+      updated: 1,
+      services: ["RIDER"],
+      volunteerCleared: true,
+    });
+  });
+
+  it("refuses self-service on other users", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u2",
+      services: ["RIDER", "VOLUNTEER"],
+    } as never);
+    await expect(
+      updateServices({
+        actorId: "u1",
+        isAdmin: false,
+        targetUserId: "u2",
+        revoke: ["VOLUNTEER"],
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
+  });
+
+  it("refuses self-service on the rider license", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      services: ["RIDER"],
+    } as never);
+    await expect(
+      updateServices({
+        actorId: "u1",
+        isAdmin: false,
+        targetUserId: "u1",
+        revoke: ["RIDER"],
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
+  });
+
   it("rejects removed provider licenses as unknown", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       services: ["RIDER"],
     } as never);
     await expect(
-      updateServices({targetUserId: "u1", grant: ["SHOP"]}),
+      updateServices({
+        actorId: "admin",
+        isAdmin: true,
+        targetUserId: "u1",
+        grant: ["SHOP"],
+      }),
     ).rejects.toMatchObject({statusCode: 400});
     await expect(
-      updateServices({targetUserId: "u1", grant: ["TOW"]}),
+      updateServices({
+        actorId: "admin",
+        isAdmin: true,
+        targetUserId: "u1",
+        grant: ["TOW"],
+      }),
     ).rejects.toMatchObject({statusCode: 400});
   });
 
@@ -498,7 +570,12 @@ describe("userService.updateServices", () => {
       services: ["RIDER"],
     } as never);
     await expect(
-      updateServices({targetUserId: "u1", grant: ["PILOT"]}),
+      updateServices({
+        actorId: "admin",
+        isAdmin: true,
+        targetUserId: "u1",
+        grant: ["PILOT"],
+      }),
     ).rejects.toMatchObject({statusCode: 400});
     expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
   });

@@ -22,12 +22,26 @@ agreed pricing shape for a future build so the data model grows toward it.
   and loading time.
 - **Surcharges (later):** night window, rain, narrow-alley handling.
 
+Shipped: `POST /dispatch/select` computes the tow estimate from haversine
+distance (straight-line, not routed) with the car multiplier at the lower
+`×2.5` bound, and walk-in accepts stamp the flat `serviceFee`. Routed
+distances and surcharges remain future.
+
 ## Fields the model will need
 
-- `providers`: `serviceFee`, `towBaseFee`, `towPerKmFee` (not yet implemented — no fee fields exist on the record today).
+- `providers`: `serviceFee` (shops), `towBaseFee`, `towPerKmFee` (tows) — stored on the record, integer VND, editable by the operator. Server-computed estimates still future.
 - `dispatch_tickets`: `vehicleType`/`vehicleWidth` (shipped), plus
   `priceEstimate` (+ `priceCurrency: "VND"`) computed at create/select time.
 - Offers: per-offer `priceEstimate` so the rider compares providers.
+
+## Shop-asserted amounts (shipped)
+
+Separate from the server-computed estimate above: the shop states what it
+charges. `POST /dispatch/work` records integer-VND `shopQuotedAmount`
+(before/during work) and `finalAmount` (on completion), plus free-text
+`workType` and an external `invoiceRef` — the hook the future payment gateway
+attaches to. The estimate stays server-owned; quoted/final stay shop-owned, so
+the two tiers never share a field name.
 
 ## Car-class effects
 

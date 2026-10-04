@@ -20,4 +20,30 @@ const submitRating = async (req: Request, res: Response) => {
   }
 };
 
-export {submitRating};
+const replyRating = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ratingId, reply} = req.body;
+    const result = await ratingService.replyToRating({
+      userId,
+      ratingId,
+      reply,
+    });
+    sendSuccess(res, result, {message: "Reply posted"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const ratingsByTicket = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await ratingService.ratingsByTicket({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {submitRating, replyRating, ratingsByTicket};

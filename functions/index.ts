@@ -28,6 +28,7 @@ import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 import * as flagService from "./service/flagService";
 import * as userService from "./service/userService";
 import * as routingService from "./service/routingService";
+import * as dispatchService from "./service/dispatchService";
 
 const app = express();
 
@@ -54,9 +55,7 @@ const limiter = rateLimiter({
 });
 app.use(limiter);
 
-export const userOrIpKey = (req: Request): string => {
-  const header = req.headers.authorization || "";
-  if (header.length > 0) return `token:${header}`;
+export const clientIpKey = (req: Request): string => {
   return `ip:${ipKeyGenerator(req.ip ?? "")}`;
 };
 
@@ -65,7 +64,7 @@ const writeLimiter = rateLimiter({
   max: Number(process.env.WRITE_LIMIT_PER_MIN ?? 30),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: userOrIpKey,
+  keyGenerator: clientIpKey,
   message: {
     statusCode: 429,
     status: "ERROR",
@@ -151,7 +150,7 @@ export const api = functions.https.onRequest(
   app,
 );
 
-export const sweepExpiredFlags = functions.scheduler.onSchedule(
+export const sweepFlagsAndPresence = functions.scheduler.onSchedule(
   {
     schedule: "every 60 minutes",
     timeZone: "Asia/Ho_Chi_Minh",
@@ -161,25 +160,13 @@ export const sweepExpiredFlags = functions.scheduler.onSchedule(
   },
   async () => {
     await flagService.expireFlags();
-  },
-);
-
-export const sweepStaleVolunteers = functions.scheduler.onSchedule(
-  {
-    schedule: "every 60 minutes",
-    timeZone: "Asia/Ho_Chi_Minh",
-    region: "asia-southeast1",
-    memory: "256MiB",
-    timeoutSeconds: 120,
-  },
-  async () => {
     await userService.sweepStaleVolunteers();
   },
 );
 
-export const sweepActiveRoutes = functions.scheduler.onSchedule(
+export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
   {
-    schedule: "every 15 minutes",
+    schedule: "every 30 minutes",
     timeZone: "Asia/Ho_Chi_Minh",
     region: "asia-southeast1",
     memory: "256MiB",
@@ -187,5 +174,6 @@ export const sweepActiveRoutes = functions.scheduler.onSchedule(
   },
   async () => {
     await routingService.sweepActiveRoutes();
+    await dispatchService.sweepStaleWalkIns();
   },
 );

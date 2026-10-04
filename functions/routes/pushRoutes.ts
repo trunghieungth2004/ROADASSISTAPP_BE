@@ -1,6 +1,5 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
-import {SERVICE_ROLE} from "../constants/status";
 import * as pushController from "../controller/pushController";
 import {requireDeliverSecret} from "../middleware/deliverAuth";
 
@@ -15,19 +14,17 @@ const mountPushDeliver = (app: Express, {validate, schemas}: RouteDeps) => {
 
 export default (
   app: Express,
-  {requireAuth, requireService, validate, schemas}: RouteDeps,
+  {requireAuth, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/push/register",
     requireAuth,
-    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.registerPush}),
     pushController.register,
   );
   app.post(
     "/push/unregister",
     requireAuth,
-    requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.unregisterPush}),
     pushController.unregister,
   );

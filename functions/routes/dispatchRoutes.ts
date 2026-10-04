@@ -61,6 +61,37 @@ export default (
     dispatchController.acceptDispatch,
   );
   app.post(
+    "/dispatch/decline",
+    requireAuth,
+    validate({body: schemas.declineDispatch}),
+    dispatchController.declineDispatch,
+  );
+  app.post(
+    "/dispatch/work",
+    requireAuth,
+    validate({body: schemas.updateWorkOrder}),
+    dispatchController.updateWorkOrder,
+  );
+  app.post(
+    "/dispatch/shop/requests",
+    requireAuth,
+    validate({body: schemas.shopTickets}),
+    dispatchController.shopRequests,
+  );
+  app.post(
+    "/dispatch/shop/records",
+    requireAuth,
+    validate({body: schemas.shopTickets}),
+    dispatchController.shopRecords,
+  );
+  app.post(
+    "/dispatch/feed",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.feedTickets}),
+    dispatchController.feedTickets,
+  );
+  app.post(
     "/dispatch/destination",
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),

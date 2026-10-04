@@ -20,6 +20,9 @@ const STATUS_DISPATCH = {
   ARRIVED: "3",
   RESOLVED: "4",
   CANCELLED: "5",
+  IN_PROGRESS: "6",
+  READY: "7",
+  DECLINED: "8",
 } as const;
 
 const HELPER_KIND = {
@@ -35,6 +38,9 @@ const RATING_TARGET = {
 
 const RATING_MIN = 1;
 const RATING_MAX = 5;
+
+const TOW_CLASS_MULTIPLIER_BIKE = 1;
+const TOW_CLASS_MULTIPLIER_CAR = 2.5;
 
 const VOLUNTEER_FRESH_MS = 15 * 60 * 1000;
 const VOLUNTEER_DEFAULT_RADIUS = 5000;
@@ -73,6 +79,11 @@ const VOLUNTEER_CAPABILITY = {
   CAR: "CAR",
 } as const;
 
+const VEHICLE_CLASS = {
+  SOLO_BIKE: "SOLO_BIKE",
+  CAR: "CAR",
+} as const;
+
 const SERVICE_ROLE = {
   RIDER: "RIDER",
   VOLUNTEER: "VOLUNTEER",
@@ -95,6 +106,7 @@ const PROVIDER_REPORT_REASON = {
   UNSAFE: "UNSAFE",
   HARASSMENT: "HARASSMENT",
   SPAM: "SPAM",
+  INFO_INACCURATE: "INFO_INACCURATE",
   OTHER: "OTHER",
 } as const;
 
@@ -102,6 +114,13 @@ const PROVIDER_REPORT_STATUS = {
   OPEN: "OPEN",
   RESOLVED: "RESOLVED",
   DISMISSED: "DISMISSED",
+} as const;
+
+const DECLINE_REASON = {
+  FULL: "FULL",
+  CLOSED: "CLOSED",
+  PARTS_DELAY: "PARTS_DELAY",
+  OTHER: "OTHER",
 } as const;
 
 interface StatusDefinition {
@@ -211,6 +230,27 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
     "Ticket withdrawn",
     5,
   ),
+  [STATUS_DISPATCH.IN_PROGRESS]: definition(
+    "dispatch",
+    STATUS_DISPATCH.IN_PROGRESS,
+    "In progress",
+    "Repair work underway",
+    6,
+  ),
+  [STATUS_DISPATCH.READY]: definition(
+    "dispatch",
+    STATUS_DISPATCH.READY,
+    "Ready",
+    "Work done, awaiting pickup",
+    7,
+  ),
+  [STATUS_DISPATCH.DECLINED]: definition(
+    "dispatch",
+    STATUS_DISPATCH.DECLINED,
+    "Declined",
+    "Provider cannot take the job",
+    8,
+  ),
 };
 
 const PROVIDER_STATUSES: Record<string, StatusDefinition> = {
@@ -252,6 +292,8 @@ export {
   RATING_TARGET,
   RATING_MIN,
   RATING_MAX,
+  TOW_CLASS_MULTIPLIER_BIKE,
+  TOW_CLASS_MULTIPLIER_CAR,
   VOLUNTEER_FRESH_MS,
   VOLUNTEER_DEFAULT_RADIUS,
   WALK_RADIUS_MIN,
@@ -262,11 +304,13 @@ export {
   VEHICLE_DEFAULT_WIDTH,
   TOW_VEHICLE_TYPE,
   VOLUNTEER_CAPABILITY,
+  VEHICLE_CLASS,
   SERVICE_ROLE,
   PROVIDER_KIND,
   PROVIDER_STATUS,
   PROVIDER_REPORT_REASON,
   PROVIDER_REPORT_STATUS,
+  DECLINE_REASON,
   PROVIDER_FRESH_MS,
   USER_STATUSES,
   FLAG_STATUSES,

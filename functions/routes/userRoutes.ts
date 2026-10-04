@@ -67,7 +67,6 @@ export default (
   app.put(
     "/users/services",
     requireAuth,
-    requireRole("1"),
     validate({body: schemas.updateUserServices}),
     userController.updateServices,
   );
@@ -97,5 +96,11 @@ export default (
     requireAuth,
     requireRole("1"),
     userController.sweepVolunteers,
+  );
+  app.post(
+    "/users/ratings",
+    requireAuth,
+    validate({body: schemas.userRatings}),
+    userController.userRatings,
   );
 };

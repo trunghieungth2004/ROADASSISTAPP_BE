@@ -5,7 +5,13 @@ import * as dispatchRepository from
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as cacheManager from "../../../utils/cacheManager";
-import {submitRating} from "../../../service/ratingService";
+import {
+  submitRating,
+  replyToRating,
+  providerRatings,
+  ratingsByTicket,
+  userRatings,
+} from "../../../service/ratingService";
 
 jest.mock("../../../repository/ratingRepository");
 jest.mock("../../../repository/dispatchRepository");
@@ -164,6 +170,7 @@ describe("ratingService.submitRating", () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       ...resolvedVolunteerTicket,
       destinationShopId: "shop9",
+      fulfilledByShopId: "shop9",
     } as never);
     jest.mocked(ratingRepository.findExisting).mockResolvedValue(null);
     jest.mocked(ratingRepository.create).mockResolvedValue({
@@ -265,5 +272,279 @@ describe("ratingService.submitRating", () => {
         score: 1,
       }),
     ).rejects.toMatchObject({statusCode: 403});
+  });
+});
+
+describe("ratingService fulfilment gate", () => {
+  it("rejects rating a home-destination shop", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "4",
+      assignedUid: "vol1",
+      destinationShopId: "shop9",
+      fulfilledByShopId: null,
+    } as never);
+    await expect(
+      submitRating({
+        byUserId: "rider1",
+        targetId: "shop9",
+        targetKind: "SHOP",
+        ticketId: "t1",
+        score: 5,
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+});
+
+describe("ratingService.replyToRating", () => {
+  it("lets the shop operator reply", async () => {
+    jest.mocked(ratingRepository.findById).mockResolvedValue({
+      id: "r1",
+      targetId: "shop9",
+      targetKind: "SHOP",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      replyToRating({userId: "op1", ratingId: "r1", reply: "Thanks!"}),
+    ).resolves.toEqual({replied: true});
+    expect(ratingRepository.updateReply).toHaveBeenCalledWith(
+      "r1",
+      "Thanks!",
+      "op1",
+    );
+  });
+  it("rejects replies from strangers", async () => {
+    jest.mocked(ratingRepository.findById).mockResolvedValue({
+      id: "r1",
+      targetId: "shop9",
+      targetKind: "SHOP",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "stranger",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      replyToRating({userId: "stranger", ratingId: "r1", reply: "Hi"}),
+    ).rejects.toMatchObject({statusCode: 403});
+  });
+  it("lets a rated user reply to their own rating", async () => {
+    jest.mocked(ratingRepository.findById).mockResolvedValue({
+      id: "r1",
+      targetId: "vol1",
+      targetKind: "VOLUNTEER",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "vol1",
+      role: "2",
+    } as never);
+    await expect(
+      replyToRating({userId: "vol1", ratingId: "r1", reply: "Noted"}),
+    ).resolves.toEqual({replied: true});
+  });
+  it("throws 404 for an unknown rating", async () => {
+    jest.mocked(ratingRepository.findById).mockResolvedValue(null);
+    await expect(
+      replyToRating({userId: "op1", ratingId: "ghost", reply: "Hi"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+});
+
+describe("ratingService.providerRatings", () => {
+  it("returns the distribution with average and count", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+    } as never);
+    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([
+      {id: "r1", score: 5, createdAt: "2026-01-01"},
+      {id: "r2", score: 3, reply: "Sorry", repliedAt: "2026-01-02",
+        createdAt: "2026-01-02"},
+    ] as never);
+    jest.mocked(ratingRepository.aggregate).mockResolvedValue({
+      avg: 4,
+      count: 2,
+    });
+    await expect(providerRatings("shop9")).resolves.toEqual({
+      ratings: [
+        {id: "r1", score: 5, reply: null, repliedAt: null,
+          createdAt: "2026-01-01"},
+        {id: "r2", score: 3, reply: "Sorry", repliedAt: "2026-01-02",
+          createdAt: "2026-01-02"},
+      ],
+      avg: 4,
+      count: 2,
+    });
+  });
+  it("throws 404 for an unknown provider", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue(null);
+    await expect(providerRatings("ghost")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+});
+
+describe("ratingService.ratingsByTicket", () => {
+  it("returns ratings for the rider", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(ratingRepository.listByTicket).mockResolvedValue([
+      {id: "r1", targetId: "vol1", targetKind: "VOLUNTEER", score: 5,
+        createdAt: "2026-01-01"},
+    ] as never);
+    await expect(
+      ratingsByTicket({userId: "rider1", ticketId: "t1"}),
+    ).resolves.toEqual([
+      {id: "r1", targetId: "vol1", targetKind: "VOLUNTEER", score: 5,
+        reply: null, repliedAt: null, createdAt: "2026-01-01"},
+    ]);
+  });
+
+  it("returns ratings for the shop operator", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(ratingRepository.listByTicket).mockResolvedValue([]);
+    await expect(
+      ratingsByTicket({userId: "op1", ticketId: "t1"}),
+    ).resolves.toEqual([]);
+  });
+
+  it("rejects strangers with 403", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      assignedUid: "vol1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "stranger",
+      role: "2",
+    } as never);
+    await expect(
+      ratingsByTicket({userId: "stranger", ticketId: "t1"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    expect(ratingRepository.listByTicket).not.toHaveBeenCalled();
+  });
+
+  it("throws 404 for an unknown ticket", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(null);
+    await expect(
+      ratingsByTicket({userId: "rider1", ticketId: "ghost"}),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+});
+
+describe("ratingService.userRatings", () => {
+  const ticket = {
+    id: "t1",
+    userId: "rider1",
+    assignedUid: "vol1",
+  };
+  it("returns a co-worker's ratings to a participant", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      ticket as never,
+    );
+    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([
+      {id: "r1", score: 5, ticketId: "t1", createdAt: "2026-01-01"},
+    ] as never);
+    jest.mocked(ratingRepository.aggregate).mockResolvedValue({
+      avg: 5,
+      count: 1,
+    });
+    await expect(
+      userRatings({
+        callerId: "rider1",
+        userId: "vol1",
+        targetKind: "VOLUNTEER",
+        ticketId: "t1",
+      }),
+    ).resolves.toEqual({
+      ratings: [
+        {id: "r1", score: 5, ticketId: "t1", reply: null, repliedAt: null,
+          createdAt: "2026-01-01"},
+      ],
+      avg: 5,
+      count: 1,
+    });
+  });
+  it("rejects readers with no shared ticket", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "stranger",
+      role: "2",
+    } as never);
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      ticket as never,
+    );
+    await expect(
+      userRatings({
+        callerId: "stranger",
+        userId: "vol1",
+        targetKind: "VOLUNTEER",
+        ticketId: "t1",
+      }),
+    ).rejects.toMatchObject({statusCode: 403});
+  });
+  it("rejects shop targets", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    await expect(
+      userRatings({
+        callerId: "rider1",
+        userId: "shop9",
+        targetKind: "SHOP",
+        ticketId: "t1",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+  it("lets admins read without a ticket", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "admin",
+      role: "1",
+    } as never);
+    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([]);
+    jest.mocked(ratingRepository.aggregate).mockResolvedValue({
+      avg: 0,
+      count: 0,
+    });
+    await expect(
+      userRatings({
+        callerId: "admin",
+        userId: "vol1",
+        targetKind: "VOLUNTEER",
+      }),
+    ).resolves.toEqual({ratings: [], avg: 0, count: 0});
+    expect(dispatchRepository.findById).not.toHaveBeenCalled();
   });
 });

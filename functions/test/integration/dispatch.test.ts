@@ -69,13 +69,21 @@ describe("dispatch endpoints", () => {
     expect(otherIds).not.toContain(ticketId);
   });
 
-  it("PUT /dispatch/status advances the ticket", async () => {
+  it("PUT /dispatch/status lets the rider cancel", async () => {
+    const res = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(USER))
+      .send({ticketId, status: "5"});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({updated: 1});
+  });
+
+  it("PUT /dispatch/status refuses matched outside accept", async () => {
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
       .send({ticketId, status: "2"});
-    expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({updated: 1});
+    expect(res.status).toBe(400);
   });
 
   it("PUT /dispatch/status rejects illegal statuses with 400", async () => {
@@ -170,6 +178,11 @@ describe("dispatch assist flow", () => {
       });
     expect(dest.status).toBe(201);
     destShopId = dest.body.data.id as string;
+    const shopReview = await request(app)
+      .post("/providers/review")
+      .set("Authorization", bearer(ADMIN))
+      .send({providerId: destShopId, approve: true});
+    expect(shopReview.status).toBe(200);
   });
 
   it("POST /dispatch carries note and destination", async () => {
@@ -321,6 +334,11 @@ describe("dispatch assist flow", () => {
   });
 
   it("resolving restores tow availability", async () => {
+    const arrived = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: flowTicket, status: "3"});
+    expect(arrived.status).toBe(200);
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
@@ -466,5 +484,166 @@ describe("dispatch vehicle and capability flow", () => {
       narrow.body.data as {id: string; fitsAlley: unknown}[]
     ).find((s) => s.id === towId);
     expect(miss?.fitsAlley).toBe(false);
+  });
+});
+
+describe("dispatch walk-in flow", () => {
+  const WALKOP = `${PREFIX}-walkop`;
+  const WALKADMIN = `${PREFIX}-walkadmin`;
+  let walkShop = "";
+  let walkTicket = "";
+
+  it("opens a walk-in with a shop snapshot and expiry", async () => {
+    await seedUser(WALKOP, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
+    await seedUser(WALKADMIN, "1", STATUS_USER.ACTIVE, 0, ["RIDER"]);
+    const shop = await request(app)
+      .post("/providers")
+      .set("Authorization", bearer(WALKOP))
+      .send({
+        kind: "SHOP",
+        name: "Walk-in Fix",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        vehicleClasses: ["SOLO_BIKE"],
+      });
+    expect(shop.status).toBe(201);
+    walkShop = shop.body.data.id as string;
+    const review = await request(app)
+      .post("/providers/review")
+      .set("Authorization", bearer(WALKADMIN))
+      .send({providerId: walkShop, approve: true});
+    expect(review.status).toBe(200);
+    const opened = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "WALK_IN",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        providerId: walkShop,
+        vehicleType: "SCOOTER",
+      });
+    expect(opened.status).toBe(201);
+    walkTicket = opened.body.data.id as string;
+    expect(opened.body.data.providerSnapshot).toMatchObject({
+      id: walkShop,
+      name: "Walk-in Fix",
+    });
+    expect(typeof opened.body.data.expiresAt).toBe("string");
+  });
+
+  it("surfaces the walk-in in shop requests", async () => {
+    const res = await request(app)
+      .post("/dispatch/shop/requests")
+      .set("Authorization", bearer(WALKOP))
+      .send({shopId: walkShop});
+    expect(res.status).toBe(200);
+    const ids = (res.body.data as {id: string}[]).map((t) => t.id);
+    expect(ids).toContain(walkTicket);
+  });
+
+  it("stamps the walk-in out for the rider and in for the shop", async () => {
+    const out = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(out.status).toBe(200);
+    const mine = (out.body.data as {id: string; direction: string}[]).find(
+      (t) => t.id === walkTicket,
+    );
+    expect(mine?.direction).toBe("out");
+    const inbound = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(WALKOP))
+      .send({});
+    expect(inbound.status).toBe(200);
+    const theirs = (
+      inbound.body.data as {id: string; direction: string}[]
+    ).find((t) => t.id === walkTicket);
+    expect(theirs?.direction).toBe("in");
+  });
+
+  it("walks matched to ready with no arrival tap", async () => {
+    const accept = await request(app)
+      .post("/dispatch/accept")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: walkTicket, shopId: walkShop});
+    expect(accept.status).toBe(200);
+    const work = await request(app)
+      .post("/dispatch/work")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: walkTicket, workType: "Chain", quotedAmount: 150000});
+    expect(work.status).toBe(200);
+    const progress = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: walkTicket, status: "6"});
+    expect(progress.status).toBe(200);
+    const ready = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: walkTicket, status: "7"});
+    expect(ready.status).toBe(200);
+    const ticket = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket});
+    expect(ticket.body.data.fulfilledByShopId).toBe(walkShop);
+    const resolved = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket, status: "4"});
+    expect(resolved.status).toBe(200);
+  });
+
+  it("rates and replies on the fulfilled walk-in", async () => {
+    const rated = await request(app)
+      .post("/ratings")
+      .set("Authorization", bearer(USER))
+      .send({
+        targetId: walkShop,
+        targetKind: "SHOP",
+        ticketId: walkTicket,
+        score: 5,
+      });
+    expect(rated.status).toBe(200);
+    const dist = await request(app)
+      .post("/providers/ratings")
+      .set("Authorization", bearer(USER))
+      .send({providerId: walkShop});
+    expect(dist.status).toBe(200);
+    const rating = (dist.body.data.ratings as {id: string}[])[0];
+    expect(rating).toBeDefined();
+    const reply = await request(app)
+      .post("/ratings/reply")
+      .set("Authorization", bearer(WALKOP))
+      .send({ratingId: rating?.id, reply: "Thanks!"});
+    expect(reply.status).toBe(200);
+  });
+
+  it("declines with a reason", async () => {
+    const opened = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "WALK_IN",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        providerId: walkShop,
+        vehicleType: "SCOOTER",
+      });
+    expect(opened.status).toBe(201);
+    const second = opened.body.data.id as string;
+    const declined = await request(app)
+      .post("/dispatch/decline")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: second, shopId: walkShop, reason: "FULL"});
+    expect(declined.status).toBe(200);
+    const ticket = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: second});
+    expect(ticket.body.data.status).toBe("8");
+    expect(ticket.body.data.declineReason).toBe("FULL");
   });
 });

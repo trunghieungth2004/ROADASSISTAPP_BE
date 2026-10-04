@@ -42,8 +42,11 @@ Stored in the `status` field of `flags` docs. New flags are created as `"1"`; th
 | `"3"` | Arrived | Mechanic on scene |
 | `"4"` | Resolved | Ticket completed |
 | `"5"` | Cancelled | Ticket withdrawn |
+| `"6"` | In progress | Repair work underway |
+| `"7"` | Ready | Work done, awaiting pickup |
+| `"8"` | Declined | Provider cannot take the job |
 
-Stored in the `status` field of `dispatch_tickets` docs. New tickets are created as `"1"`.
+Stored in the `status` field of `dispatch_tickets` docs. New tickets are created as `"1"`. Moves are validated per actor (`PUT /dispatch/status` refuses `MATCHED` — claiming stays atomic in `POST /dispatch/accept`; terminal `4`/`5`/`8` accept no further moves); see `API.md` → Dispatch for the matrix.
 
 ## The `statuses` collection
 

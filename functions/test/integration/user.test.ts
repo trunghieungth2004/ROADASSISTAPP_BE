@@ -207,12 +207,26 @@ describe("service licenses", () => {
     expect(res.status).toBe(403);
   });
 
-  it("PUT /users/services is admin-only", async () => {
+  it("PUT /users/services refuses other users without admin role", async () => {
     const res = await request(app)
       .put("/users/services")
       .set("Authorization", bearer(RIDER))
       .send({targetUserId: TARGET, grant: ["VOLUNTEER"]});
     expect(res.status).toBe(403);
+  });
+
+  it("a user revokes its own volunteer license", async () => {
+    const revoke = await request(app)
+      .put("/users/services")
+      .set("Authorization", bearer(RIDER))
+      .send({targetUserId: RIDER, revoke: ["VOLUNTEER"]});
+    expect(revoke.status).toBe(200);
+    expect(revoke.body.data.services).not.toContain("VOLUNTEER");
+    const denied = await request(app)
+      .put("/users/volunteer")
+      .set("Authorization", bearer(RIDER))
+      .send({available: true});
+    expect(denied.status).toBe(403);
   });
 
   it("admin grants and revokes licenses", async () => {

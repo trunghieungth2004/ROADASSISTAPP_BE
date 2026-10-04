@@ -12,4 +12,16 @@ export default (
     validate({body: schemas.submitRating}),
     ratingController.submitRating,
   );
+  app.post(
+    "/ratings/reply",
+    requireAuth,
+    validate({body: schemas.replyRating}),
+    ratingController.replyRating,
+  );
+  app.post(
+    "/ratings/by-ticket",
+    requireAuth,
+    validate({body: schemas.ratingsByTicket}),
+    ratingController.ratingsByTicket,
+  );
 };

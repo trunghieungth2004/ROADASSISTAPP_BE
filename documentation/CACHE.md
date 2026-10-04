@@ -38,10 +38,11 @@ CACHE_MAX_SIZE_<NAMESPACE>_MB   e.g. CACHE_MAX_SIZE_FLAG_MB=8
 | `savedPlace` | saved-place list per `userId` | `service/savedPlaceService.ts` | 30 s | 2 MB | key-level (`userId`) on save, relabel, remove |
 | `savedRoute` | saved-route list per `userId`; one route per `userId:routeId` | `service/savedRouteService.ts` | 30 s | 2 MB | key-level on save, rename, delete (both keys) |
 | `provider` | operator's own providers per `userId` | `service/providerService.ts` | 30 s | 2 MB | key-level (`userId`) on create; wholesale on update/review/suspend/restore |
-| `shop` | provider near-search per rounded `lat,lng,kind,radius,accepting,open,limit` | `service/providerService.ts` | 120 s | 2 MB | wholesale on provider create/update/review/suspend/restore; also cleared from `dispatchService` when a tow's `accepting` flips |
-| `dispatch` | caller's tickets per `userId`; nearby pending per `userId,lat,lng,radius,type,limit` | `service/dispatchService.ts` | 10 s | 4 MB | wholesale on create, status change, accept, destination edit |
+| `shop` | provider near-search per rounded `lat,lng,kind,radius,accepting,open,class,limit` + minute bucket | `service/providerService.ts` | 120 s | 2 MB | wholesale on provider create/update/review/suspend/restore and on rating submit; also cleared from `dispatchService` when a tow's `accepting` flips |
+| `providersSearch` | provider name-search per rounded `lat,lng,query,class,radius,limit` + minute bucket | `service/providerService.ts` | 30 s | 2 MB | wholesale on provider create/update/review/suspend/restore |
+| `dispatch` | caller's tickets per `userId`; nearby pending per `userId,lat,lng,radius,type,limit` | `service/dispatchService.ts` | 10 s | 4 MB | wholesale on create, status change, accept, decline, work-order edit, destination edit |
 
-Only the `routing` (10 s / 8 MB) default in `cacheManager` is currently reserved — routing persistence lives in Firestore (below). Only reads whose arguments fully determine the result are wrapped. Note the `shop` near-search key deliberately excludes the caller-supplied `now` clock: `openNow` is computed at read time, so a varying clock must not poison the key.
+Only the `routing` (10 s / 8 MB) default in `cacheManager` is currently reserved — routing persistence lives in Firestore (below). Only reads whose arguments fully determine the result are wrapped. The `shop` and `providersSearch` keys bucket `now` by minute: `openNow`/`closesInMinutes` are time-derived, so an unbucketed clock would serve stale open-state for the whole TTL.
 
 ## Invalidation model
 
@@ -85,7 +86,7 @@ Decision: keep Firestore (option A) with TTL + full-response caching in place. R
 
 ## Memory budget
 
-Worst case if every in-process namespace maxes out simultaneously: 3 + 3 + 4 + 2 + 8 + 4 + 2 + 2 + 2 + 2 + 4 = **~36 MiB** against a 512 MiB function allocation. Realistic steady state is far lower (short TTLs, small payloads).
+Worst case if every in-process namespace maxes out simultaneously: 3 + 3 + 4 + 2 + 8 + 4 + 2 + 2 + 2 + 2 + 2 + 4 = **~38 MiB** against a 512 MiB function allocation. Realistic steady state is far lower (short TTLs, small payloads).
 
 ## Testing behavior
 
@@ -93,13 +94,12 @@ The planned suites run with `CACHE_ENABLED=false` (`test/setup/unit.ts`, `test/s
 
 ## Scheduled functions
 
-Three Cloud Scheduler jobs, all `asia-southeast1`, all 256 MiB / 120 s timeout.
+Two Cloud Scheduler jobs, all `asia-southeast1`, all 256 MiB / 120 s timeout.
 None has emulator coverage; all are billed invocations.
 
 | Function | Schedule | Sweeps | Notes |
 |----------|----------|--------|-------|
-| `sweepExpiredFlags` | every 60 min | flags past TTL (`flagService.expireFlags`) | — |
-| `sweepStaleVolunteers` | every 60 min | stale volunteer presence (`userService.sweepStaleVolunteers`) | — |
-| `sweepActiveRoutes` | every 15 min | expired `active_routes` rows (`routingService.sweepActiveRoutes`) | garbage collection only — deletes, never extends the 30-min TTL (see PIPELINE.md "Known limitation") |
+| `sweepFlagsAndPresence` | every 60 min | flags past TTL (`flagService.expireFlags`) + stale volunteer/tow presence (`userService.sweepStaleVolunteers`) | merged — was `sweepExpiredFlags` + `sweepStaleVolunteers` |
+| `sweepRoutesAndWalkIns` | every 30 min | expired `active_routes` rows (`routingService.sweepActiveRoutes`) + unanswered walk-ins past their 2 h `expiresAt` (`dispatchService.sweepStaleWalkIns`, cancelled) | merged — was `sweepActiveRoutes` (15 min) + `sweepStaleWalkIns` (30 min); expired route rows may now linger up to 30 min |
 
 `POST /routes/sweep` (admin) runs the active-route sweep on demand and is retained for manual purges.

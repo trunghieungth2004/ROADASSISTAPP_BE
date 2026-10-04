@@ -45,6 +45,11 @@ describe("ratings endpoints", () => {
       .set("Authorization", bearer(VOL))
       .send({ticketId});
     expect(accepted.status).toBe(200);
+    const arrived = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId, status: "3"});
+    expect(arrived.status).toBe(200);
     const resolved = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(RIDER))
@@ -104,5 +109,25 @@ describe("ratings endpoints", () => {
         score: 9,
       });
     expect(res.status).toBe(400);
+  });
+
+  it("POST /ratings/by-ticket lists the ticket ratings", async () => {
+    const res = await request(app)
+      .post("/ratings/by-ticket")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId});
+    expect(res.status).toBe(200);
+    const scores = (res.body.data as {score: number}[]).map((r) => r.score);
+    expect(scores).toContain(5);
+    expect(scores).toContain(4);
+  });
+
+  it("POST /ratings/by-ticket rejects strangers", async () => {
+    await seedUser(`${PREFIX}-bystander`, "2");
+    const res = await request(app)
+      .post("/ratings/by-ticket")
+      .set("Authorization", bearer(`${PREFIX}-bystander`))
+      .send({ticketId});
+    expect(res.status).toBe(403);
   });
 });

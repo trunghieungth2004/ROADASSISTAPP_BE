@@ -282,10 +282,14 @@ const setOnboarded = async ({
 };
 
 const updateServices = async ({
+  actorId,
+  isAdmin,
   targetUserId,
   grant,
   revoke,
 }: {
+  actorId: string;
+  isAdmin: boolean;
   targetUserId: string;
   grant?: string[];
   revoke?: string[];
@@ -296,6 +300,16 @@ const updateServices = async ({
   for (const license of [...(grant ?? []), ...(revoke ?? [])]) {
     if (!known.includes(license)) {
       throw new ValidationError(`Unknown service license: ${license}`);
+    }
+  }
+  if (!isAdmin) {
+    if (targetUserId !== actorId) {
+      throw new ForbiddenError("Only admins change other users");
+    }
+    for (const license of [...(grant ?? []), ...(revoke ?? [])]) {
+      if (license !== SERVICE_ROLE.VOLUNTEER) {
+        throw new ForbiddenError("Only the volunteer license is self-served");
+      }
     }
   }
   const current = Array.isArray(target.services) ? target.services : [];

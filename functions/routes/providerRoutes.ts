@@ -25,6 +25,18 @@ export default (
     providerController.nearProviders,
   );
   app.post(
+    "/providers/search",
+    requireAuth,
+    validate({body: schemas.searchProviders}),
+    providerController.searchProviders,
+  );
+  app.post(
+    "/providers/ratings",
+    requireAuth,
+    validate({body: schemas.providerRatings}),
+    providerController.providerRatings,
+  );
+  app.post(
     "/providers/mine",
     requireAuth,
     validate({body: schemas.myProviders}),

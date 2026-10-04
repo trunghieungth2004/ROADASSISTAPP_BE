@@ -537,3 +537,219 @@ describe("schemas reject invalid input", () => {
     expect(value).not.toHaveProperty("hazards");
   });
 });
+
+describe("phase 2 provider schemas", () => {
+  const base = {lat: 10.7, lng: 106.6};
+  test("vehicleClasses allowed on shops only", () => {
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        vehicleClasses: ["SOLO_BIKE"],
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        vehicleClasses: ["PLANE"],
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "TOW",
+        plate: "30A12345",
+        vehicleType: "VAN",
+        vehicleClasses: ["CAR"],
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.updateProvider.validate({
+        providerId: "p1",
+        vehicleClasses: ["CAR", "SOLO_BIKE"],
+      }).error,
+    ).toBeUndefined();
+  });
+  test("nearProviders accepts a vehicle class", () => {
+    expect(
+      table.nearProviders.validate({...base, vehicleClass: "CAR"}).error,
+    ).toBeUndefined();
+    expect(
+      table.nearProviders.validate({...base, vehicleClass: "BOAT"}).error,
+    ).toBeDefined();
+  });
+  test("searchProviders requires a query", () => {
+    expect(
+      table.searchProviders.validate({...base, query: "fix"}).error,
+    ).toBeUndefined();
+    expect(
+      table.searchProviders.validate({...base, query: "  "}).error,
+    ).toBeDefined();
+    expect(
+      table.searchProviders.validate(base).error,
+    ).toBeDefined();
+  });
+  test("INFO_INACCURATE is a valid report reason", () => {
+    expect(
+      table.reportProvider.validate({
+        providerId: "p1",
+        reason: "INFO_INACCURATE",
+      }).error,
+    ).toBeUndefined();
+  });
+});
+
+describe("phase 6 fee schemas", () => {
+  const base = {lat: 10.7, lng: 106.6};
+  test("fee fields are kind-scoped", () => {
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        serviceFee: 150000,
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        towBaseFee: 1,
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "T",
+        kind: "TOW",
+        plate: "30A12345",
+        vehicleType: "VAN",
+        towBaseFee: 500000,
+        towPerKmFee: 20000,
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "T",
+        kind: "TOW",
+        plate: "30A12345",
+        vehicleType: "VAN",
+        serviceFee: 1,
+      }).error,
+    ).toBeDefined();
+  });
+  test("work order amounts are integer VND", () => {
+    expect(
+      table.updateWorkOrder.validate({
+        ticketId: "t1",
+        quotedAmount: 400000,
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.updateWorkOrder.validate({
+        ticketId: "t1",
+        quotedAmount: 400.5,
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.updateWorkOrder.validate({
+        ticketId: "t1",
+        finalAmount: -1,
+      }).error,
+    ).toBeDefined();
+  });
+  test("decline and shop-ticket schemas", () => {
+    expect(
+      table.declineDispatch.validate({
+        ticketId: "t1",
+        shopId: "s1",
+        reason: "FULL",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.declineDispatch.validate({ticketId: "t1", shopId: "s1"}).error,
+    ).toBeDefined();
+    expect(
+      table.shopTickets.validate({shopId: "s1", limit: 5}).error,
+    ).toBeUndefined();
+    expect(
+      table.searchProviders.validate({lat: 1, lng: 2, query: "x"}).error,
+    ).toBeUndefined();
+    expect(
+      table.feedTickets.validate({}).error,
+    ).toBeUndefined();
+    expect(
+      table.feedTickets.validate({limit: 10}).error,
+    ).toBeUndefined();
+    expect(
+      table.feedTickets.validate({limit: 500}).error,
+    ).toBeDefined();
+    expect(
+      table.ratingsByTicket.validate({ticketId: "t1"}).error,
+    ).toBeUndefined();
+    expect(
+      table.ratingsByTicket.validate({}).error,
+    ).toBeDefined();
+  });
+});
+
+describe("hardening schemas", () => {
+  test("decline requires a known reason", () => {
+    expect(
+      table.declineDispatch.validate({
+        ticketId: "t1",
+        shopId: "s1",
+        reason: "FULL",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.declineDispatch.validate({ticketId: "t1", shopId: "s1"}).error,
+    ).toBeDefined();
+    expect(
+      table.declineDispatch.validate({
+        ticketId: "t1",
+        shopId: "s1",
+        reason: "LATER",
+      }).error,
+    ).toBeDefined();
+  });
+  test("user ratings scope to people targets", () => {
+    expect(
+      table.userRatings.validate({
+        userId: "u1",
+        targetKind: "RIDER",
+        ticketId: "t1",
+      }).error,
+    ).toBeUndefined();
+    expect(
+      table.userRatings.validate({
+        userId: "s1",
+        targetKind: "SHOP",
+        ticketId: "t1",
+      }).error,
+    ).toBeDefined();
+  });
+  test("fees and amounts are bounded integers", () => {
+    const base = {lat: 10.7, lng: 106.6};
+    expect(
+      table.createProvider.validate({
+        ...base,
+        name: "S",
+        kind: "SHOP",
+        serviceFee: 1000000000,
+      }).error,
+    ).toBeDefined();
+    expect(
+      table.updateWorkOrder.validate({
+        ticketId: "t1",
+        quotedAmount: 1000000000,
+      }).error,
+    ).toBeDefined();
+  });
+});

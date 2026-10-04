@@ -26,7 +26,9 @@ afterAll(async () => {
 });
 
 describe("provider endpoints", () => {
-  it("POST /providers creates a shop without any license", async () => {
+  let shopId = "";
+
+  it("POST /providers files a pending shop without any license", async () => {
     const shop = await request(app)
       .post("/providers")
       .set("Authorization", bearer(USER))
@@ -37,8 +39,9 @@ describe("provider endpoints", () => {
         lng: BASE_LNG,
       });
     expect(shop.status).toBe(201);
-    expect(shop.body.data.status).toBe("ACTIVE");
+    expect(shop.body.data.status).toBe("PENDING");
     expect(shop.body.data.operatorUid).toBe(USER);
+    shopId = shop.body.data.id as string;
   });
 
   it("POST /providers rejects a second shop for one operator", async () => {
@@ -52,6 +55,15 @@ describe("provider endpoints", () => {
         lng: BASE_LNG,
       });
     expect(dup.status).toBe(409);
+  });
+
+  it("POST /providers/review approves the shop", async () => {
+    const review = await request(app)
+      .post("/providers/review")
+      .set("Authorization", bearer(ADMIN))
+      .send({providerId: shopId, approve: true});
+    expect(review.status).toBe(200);
+    expect(review.body.data).toMatchObject({decided: true, status: "ACTIVE"});
   });
 
   it("POST /providers files a pending tow provider", async () => {

@@ -185,9 +185,9 @@ Record an onboarding choice without touching the admin `users.role` field. Sets 
 
 ---
 
-### `PUT /users/services` **(Admin)**
+### `PUT /users/services` **(Auth)**
 
-Grant or revoke service licenses on any user. At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effect on net loss: revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
+Grant or revoke service licenses. Admins may change any user; a non-admin may only change its own record and only the `VOLUNTEER` license (the `RIDER` license is irrevocable — `403` otherwise). At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effect on net loss: revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
 
 **Request:**
 ```json
@@ -306,6 +306,14 @@ Delete volunteer and tow live-location rows older than the 15-minute freshness w
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "swept": 3 } }`
 
+### `POST /users/ratings` **(Auth)**
+
+Ratings received by a user (`VOLUNTEER` or `RIDER` target): every score with its ticket, reply, and timestamps, plus the average and count. Only readers who share a ticket with the user (or admins); the ticket context is required otherwise. Shops use `POST /providers/ratings`.
+
+```json
+{ "userId": "vol1", "targetKind": "VOLUNTEER", "ticketId": "tick1" }
+```
+
 ---
 ---
 
@@ -318,18 +326,18 @@ Provider capabilities are licensed per user in `users.services` (`RIDER`, `VOLUN
 | `RIDER` | All base rider mutations (tickets, flags, alleys, landmarks, routes, places, push, diagnostics, vehicles, profile). Granted at register/self-heal; backfilled to every active user |
 | `VOLUNTEER` | `PUT /users/volunteer`, heartbeat, volunteer `POST /dispatch/accept` |
 
-Shops and tow operators are not licenses — they are [provider records](#providers). `POST /dispatch/near` is auth-only and returns `[]` unless the caller has volunteer mode on or operates an `ACTIVE` `TOW` provider; `POST /dispatch/one` is visible to the ticket rider, assignee, provider operator, admins, and volunteers.
+Shops and tow operators are not licenses — they are [provider records](#providers). `POST /dispatch/near` is auth-only and returns `[]` unless the caller has volunteer mode on or operates an `ACTIVE` `TOW` provider; `POST /dispatch/one` is visible to the ticket rider, assignee, provider operator, notified candidates, and admins.
 
 Licenses are granted via `PUT /users/onboard` (`{service}` self-serves `RIDER` and `VOLUNTEER`; legacy `{role}` still accepted) and managed by admins via `PUT /users/services` (grant/revoke).
 
 
 ## Providers
 
-Repair shops (`SHOP`) and tow operators (`TOW`) are provider records in the top-level `providers` collection — creating the record is the grant, so there is no `SHOP` or `TOW` license. A `SHOP` record is active immediately; a `TOW` record starts `PENDING` and must be approved before it can accept tow jobs. At most one live record per kind per operator: `409` when a `PENDING` or `ACTIVE` record of that kind already exists; a `DENIED` record does not block re-applying. `TOW` records use the normalized plate (uppercased, non-alphanumerics stripped) as the document id, so one plate maps to one account; the id is reserved with an atomic create, so a concurrent duplicate plate also gets `409` instead of overwriting. Plates are immutable after creation. `POST /dispatch/accept` for `TOW` providers requires `ACTIVE` status plus a plate on file. Tow-assigned tickets carry the operator's `towPlate` so the rider can check the vehicle before it arrives. Suspended providers (see below) are hidden from every public listing and cannot accept.
+Repair shops (`SHOP`) and tow operators (`TOW`) are provider records in the top-level `providers` collection — creating the record is the grant, so there is no `SHOP` or `TOW` license. Both kinds start `PENDING` and must be approved before they can accept jobs or appear in listings. At most one live record per kind per operator: `409` when a `PENDING` or `ACTIVE` record of that kind already exists; a `DENIED` record does not block re-applying. `TOW` records use the normalized plate (uppercased, non-alphanumerics stripped) as the document id, so one plate maps to one account; the id is reserved with an atomic create, so a concurrent duplicate plate also gets `409` instead of overwriting. Plates are immutable after creation. `POST /dispatch/accept` for `TOW` providers requires `ACTIVE` status plus a plate on file. Tow-assigned tickets carry the operator's `towPlate` so the rider can check the vehicle before it arrives. Suspended providers (see below) are hidden from every public listing and cannot accept. Shops optionally declare `vehicleClasses` (`SOLO_BIKE`/`CAR`, absent means both); the directory filters hard on the rider's vehicle class, and tow destinations are blocked when the shop does not service the towed class.
 
 ### `POST /providers` **(Auth)**
 
-Create a provider record. `TOW` requires `plate` + `vehicleType`; `SHOP` takes `openHours` and forbids plate/vehicle fields (`400` either way). `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
+Create a provider record. `TOW` requires `plate` + `vehicleType`; `SHOP` takes `openHours` and optional `vehicleClasses` (`SOLO_BIKE`/`CAR`, 1–2 unique) and forbids plate/vehicle fields (`400` either way). `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
 
 ```json
 { "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "VAN", "vehicleWidth": 2.0 }
@@ -341,15 +349,23 @@ List the caller's own provider records with their statuses and any denial note.
 
 ### `POST /providers/near` **(Auth)**
 
-List `ACTIVE`, non-suspended providers near a point, sorted nearest-first and capped (`limit` 1–20, default 10). Search covers the full radius (exhaustive geocell coverage, not sampled). Each hit carries `distance` and `openNow` (`true`/`false`, or `null` when no hours are set). `radiusMeters` is 200–10000 (default 2000); the walk panel uses 500–2000 m.
+List `ACTIVE`, non-suspended providers near a point, capped (`limit` 1–20, default 10). Search covers the full radius (exhaustive geocell coverage, not sampled). Each hit carries `distance`, `openNow` (`true`/`false`, or `null` when no hours are set), and `closesInMinutes` (minutes until close when open, else `null`). Results sort open-first (open, then unknown hours, then closed) with nearest-first inside each band. `radiusMeters` is 200–10000 (default 2000); the walk panel uses 500–2000 m. `vehicleClass` (`SOLO_BIKE`/`CAR`) filters hard — shops that declare classes and exclude it are dropped; undeclared shops match every class.
 
 ```json
-{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "kind": "SHOP", "acceptingOnly": true, "openOnly": true, "limit": 10 }
+{ "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "kind": "SHOP", "acceptingOnly": true, "openOnly": true, "vehicleClass": "SOLO_BIKE", "limit": 10 }
+```
+
+### `POST /providers/search` **(Auth)**
+
+Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercased name (up to 50 candidates), then geo-filtered against the rider and ranked exact-match first, open-first, nearest-first. Same `vehicleClass` filter as `/providers/near`. `radiusMeters` is 200–10000 (default 10000) so a known shop beyond the browse radius stays reachable; the walk panel caps browsing at 2000 m.
+
+```json
+{ "lat": 10.7626, "lng": 106.6602, "query": "Thanh Cong", "vehicleClass": "SOLO_BIKE", "radiusMeters": 10000, "limit": 10 }
 ```
 
 ### `PUT /providers` **(Auth)**
 
-Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
+Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, vehicle classes, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
 
 ```json
 { "providerId": "shop1", "accepting": false }
@@ -369,7 +385,7 @@ Approve or deny a provider. A second review of an already-decided record is a no
 
 ### `POST /providers/report` **(Auth)**
 
-Report a provider. Any authenticated user may report — holding a ticket is deliberately not required, because "this shop doesn't exist" is the most common real report. Reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `OTHER`. Only `ACTIVE`, non-suspended providers are reportable (`400` otherwise); one open report per reporter per provider (`409` on dupe).
+Report a provider. Any authenticated user may report — holding a ticket is deliberately not required, because "this shop doesn't exist" is the most common real report. Reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`. Only `ACTIVE`, non-suspended providers are reportable (`400` otherwise); one open report per reporter per provider (`409` on dupe).
 
 ```json
 { "providerId": "30A12345", "reason": "FAKE_BUSINESS", "note": "Empty lot", "ticketId": "tick1" }
@@ -410,6 +426,16 @@ Ping a tow operator's live position. The body carries no `providerId` — the se
 ```json
 { "lat": 10.7626, "lng": 106.6602 }
 ```
+
+### `POST /providers/ratings` **(Auth)**
+
+Rating distribution for a shop: every score with its reply (if any) plus the denormalized average and count.
+
+```json
+{ "providerId": "shop1" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "ratings": [{ "id": "r1", "score": 5, "reply": null, "repliedAt": null, "createdAt": "..." }], "avg": 5, "count": 1 } }`
 
 ## Roles
 
@@ -1046,16 +1072,16 @@ Delete expired `active_routes` rows. Also runs every 15 min on a schedule (see C
 
 Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); fresh reports (`"1"`) and transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job per status that fans out to riders whose active route still crosses the flag, excluding the reporter. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off. Full pipeline in [`PIPELINE.md`](./PIPELINE.md).
 
-### `POST /push/register` **(Auth + `RIDER` license)**
+### `POST /push/register` **(Auth)**
 
 **Request:**
 ```json
 { "token": "fcm-device-token", "platform": "android" }
 ```
 
-**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user.
+**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user. Any authenticated user may register (shop and tow operators receive walk-in and job pushes on the same path).
 
-### `POST /push/unregister` **(Auth + `RIDER` license)**
+### `POST /push/unregister` **(Auth)**
 
 **Request:**
 ```json
@@ -1170,15 +1196,16 @@ Get a diagnostic by ID.
 
 ## Dispatch
 
-Three assistance tiers share the ticket lifecycle: `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"4"` Resolved (or `"5"` Cancelled). Nobody is auto-assigned: volunteers and providers accept at will, and the rider picks from the offer list.
+Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"` In progress → `"7"` Ready → `"4"` Resolved, with `"5"` Cancelled (rider) and `"8"` Declined (shop, walk-in only) as side exits. Status moves are validated per actor, not just per role: `MATCHED` is set only by `POST /dispatch/accept` (never by the status endpoint), arrival and resolution belong to the rider, work states belong to the helper, and terminal tickets (`4`/`5`/`8`) accept no further moves. Nobody is auto-assigned: volunteers and providers accept at will, and the rider picks from the offer list.
 
-- **Walk:** `POST /providers/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP` providers only.
-- **Professional:** ticket carries the rider vehicle (`vehicleType`/`vehicleWidth`, so helpers know what they rescue), alley-entrance coords + clearance (`alleySegmentId` → measured `accessWidthMeters`), an optional tow destination (registered `destinationShopId` or free-form `destinationPoint {lat,lng,label}`, snapshotted), and a provider assignment (`assignedShopId`). Tow providers flip `accepting: false` while on a ticket and back on resolve/cancel. Tow offers carry the provider vehicle and a `fitsAlley` label (`true`/`false`, `null` when unknown) against the ticket clearance.
-- **Volunteer:** `SOS` tickets geo-match available volunteers (toggle on, fresh location < 15 min, no active ticket, capability fit: car tickets only match `CAR`-capable volunteers), persist them as `candidates`, fan out via FCM (`dispatch-push` queue, gated by `CLOUD_TASKS_ENABLED`/`FCM_ENABLED`), and surface on the `near` radar.
+- **Walk:** `POST /providers/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP` providers only. Hits carry `closesInMinutes` for the closing-time warning.
+- **Walk-in:** the rider confirms arrival at a chosen shop (`ticketType: "WALK_IN"` + `providerId`, bike-only), the shop is pushed and accepts or declines, then records the repair order (`workType`, quoted/final amounts) through the work states. Rating is gated on the shop marking `READY`.
+- **Professional:** ticket carries the rider vehicle (`vehicleType`/`vehicleWidth`, so helpers know what they rescue), alley-entrance coords + clearance (`alleySegmentId` → measured `accessWidthMeters`), an optional tow destination (registered `destinationShopId` or free-form `destinationPoint {lat,lng,label}`, snapshotted; shop destinations are blocked when the shop does not service the towed class), and a provider assignment (`assignedShopId`). Tow providers flip `accepting: false` while on a ticket and back on resolve/cancel. Tow offers carry the provider vehicle and a `fitsAlley` label (`true`/`false`, `null` when unknown) against the ticket clearance.
+- **Volunteer:** `SOS` tickets geo-match available volunteers (toggle on, fresh location < 15 min, no active ticket, capability fit: car tickets only match `CAR`-capable volunteers), persist them as `candidates`, fan out via FCM (`dispatch-push` queue, gated by `CLOUD_TASKS_ENABLED`/`FCM_ENABLED`), and surface on the `near` radar. `WALK_IN` tickets never appear on the volunteer board.
 
 ### `POST /dispatch` **(Auth + `RIDER` license)**
 
-Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point).
+Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point). `WALK_IN` records an arrival at a chosen shop (`providerId`, bike-only) instead of requesting dispatch; the shop is pushed and accepts or declines. The creation response flags `providerSnapshot.closed` when the shop's own hours say closed (advisory only — creation is never blocked), and walk-ins carry `expiresAt` (2 h); unanswered walk-ins are cancelled by the half-hourly sweep.
 
 **Request:**
 ```json
@@ -1187,15 +1214,17 @@ Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (cle
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `ticketType` | string | yes | One of `MECHANIC`, `TOW`, `SOS` |
+| `ticketType` | string | yes | One of `MECHANIC`, `TOW`, `SOS`, `WALK_IN` |
 | `diagnosticId` | string | no | May be `""`/`null` |
 | `alleySegmentId` | string | no | Alley entrance; `accessWidthMeters` resolves from its measured `baseWidth` |
 | `accessWidthMeters` | number | no | Explicit clearance (0–20 m), wins over the segment lookup |
 | `note` | string | no | Free text, max 280 chars |
-| `destinationShopId` | string | no | Repair shop the tow should drop the vehicle at (wins over `destinationPoint`) |
+| `providerId` | string | no | Required for `WALK_IN`: the shop the rider arrived at (must be `ACTIVE`, non-suspended, and serve the rider's vehicle class) |
+| `destinationShopId` | string | no | Repair shop the tow should drop the vehicle at (wins over `destinationPoint`; blocked when the shop does not service the towed class) |
 | `destinationPoint` | object | no | Free-form tow destination `{lat, lng, label?}` |
 | `vehicleType` | string | no | Rider vehicle, one of `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` |
 | `vehicleWidth` | number | no | Rider vehicle width in meters (0.3–3) |
+| `vehicleLabel` | string | no | Free-form vehicle label, max 120 chars (defaults to `vehicleType`) |
 
 **Response `201`:**
 ```json
@@ -1216,7 +1245,7 @@ List the caller's own tickets, newest first (all statuses).
 
 ### `POST /dispatch/one` **(Auth)**
 
-Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the assigned provider's operator, admins, and volunteers (`403` otherwise).
+Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the assigned provider's operator, notified candidates, and admins (`403` otherwise). A `VOLUNTEER` license or an operated provider alone does not grant read access.
 
 **Request:**
 ```json
@@ -1229,11 +1258,11 @@ Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the ass
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status (validated against the lifecycle enum). Only the ticket rider, the assigned volunteer, the assigned provider's operator, or an admin (`403` otherwise).
+Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the helper (`3→6→7` for the operator or assignee); cancel belongs to the rider; decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`) accept no further moves. Admins bypass the matrix. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8` with a per-type title.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "status": "2" }
+{ "ticketId": "tick1", "status": "3" }
 ```
 
 **Response `200`:**
@@ -1245,7 +1274,7 @@ Advance a ticket's status (validated against the lifecycle enum). Only the ticke
 
 ### `POST /dispatch/near` **(Auth)**
 
-Radar: pending tickets near a point, nearest-first with `distance`. Used by volunteers (SOS) and provider apps. `radiusMeters` 200–10000 (default 5000). Car tickets are hidden from bike-only volunteers on the radar.
+Radar: pending tickets near a point, nearest-first with `distance`. Used by volunteers (SOS) and provider apps. `radiusMeters` 200–10000 (default 5000). Car tickets are hidden from bike-only volunteers on the radar. `WALK_IN` tickets never appear here — they are addressed to one shop, not broadcast.
 
 **Request:**
 ```json
@@ -1271,7 +1300,7 @@ Offer list: accepting providers near a point (sorted nearest-first, capped). `ki
 
 ### `POST /dispatch/select` **(Auth + `RIDER` license)**
 
-The rider picks a provider for a pending ticket (stays pending until the provider accepts). The provider must be `ACTIVE`, non-suspended, and its kind must match the ticket (`TOW`→`TOW`, `MECHANIC`→`SHOP`; `SOS` takes no provider).
+The rider picks a provider for a pending ticket (stays pending until the provider accepts). The provider must be `ACTIVE`, non-suspended, and its kind must match the ticket (`TOW`→`TOW`, `MECHANIC`/`WALK_IN`→`SHOP`; `SOS` takes no provider). For tow tickets with provider fees on file, selection computes a straight-line `priceEstimate` (`base + perKm × classMultiplier × km`, car-class ×2.5) and stamps `priceCurrency: "VND"`; walk-in accepts stamp the shop's flat `serviceFee` instead.
 
 **Request:**
 ```json
@@ -1287,7 +1316,7 @@ The rider picks a provider for a pending ticket (stays pending until the provide
 
 ### `POST /dispatch/accept` **(Auth)**
 
-Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended). Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC` tickets need a `SHOP` provider, and `SOS` tickets take no provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
+Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended; for addressed tickets the shop must be the named one). Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC`/`WALK_IN` tickets need a `SHOP` provider, and `SOS` tickets take no provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
 
 **Request:**
 ```json
@@ -1301,9 +1330,76 @@ Accept a pending ticket at will. Without `shopId`, the caller accepts as a volun
 
 ---
 
+### `POST /dispatch/decline` **(Auth)**
+
+Decline a pending walk-in addressed to the caller's shop (`403` for other providers or strangers, `400` for non-walk-in tickets or already-claimed tickets). The reason travels with the ticket and the rider's push. Sets `DECLINED` atomically and notifies the rider.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "shopId": "shop9", "reason": "FULL", "note": "Full until Friday" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "declined": true } }
+```
+
+---
+
+### `POST /dispatch/work` **(Auth)**
+
+Record the repair order on an open ticket: free-text `workType`, integer VND `quotedAmount`/`finalAmount`, and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is matched/arrived/in-progress (`400` once closed).
+
+**Request:**
+```json
+{ "ticketId": "tick1", "workType": "Tire change", "quotedAmount": 400000, "finalAmount": 380000, "invoiceRef": "INV-1042" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "updated": 1 } }
+```
+
+---
+
+### `POST /dispatch/shop/requests` **(Auth)**
+
+Inbound walk-ins addressed to the caller's shop, pending only, newest first. Only the shop's operator or an admin.
+
+**Request:**
+```json
+{ "shopId": "shop9" }
+```
+
+---
+
+### `POST /dispatch/shop/records` **(Auth)**
+
+Recent engagements handled by the caller's shop, newest first (`limit` 1–50, default 20). Only the shop's operator or an admin. Feeds the provider Records surface with the rider's rating per row.
+
+**Request:**
+```json
+{ "shopId": "shop9", "limit": 20 }
+```
+
+---
+
+### `POST /dispatch/feed` **(Auth + `RIDER` license)**
+
+Unified in/out record feed for the Records surface: the caller's own tickets (`direction: "out"`) merged with tickets addressed to them — pending and recent walk-ins at providers they operate (non-`DENIED`) plus tickets assigned to them as a volunteer (`direction: "in"`) — newest-first, capped (`limit` 1–50, default 50).
+
+**Request:**
+```json
+{ "limit": 20 }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "...": "..." }] }`
+
+---
+
 ### `POST /dispatch/destination` **(Auth + `RIDER` license)**
 
-Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP`) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. The chosen destination is snapshotted onto the ticket.
+Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP` that services the towed class) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. Walk-in tickets have no editable destination. The chosen destination is snapshotted onto the ticket.
 
 **Request:**
 ```json
@@ -1314,7 +1410,7 @@ Change a ticket's drop-off: a registered repair-shop destination (`destinationSh
 
 ### `POST /dispatch/deliver` (Cloud Tasks only)
 
-Fan out an SOS ticket to candidate volunteers' FCM tokens (`"SOS request near you"` + ticket data). Skipped when FCM is disabled or the ticket left pending.
+Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near you"` + ticket data); pending `WALK_IN` goes to the named shop's operator (`"Walk-in request"`); any other status notifies the rider with a per-type title (`SOS`/`Tow`/`Repair`/`Walk-in update`). Skipped when FCM is disabled, the ticket is gone, or (for status pushes on cancelled tickets) there is no body.
 
 **Request:**
 ```json
@@ -1331,7 +1427,7 @@ Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits u
 
 ### `POST /ratings` **(Auth)**
 
-Rate after a ticket resolves (`400` otherwise). Riders rate the helper (assigned volunteer, assigned shop, or destination shop); helpers (assigned volunteer or the shop operator) rate the rider.
+Rate after a ticket resolves (`400` otherwise). Riders rate the helper (assigned volunteer, assigned shop, or destination shop); helpers (assigned volunteer or the shop operator) rate the rider. Rating a destination shop additionally requires the shop to have fulfilled the ticket (`fulfilledByShopId`, stamped on `READY`) — a tow that went home produces no rateable shop. Ratings that move a shop average bust the shop cache so the new mean is visible immediately.
 
 **Request:**
 ```json
@@ -1342,6 +1438,35 @@ Rate after a ticket resolves (`400` otherwise). Riders rate the helper (assigned
 ```json
 { "statusCode": 200, "status": "SUCCESS", "message": "Rating submitted", "data": { "avg": 5, "count": 1, "updated": 1 } }
 ```
+
+---
+
+### `POST /ratings/reply` **(Auth)**
+
+Reply to a rating. Only the rated party: the shop's operator for `SHOP` targets, the user themselves for `VOLUNTEER`/`RIDER` targets (admins bypass). Last write wins.
+
+**Request:**
+```json
+{ "ratingId": "rate1", "reply": "Thanks for visiting!" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "message": "Reply posted", "data": { "replied": true } }
+```
+
+---
+
+### `POST /ratings/by-ticket` **(Auth)**
+
+Ratings filed on one ticket (either direction), so the reply box can bind to the real rating id. Visible to the ticket rider, the assigned volunteer, the assigned/named provider's operator, and admins (`403` otherwise).
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "rate1", "targetId": "vol1", "targetKind": "VOLUNTEER", "score": 5, "reply": null, "repliedAt": null }] }`
 
 ---
 

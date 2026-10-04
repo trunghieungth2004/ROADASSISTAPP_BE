@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 29 unit suites (406 tests) and 20 integration suites (135 tests), all green:
+Backend tested with **Jest** across two tiers — 37 unit suites (643 tests) and 20 integration suites (177 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
@@ -18,6 +18,8 @@ npm test -- --watch         # re-run on change
 ```
 
 The `firebase.json` predeploy hook runs `lint` + `build` + `test:all` before every deploy, so `firebase deploy --only functions` **will fail and abort** if any test is red.
+
+> Do not pre-start the emulators before `test:integration` — the script starts its own instances with `--project test-project` and kills them afterwards. A manually started set (default project) causes cross-project Auth failures that look like real test failures.
 
 ## Structure
 
@@ -66,7 +68,13 @@ functions/
     │       ├── ratingService.test.ts
     │       └── taskQueueService.test.ts
     │   └── repository/
-    │       └── routingCacheRepository.test.ts
+    │       ├── dispatchRepository.test.ts
+    │       ├── fcmTokenRepository.test.ts
+    │       ├── providerLocationRepository.test.ts
+    │       ├── routingCacheRepository.test.ts
+    │       └── userRepository.test.ts
+    │   └── index/
+    │       └── clientIpKey.test.ts
     ├── integration/
     │   ├── auth.test.ts
     │   ├── user.test.ts
@@ -117,7 +125,7 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup, capability), heartbeat 404/off-400/refresh. |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup, capability), heartbeat 404/off-400/refresh, self-service `updateServices` (own VOLUNTEER revoke, stranger 403, RIDER revoke 403). |
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create (incl. `CAR`/`VAN`/`TRUCK`) and ride-config writes. |
 | `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
@@ -134,12 +142,12 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/routing/widthGate.test.ts` | Narrow segment → 409 after 2 attempts, width polygons in the detour request, compatible/unknown/far pass, skipped without width, hazard wins over width. |
 | `service/closureService.test.ts` | Empty geometry short-circuit, confirmed-flood hit + 200 m default, obstruction/accident hits + 100 m type defaults, locked-status blocking, per-flag radius override, non-blocking filter (suggested/expired/rejected/far), distance sorting. |
 | `utils/valhalla.test.ts` | `postRoutes` defaults to `motor_scooter` and sends `auto` when requested (`400` beyond `VALHALLA_AUTO_MAX_DISTANCE`), sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, drops alternates with geometry identical to the primary, `costingForVehicle`/`isCarVehicle` mapping, `dedupeRoutes` keeps first/preserves order/tolerates unparseable geometry, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
-| `service/providerService.test.ts` | Unknown user 404, shop create (no license needed) + one-per-kind 409, tow create (plate shape, duplicate plate 409, `ref.create` race guard), DENIED re-apply allowed, operator-only update + stranger 403, location move (lat+lng together), near hides non-active/suspended, review approve/deny + lost-race no-op + non-admin 403, report dedupe 409 + non-active 400, suspend/restore + live-row clear, live-location ping (on-duty only). |
+| `service/providerService.test.ts` | Unknown user 404, shop create (no license needed, `PENDING` review) + one-per-kind 409, tow create (plate shape, duplicate plate 409, `ref.create` race guard), DENIED re-apply allowed (both kinds), operator-only update + stranger 403, location move (lat+lng together), near hides non-active/suspended, review approve/deny + lost-race no-op + non-admin 403, report dedupe 409 + non-active 400, suspend/restore + live-row clear, live-location ping (on-duty only). |
 | `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open, dispatch queue targeting + body. |
-| `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→volunteer/SHOP + ticket `helperRating`, rider→destination shop, volunteer/operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating. |
+| `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→volunteer/SHOP + ticket `helperRating`, rider→destination shop, volunteer/operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating, by-ticket read (rider/operator pass, stranger 403). |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
-| `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (ACTIVE SHOP only) + free-form point, rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), provider accept (stranger 403, kind↔ticket match enforced, SOS takes no provider, tow auto-busy), near radius filter + sort, offers accepting filter + live-position override + `fitsAlley` labels, deliver fallback SOS-only, FCM fan-out skip/deliver. |
+| `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (ACTIVE SHOP only) + free-form point, rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), provider accept (stranger 403, kind↔ticket match enforced, SOS takes no provider, tow auto-busy), near radius filter + sort, offers accepting filter + live-position override + `fitsAlley` labels, deliver fallback SOS-only, FCM fan-out skip/deliver, feed in/out stamping + dedupe, expiry-cancel push with full payload. |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
 ### test/integration/
@@ -151,7 +159,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | File | Tests |
 |------|-------|
 | `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
-| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags (+ capability), heartbeat off-400/record |
+| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags (+ capability), heartbeat off-400/record, services self-revoke (own VOLUNTEER) + stranger 403 |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `status.test.ts` | POST /statuses returns groups sorted by order, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
@@ -165,9 +173,9 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `routingAlternatives.test.ts` | Clean two-point route → 3 options (`alternates: 4` on the wire), hazard-blocked alternative gets its own detour, blocked primary falls back to a safe alternative, fully-blocked set returns soft-blocked with `hazards` |
 | `routingDetour.test.ts` | Fresh blockage detoured, long route detoured around mid-line hazards, reporter's own suggested flag detours while other riders get a warning |
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
-| `provider.test.ts` | POST create 201 (SHOP active immediately, TOW pending), duplicate-kind 409, plate normalization, near + kind filter + pending hidden, pending list + review approve/deny + lost-race no-op, availability toggle + accepting-only exclusion, report file 201 + dedupe 409 + bad reason 400, suspend hides from offers/search + restore, live-location ping (on-duty only) + off-duty 403, kind-conditionals 400, non-admin 403, unauthenticated 401 |
+| `provider.test.ts` | POST create 201 (SHOP and TOW both pending review), duplicate-kind 409, plate normalization, near + kind filter + pending hidden, pending list + review approve/deny + lost-race no-op, availability toggle + accepting-only exclusion, report file 201 + dedupe 409 + bad reason 400, suspend hides from offers/search + restore, live-location ping (on-duty only) + off-duty 403, kind-conditionals 400, non-admin 403, unauthenticated 401 |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
-| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot (ACTIVE SHOP), offers list, rider select (kind-matched), provider accept + tow busy, resolve restores availability, unapproved tow accept 403, near radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels |
+| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot (ACTIVE SHOP), offers list, rider select (kind-matched), provider accept + tow busy, resolve restores availability, unapproved tow accept 403, near radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels, feed in/out directions |
 | `ratings.test.ts` | SOS→accept→resolve flow, unknown ticket 404, rider→volunteer + helper→rider ratings, out-of-range 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 
