@@ -63,4 +63,21 @@ describe("cacheManager with CACHE_ENABLED=true", () => {
     await wrapped(1);
     expect(fn).toHaveBeenCalledTimes(3);
   });
+
+  it("shares one execution across concurrent misses", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fn = jest.fn(async (x: number) => {
+      await gate;
+      return x * 3;
+    });
+    const wrapped = cacheManager.wrap(fn, {namespace: "probeDedup"});
+    const pending = Promise.all([wrapped(2), wrapped(2)]);
+    release();
+    await expect(pending).resolves.toEqual([6, 6]);
+    expect(fn).toHaveBeenCalledTimes(1);
+    cacheManager.del("probeDedup");
+  });
 });

@@ -27,6 +27,7 @@ import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 import * as flagService from "./service/flagService";
 import * as userService from "./service/userService";
+import * as routingService from "./service/routingService";
 
 const app = express();
 
@@ -173,5 +174,18 @@ export const sweepStaleVolunteers = functions.scheduler.onSchedule(
   },
   async () => {
     await userService.sweepStaleVolunteers();
+  },
+);
+
+export const sweepActiveRoutes = functions.scheduler.onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "Asia/Ho_Chi_Minh",
+    region: "asia-southeast1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    await routingService.sweepActiveRoutes();
   },
 );

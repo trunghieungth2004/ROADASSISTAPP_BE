@@ -116,7 +116,7 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 | `dispatch_tickets` | auto ID; `userId`, `ticketType` (`MECHANIC`, `TOW`, `SOS`), `status` (`"1"` Pending / `"2"` Matched / `"3"` Arrived / `"4"` Resolved / `"5"` Cancelled), `lat`, `lng`, `diagnosticId?`, `createdAt` |
 | `routing_cache` | doc ID = deterministic route key; `originLat/Lng`, `destLat/Lng`, `widthBucket`, `costing`, `geometry` (JSON string — Firestore rejects nested arrays), `distanceMeters?`, `durationSeconds?`, `cachedAt` (ISO), `expiresAt` (ISO, `ROUTING_CACHE_TTL_SECONDS`, default 30d; enforced in code, legacy docs without it stay valid) |
 | `fcm_tokens` | doc ID = `userId`; `tokens` (string array, most-recent-first, capped at 5), `updatedAt` (ISO) |
-| `active_routes` | doc ID = deterministic route key; `userId`, `geometry` (JSON string), `geoCells` (string array, precision-5 cells covering the route bbox), `expiresAt` (ISO, 30 min); rewritten on every `POST /routes` 200 |
+| `active_routes` | doc ID = deterministic route key; `userId`, `geometry` (JSON string), `geoCells` (string array, precision-5 cells covering the route bbox), `expiresAt` (ISO, 30 min); rewritten on every `POST /routes` 200. Expired rows are filtered at read and deleted every 15 min by `sweepActiveRoutes` (garbage collection only — never extends the TTL) |
 
 ## Firestore Indexes
 

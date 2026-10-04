@@ -1038,7 +1038,7 @@ Delete one of the caller's saved routes (`404` when unknown).
 
 ### `POST /routes/sweep` **(Admin)**
 
-Delete expired `active_routes` rows. Also runs on a schedule. No body schema.
+Delete expired `active_routes` rows. Also runs every 15 min on a schedule (see CACHE.md "Scheduled functions"). No body schema.
 
 ---
 

@@ -12,6 +12,10 @@ const DEFAULTS: Record<string, number> = {
   routing: 10000,
   flag: 10000,
   shop: 120000,
+  savedPlace: 30000,
+  savedRoute: 30000,
+  provider: 30000,
+  dispatch: 10000,
 };
 
 const MAX_SIZES_MB: Record<string, number> = {
@@ -22,6 +26,10 @@ const MAX_SIZES_MB: Record<string, number> = {
   routing: 8,
   flag: 4,
   shop: 2,
+  savedPlace: 2,
+  savedRoute: 2,
+  provider: 2,
+  dispatch: 4,
 };
 
 const ttlFor = (namespace: string): number =>
@@ -46,6 +54,7 @@ interface CacheHandle {
 }
 
 const caches: Record<string, CacheHandle> = {};
+const inflight: Record<string, Map<string, Promise<never>>> = {};
 
 const ensureCache = (namespace: string): CacheHandle => {
   if (!caches[namespace]) {
@@ -91,17 +100,35 @@ export const wrap = <T extends unknown[], R>(
   }: {namespace: string; keyFn?: (...args: T) => string},
 ): WrappedFn<T, R> => {
   ensureCache(namespace);
+  if (!inflight[namespace]) inflight[namespace] = new Map();
+  const pending = inflight[namespace] as Map<string, Promise<R>>;
   const wrapped = async (...args: T): Promise<R> => {
     const key = keyFn(...args);
     const hit = get(namespace, key);
     if (hit !== undefined) return hit as R;
-    const result = await fn(...args);
-    if (result !== undefined) set(namespace, key, result);
-    return result;
+    const ongoing = pending.get(key);
+    if (ongoing) return ongoing;
+    const task = (async (): Promise<R> => {
+      try {
+        const result = await fn(...args);
+        if (result !== undefined) set(namespace, key, result);
+        return result;
+      } finally {
+        pending.delete(key);
+      }
+    })();
+    pending.set(key, task);
+    return task;
   };
   return Object.assign(wrapped, {
-    invalidate: (key: string) => del(namespace, key),
-    invalidateAll: () => del(namespace),
+    invalidate: (key: string) => {
+      pending.delete(key);
+      del(namespace, key);
+    },
+    invalidateAll: () => {
+      pending.clear();
+      del(namespace);
+    },
   });
 };
 

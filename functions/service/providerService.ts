@@ -22,8 +22,11 @@ import {ROLE_ADMIN} from "../constants/roles";
 
 import {ConflictError, ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";
+import * as cacheManager from "../utils/cacheManager";
 
 const PLATE_SHAPE = /^\d{2}[A-Z0-9]{1,3}\d{4,6}$/;
+const SHOP_NS = "shop";
+const PROVIDER_NS = "provider";
 
 const DOW_KEYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
@@ -95,7 +98,7 @@ const createShopProvider = async ({
   if (operated.some((p) => p.kind === PROVIDER_KIND.SHOP)) {
     throw new ConflictError("A shop provider already exists");
   }
-  return providerRepository.createShop({
+  const created = await providerRepository.createShop({
     operatorUid: userId,
     name,
     lat,
@@ -103,6 +106,9 @@ const createShopProvider = async ({
     label,
     openHours,
   });
+  cacheManager.del(PROVIDER_NS, userId);
+  cacheManager.del(SHOP_NS);
+  return created;
 };
 
 const createTowProvider = async ({
@@ -146,7 +152,7 @@ const createTowProvider = async ({
     throw new ConflictError("This plate is already registered");
   }
   try {
-    return await providerRepository.createTow({
+    const created = await providerRepository.createTow({
       operatorUid: userId,
       name,
       lat,
@@ -157,6 +163,9 @@ const createTowProvider = async ({
       vehicleType,
       vehicleWidth,
     });
+    cacheManager.del(PROVIDER_NS, userId);
+    cacheManager.del(SHOP_NS);
+    return created;
   } catch (error) {
     const code = (error as {code?: number | string} | null)?.code;
     const message = error instanceof Error ? error.message : "";
@@ -213,16 +222,26 @@ const updateProvider = async ({
   if (fields.accepting === false) {
     await providerLocationRepository.remove(providerId);
   }
+  cacheManager.del(PROVIDER_NS);
+  cacheManager.del(SHOP_NS);
   return {updated: 1};
 };
 
-const myProviders = async ({userId}: {userId: string}) => {
+const myProvidersInner = async ({userId}: {userId: string}) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   return providerRepository.findByOperator(userId);
 };
 
-const nearProviders = async ({
+const myProvidersCached = cacheManager.wrap(myProvidersInner, {
+  namespace: PROVIDER_NS,
+  keyFn: ({userId}: {userId: string}) => userId,
+});
+
+const myProviders = async ({userId}: {userId: string}) =>
+  myProvidersCached({userId});
+
+const nearProvidersInner = async ({
   lat,
   lng,
   kind,
@@ -268,6 +287,61 @@ const nearProviders = async ({
   filtered.sort((a, b) => (a.distance as number) - (b.distance as number));
   return filtered.slice(0, limit);
 };
+
+const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
+  namespace: SHOP_NS,
+  keyFn: ({
+    lat,
+    lng,
+    kind,
+    radiusMeters = 2000,
+    acceptingOnly = false,
+    openOnly = false,
+    limit = NEAR_SHOPS_MAX,
+  }: {
+    lat: number;
+    lng: number;
+    kind?: string;
+    radiusMeters?: number;
+    acceptingOnly?: boolean;
+    openOnly?: boolean;
+    limit?: number;
+    now?: Date;
+  }) =>
+    `${lat.toFixed(3)},${lng.toFixed(3)},${kind ?? "-"},` +
+    `${radiusMeters},${acceptingOnly ? "1" : "0"},` +
+    `${openOnly ? "1" : "0"},${limit}`,
+});
+
+const nearProviders = async ({
+  lat,
+  lng,
+  kind,
+  radiusMeters = 2000,
+  acceptingOnly = false,
+  openOnly = false,
+  limit = NEAR_SHOPS_MAX,
+  now,
+}: {
+  lat: number;
+  lng: number;
+  kind?: string;
+  radiusMeters?: number;
+  acceptingOnly?: boolean;
+  openOnly?: boolean;
+  limit?: number;
+  now?: Date;
+}) =>
+  nearProvidersCached({
+    lat,
+    lng,
+    kind,
+    radiusMeters,
+    acceptingOnly,
+    openOnly,
+    limit,
+    now,
+  });
 
 const listPending = async (adminUid?: string) => {
   if (adminUid) {
@@ -322,6 +396,8 @@ const reviewProvider = async ({
   if (!approve) {
     await providerLocationRepository.remove(providerId);
   }
+  cacheManager.del(PROVIDER_NS);
+  cacheManager.del(SHOP_NS);
   return {
     decided: true,
     status: approve ? PROVIDER_STATUS.ACTIVE : PROVIDER_STATUS.DENIED,
@@ -441,6 +517,8 @@ const suspendProvider = async ({
     suspendedBy: adminUid,
   });
   await providerLocationRepository.remove(providerId);
+  cacheManager.del(PROVIDER_NS);
+  cacheManager.del(SHOP_NS);
   let reportDecided: boolean | null = null;
   if (reportId) {
     const report = await providerReportRepository.findById(reportId);
@@ -477,6 +555,8 @@ const restoreProvider = async ({
     suspendedReason: null,
     suspendedBy: null,
   });
+  cacheManager.del(PROVIDER_NS);
+  cacheManager.del(SHOP_NS);
   return {restored: true, suspended: false};
 };
 

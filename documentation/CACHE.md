@@ -14,6 +14,7 @@ Everything in-process is backed by `utils/cacheManager` + `utils/cache.ts` (lru-
 - Entry size is measured with `sizeOf`: strings/objects via `JSON.stringify` byte length, arrays/maps/sets recursively.
 - Eviction is LRU; `updateAgeOnGet` keeps hot entries alive within their TTL window; `allowStale: false`.
 - `cacheManager.wrap(fn, {namespace, keyFn})` wraps a read function: on a miss it calls `fn` and stores the result **only if it is not `undefined`**. Thrown errors (including 400/404) are never cached. Most readers pass a custom `keyFn`; the default is `JSON.stringify(args)`.
+- Concurrent misses on the same key share a single execution: an in-flight map per namespace holds the pending promise, so a burst of identical reads runs `fn` once. `invalidate(key)` / `invalidateAll()` also drop the in-flight entry, so an invalidated key can never resolve into the cache from a stale flight.
 - Wrapped functions expose `.invalidate(key)` / `.invalidateAll()`.
 - When `CACHE_ENABLED=false` (both planned test suites will set this), `get`/`set` become no-ops, so `wrap` behaves as a plain passthrough — tests stay deterministic without special handling.
 
@@ -34,8 +35,13 @@ CACHE_MAX_SIZE_<NAMESPACE>_MB   e.g. CACHE_MAX_SIZE_FLAG_MB=8
 | `alleySegment` | single segment per `segmentId`; near-search per `lat,lng,radius` | `service/alleySegmentService.ts` | 120 s | 4 MB | key-level (`segmentId`) on passability/moderation writes; wholesale on segment create |
 | `landmark` | near-search per `lat,lng,radius` (with computed `distance`) | `service/landmarkService.ts` | 120 s | 2 MB | wholesale on landmark create (`matchNearby` reuses the near-search cache) |
 | `flag` | near-search per `lat,lng,radius` | `service/flagService.ts` | 10 s | 4 MB | key-level (`flagId`) on confirm/moderate/expire; wholesale on flag create |
+| `savedPlace` | saved-place list per `userId` | `service/savedPlaceService.ts` | 30 s | 2 MB | key-level (`userId`) on save, relabel, remove |
+| `savedRoute` | saved-route list per `userId`; one route per `userId:routeId` | `service/savedRouteService.ts` | 30 s | 2 MB | key-level on save, rename, delete (both keys) |
+| `provider` | operator's own providers per `userId` | `service/providerService.ts` | 30 s | 2 MB | key-level (`userId`) on create; wholesale on update/review/suspend/restore |
+| `shop` | provider near-search per rounded `lat,lng,kind,radius,accepting,open,limit` | `service/providerService.ts` | 120 s | 2 MB | wholesale on provider create/update/review/suspend/restore; also cleared from `dispatchService` when a tow's `accepting` flips |
+| `dispatch` | caller's tickets per `userId`; nearby pending per `userId,lat,lng,radius,type,limit` | `service/dispatchService.ts` | 10 s | 4 MB | wholesale on create, status change, accept, destination edit |
 
-The `routing` (10 s / 8 MB) and `shop` (120 s / 2 MB) defaults exist in `cacheManager` but are currently reserved — routing persistence lives in Firestore (below) and shop reads are uncached. Only reads whose arguments fully determine the result are wrapped.
+Only the `routing` (10 s / 8 MB) default in `cacheManager` is currently reserved — routing persistence lives in Firestore (below). Only reads whose arguments fully determine the result are wrapped. Note the `shop` near-search key deliberately excludes the caller-supplied `now` clock: `openNow` is computed at read time, so a varying clock must not poison the key.
 
 ## Invalidation model
 
@@ -79,8 +85,21 @@ Decision: keep Firestore (option A) with TTL + full-response caching in place. R
 
 ## Memory budget
 
-Worst case if every in-process namespace maxes out simultaneously: 3 + 3 + 4 + 2 + 8 + 4 + 2 = **~26 MiB** against a 512 MiB function allocation. Realistic steady state is far lower (short TTLs, small payloads).
+Worst case if every in-process namespace maxes out simultaneously: 3 + 3 + 4 + 2 + 8 + 4 + 2 + 2 + 2 + 2 + 4 = **~36 MiB** against a 512 MiB function allocation. Realistic steady state is far lower (short TTLs, small payloads).
 
 ## Testing behavior
 
 The planned suites run with `CACHE_ENABLED=false` (`test/setup/unit.ts`, `test/setup/integration.ts`): `wrap` passes through, `get`/`set` are inert, and `del` still clears whatever exists — so cache assertions never leak between tests.
+
+## Scheduled functions
+
+Three Cloud Scheduler jobs, all `asia-southeast1`, all 256 MiB / 120 s timeout.
+None has emulator coverage; all are billed invocations.
+
+| Function | Schedule | Sweeps | Notes |
+|----------|----------|--------|-------|
+| `sweepExpiredFlags` | every 60 min | flags past TTL (`flagService.expireFlags`) | — |
+| `sweepStaleVolunteers` | every 60 min | stale volunteer presence (`userService.sweepStaleVolunteers`) | — |
+| `sweepActiveRoutes` | every 15 min | expired `active_routes` rows (`routingService.sweepActiveRoutes`) | garbage collection only — deletes, never extends the 30-min TTL (see PIPELINE.md "Known limitation") |
+
+`POST /routes/sweep` (admin) runs the active-route sweep on demand and is retained for manual purges.

@@ -1,6 +1,7 @@
 import * as savedRouteRepository from
   "../repository/savedRouteRepository";
 import * as userRepository from "../repository/userRepository";
+import * as cacheManager from "../utils/cacheManager";
 
 import {ForbiddenError, NotFoundError} from "../utils/errors";
 
@@ -37,6 +38,7 @@ interface SavedRouteSummary {
 }
 
 const FALLBACK_NAME = "Saved route";
+const NS = "savedRoute";
 
 const parseGeometry = (stored: unknown): unknown => {
   if (typeof stored !== "string") return stored;
@@ -73,15 +75,26 @@ const saveRoute = async (input: SaveRouteInput) => {
     input.name.trim() :
     FALLBACK_NAME;
   const record = await savedRouteRepository.create({...input, name: fallback});
+  cacheManager.del(NS, input.userId);
   return {...record, geometry: parseGeometry(record.geometry)};
 };
 
-const listRoutes = async (userId: string): Promise<SavedRouteSummary[]> => {
+const listRoutesInner = async (
+  userId: string,
+): Promise<SavedRouteSummary[]> => {
   const records = await savedRouteRepository.listByUserId(userId);
   return records.map(toSummary);
 };
 
-const getRoute = async ({
+const listRoutesCached = cacheManager.wrap(listRoutesInner, {
+  namespace: NS,
+  keyFn: (userId: string) => userId,
+});
+
+const listRoutes = async (userId: string): Promise<SavedRouteSummary[]> =>
+  listRoutesCached(userId);
+
+const getRouteInner = async ({
   routeId,
   userId,
 }: {
@@ -95,6 +108,20 @@ const getRoute = async ({
   }
   return {...record, geometry: parseGeometry(record.geometry)};
 };
+
+const getRouteCached = cacheManager.wrap(getRouteInner, {
+  namespace: NS,
+  keyFn: ({routeId, userId}: {routeId: string; userId: string}) =>
+    `${userId}:${routeId}`,
+});
+
+const getRoute = async ({
+  routeId,
+  userId,
+}: {
+  routeId: string;
+  userId: string;
+}) => getRouteCached({routeId, userId});
 
 const renameRoute = async ({
   routeId,
@@ -111,6 +138,8 @@ const renameRoute = async ({
     throw new ForbiddenError("You can only rename your own saved routes");
   }
   await savedRouteRepository.updateName(routeId, name.trim());
+  cacheManager.del(NS, userId);
+  cacheManager.del(NS, `${userId}:${routeId}`);
   return {renamed: 1};
 };
 
@@ -127,6 +156,8 @@ const deleteRoute = async ({
     throw new ForbiddenError("You can only delete your own saved routes");
   }
   await savedRouteRepository.deleteById(routeId);
+  cacheManager.del(NS, userId);
+  cacheManager.del(NS, `${userId}:${routeId}`);
   return {deleted: 1};
 };
 

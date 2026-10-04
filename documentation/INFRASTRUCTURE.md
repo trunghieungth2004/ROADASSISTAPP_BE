@@ -66,6 +66,7 @@ an explicit flag beats `VALHALLA_MODE`. Full mode matrix:
 | `valhalla` (Cloud Run) | `asia-southeast1` | scale-to-zero, max 2, 4GiB/2vCPU | `infra/valhalla/` → AR image |
 | `valhalla-vietnam` (Artifact Registry) | `asia-southeast1` | docker repo `valhalla/` | built by `setup.sh` |
 | `hazard-push` (Cloud Tasks) | `asia-southeast1` | queue, OIDC invoke | `npm run push:setup` |
+| Scheduled functions | `asia-southeast1` | `sweepExpiredFlags` + `sweepStaleVolunteers` (hourly), `sweepActiveRoutes` (every 15 min) | `functions/index.ts` (see CACHE.md "Scheduled functions") |
 | Firestore / Auth / Storage | `asia-southeast1` | database, seed via `db:init` | `functions/` + console |
 
 ## Env wiring

@@ -1,4 +1,5 @@
 import * as savedPlaceRepository from "../repository/savedPlaceRepository";
+import * as cacheManager from "../utils/cacheManager";
 
 export type SavedPlace = savedPlaceRepository.SavedPlace;
 
@@ -6,6 +7,8 @@ import {ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";
 
 const MAX_SAVED_PLACES = 50;
+
+const NS = "savedPlace";
 
 const savePlace = async ({
   userId,
@@ -25,6 +28,7 @@ const savePlace = async ({
     if (existing.label !== name) {
       await savedPlaceRepository.updateLabel(existing.id, name);
       existing.label = name;
+      cacheManager.del(NS, userId);
     }
     return existing;
   }
@@ -34,11 +38,22 @@ const savePlace = async ({
       `You can save at most ${MAX_SAVED_PLACES} places`,
     );
   }
-  return savedPlaceRepository.create({userId, label: name, lat, lng});
+  const created = await savedPlaceRepository.create(
+    {userId, label: name, lat, lng});
+  cacheManager.del(NS, userId);
+  return created;
 };
 
-const listSavedPlaces = async (userId: string): Promise<SavedPlace[]> =>
+const listSavedPlacesInner = async (userId: string): Promise<SavedPlace[]> =>
   savedPlaceRepository.listByUserId(userId);
+
+const listSavedPlacesCached = cacheManager.wrap(listSavedPlacesInner, {
+  namespace: NS,
+  keyFn: (userId: string) => userId,
+});
+
+const listSavedPlaces = async (userId: string): Promise<SavedPlace[]> =>
+  listSavedPlacesCached(userId);
 
 const removeSavedPlace = async ({
   userId,
@@ -53,6 +68,7 @@ const removeSavedPlace = async ({
     throw new ForbiddenError("You can only remove your own saved places");
   }
   await savedPlaceRepository.deleteById(placeId);
+  cacheManager.del(NS, userId);
   return {deleted: 1};
 };
 

@@ -73,7 +73,7 @@ Tokens are native FCM registration tokens (never Expo push tokens, so the Admin-
 | Collection | Shape |
 |---|---|
 | `fcm_tokens` | doc ID = `userId`; `tokens` (most-recent-first, capped at 5), `updatedAt` |
-| `active_routes` | doc ID = deterministic route key (incl. stops); `userId`, `geometry` (JSON string), `geoCells` (precision-5 cells over the route bbox), `expiresAt` (30 min); rewritten on every `POST /routes` 200 (`recordActiveRoute` is try/catch — it can never fail the request; no write on 409) |
+| `active_routes` | doc ID = deterministic route key (incl. stops); `userId`, `geometry` (JSON string), `geoCells` (precision-5 cells over the route bbox), `expiresAt` (30 min); rewritten on every `POST /routes` 200 (`recordActiveRoute` is try/catch — it can never fail the request; no write on 409). Expired rows are filtered at read and deleted every 15 min by `sweepActiveRoutes` (garbage collection only — never extends the TTL, see "Known limitation" below) |
 
 ## Configuration
 
@@ -106,6 +106,10 @@ Grants `roles/cloudtasks.enqueuer` to the runtime SA on the queue and `roles/clo
 Typical end-to-end latency is a few seconds (report → task dispatch → FCM → one fetch round-trip); doze mode and poor radio can stretch FCM delivery, so this is near-real-time alerting, not a safety-critical channel.
 
 Device checklist: real Android device with Play Services, notifications allowed, `google-services.json` in place at build time. Fastest server-side test is admin-moderate to `"2"`; the report path needs only a second account whose route crosses the flag.
+
+## Known limitation
+
+Push coverage is bounded by the `active_routes` 30-minute TTL. The TTL refreshes only on `POST /routes` — a trip with no reroute loses hazard push once its route doc expires, with no client-visible signal. The 15-minute sweep does not extend coverage; it deletes expired rows sooner, so if anything it makes the expiry arrive marginally earlier. The 3 km proximity poll in the app's navigation screen still covers near-but-off-route hazards, so the app degrades rather than going blind — but polling is not redundant with push, and push is not whole-trip.
 
 ## Testing
 

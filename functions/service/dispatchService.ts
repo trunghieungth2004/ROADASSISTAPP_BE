@@ -34,8 +34,10 @@ import {isCarVehicle} from "../utils/valhalla";
 
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";
+import * as cacheManager from "../utils/cacheManager";
 
 const VALID_STATUSES: string[] = Object.values(STATUS_DISPATCH);
+const NS = "dispatch";
 const SEND_CHUNK = 500;
 const DEAD_TOKEN_CODES = new Set([
   "messaging/registration-token-not-registered",
@@ -231,16 +233,25 @@ const createDispatch = async ({
         candidateTs: new Date().toISOString(),
       });
       await enqueueDispatchPush(ticket.id);
+      cacheManager.del(NS);
       const refreshed = await dispatchRepository.findById(ticket.id);
       return refreshed ?? ticket;
     }
   }
+  cacheManager.del(NS);
   return ticket;
 };
 
-const getMyTickets = async (userId: string) => {
+const getMyTicketsInner = async (userId: string) => {
   return dispatchRepository.findByUserId(userId);
 };
+
+const getMyTicketsCached = cacheManager.wrap(getMyTicketsInner, {
+  namespace: NS,
+  keyFn: (userId: string) => userId,
+});
+
+const getMyTickets = async (userId: string) => getMyTicketsCached(userId);
 
 const getDispatch = async (id: string, userId: string) => {
   const ticket = await dispatchRepository.findById(id);
@@ -324,6 +335,7 @@ const updateDispatchStatus = async ({
     throw new ForbiddenError("Only the rider, helper, or operator updates");
   }
   await dispatchRepository.updateStatus(id, status);
+  cacheManager.del(NS);
   if (
     status === STATUS_DISPATCH.MATCHED ||
     status === STATUS_DISPATCH.ARRIVED ||
@@ -342,12 +354,14 @@ const updateDispatchStatus = async ({
     );
     if (shop && shop.kind === PROVIDER_KIND.TOW && shop.accepting === false) {
       await providerRepository.update(shop.id, {accepting: true});
+      cacheManager.del("shop");
+      cacheManager.del("provider");
     }
   }
   return {updated: 1};
 };
 
-const nearDispatch = async ({
+const nearDispatchInner = async ({
   userId,
   lat,
   lng,
@@ -399,6 +413,44 @@ const nearDispatch = async ({
     .sort((a, b) => (a.distance as number) - (b.distance as number))
     .slice(0, limit);
 };
+
+const nearDispatchCached = cacheManager.wrap(nearDispatchInner, {
+  namespace: NS,
+  keyFn: ({
+    userId,
+    lat,
+    lng,
+    radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+    ticketType,
+    limit = 50,
+  }: {
+    userId?: string;
+    lat: number;
+    lng: number;
+    radiusMeters?: number;
+    ticketType?: string;
+    limit?: number;
+  }) =>
+    `${userId ?? "-"},${lat.toFixed(3)},${lng.toFixed(3)},` +
+    `${radiusMeters},${ticketType ?? "-"},${limit}`,
+});
+
+const nearDispatch = async ({
+  userId,
+  lat,
+  lng,
+  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  ticketType,
+  limit = 50,
+}: {
+  userId?: string;
+  lat: number;
+  lng: number;
+  radiusMeters?: number;
+  ticketType?: string;
+  limit?: number;
+}) =>
+  nearDispatchCached({userId, lat, lng, radiusMeters, ticketType, limit});
 
 const dispatchOffers = async ({
   lat,
@@ -486,6 +538,7 @@ const selectDispatch = async ({
     suggestedShopId: shopId,
     suggestedTs: new Date().toISOString(),
   });
+  cacheManager.del(NS);
   return {selected: shopId};
 };
 
@@ -524,6 +577,9 @@ const acceptAsShop = async (
   if (shop.kind === PROVIDER_KIND.TOW) {
     await providerRepository.update(shopId, {accepting: false});
   }
+  cacheManager.del(NS);
+  cacheManager.del("shop");
+  cacheManager.del("provider");
   return {matched: true, kind: HELPER_KIND.SHOP};
 };
 
@@ -561,6 +617,7 @@ const acceptAsVolunteer = async (userId: string, ticketId: string) => {
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }
+  cacheManager.del(NS);
   return {matched: true, kind: HELPER_KIND.VOLUNTEER};
 };
 
@@ -618,6 +675,7 @@ const updateDispatchDestination = async ({
     destinationPoint: destinationPoint ?? null,
     destinationSnapshot: destinationSnapshot ?? null,
   });
+  cacheManager.del(NS);
   return dispatchRepository.findById(ticketId);
 };
 
