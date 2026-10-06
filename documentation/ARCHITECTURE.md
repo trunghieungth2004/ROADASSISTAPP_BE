@@ -113,7 +113,7 @@ Express.js + TypeScript on a single `onRequest` export (`api`, region `asia-sout
 | `provider_locations` | doc id = provider id; `lat`, `lng`, `geoHash` (8), `geoCell` (6), `lastSeen`; 15-minute freshness (`PROVIDER_FRESH_MS`); swept hourly; cleared on `accepting: false`, suspension, or denial |
 | `provider_reports` | auto ID; `providerId`, `providerKind`, `targetUid`, `reportedBy` (uid only — never a display name), `ticketId?`, `reason` (`FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`), `note?`, `status` (`OPEN`/`RESOLVED`/`DISMISSED`), `resolution?`, `createdAt`, `decidedAt?`, `decidedBy?` |
 | `diagnostics` | auto ID; `userId`, `category` (`FLAT_TIRE`, `FLUID_LEAK`, `CHAIN_SLACK`, `SPARK_CAP`), `imagePath`, `createdAt` |
-| `dispatch_tickets` | auto ID; `userId`, `ticketType` (`MECHANIC`, `TOW`, `SOS`, `WALK_IN`), `status` (`"1"` Pending / `"2"` Matched / `"3"` Arrived / `"4"` Resolved / `"5"` Cancelled / `"6"` In progress / `"7"` Ready / `"8"` Declined), `lat`, `lng`, `diagnosticId?`, `providerId?` + `providerSnapshot?` (walk-in shop; `closed` flags shut shops), `expiresAt?` (walk-ins, 2 h; swept), `vehicleClass?` + `vehicleLabel?` (snapshotted), `workType?`, `priceEstimate?` + `priceCurrency` (`VND`), `shopQuotedAmount?` + `quotedBy?` + `quotedAt?`, `finalAmount?`, `invoiceRef?`, `fulfilledByShopId?` (stamped on `READY`, gates shop ratings), `declineReason?` + `declineNote?`, `createdAt` |
+| `dispatch_tickets` | auto ID; `userId`, `ticketType` (`MECHANIC`, `TOW`, `SOS`, `WALK_IN`), `status` (`"1"` Pending / `"2"` Matched / `"3"` Arrived / `"4"` Resolved / `"5"` Cancelled / `"6"` In progress / `"7"` Ready / `"8"` Declined), `lat`, `lng`, `diagnosticId?`, `providerId?` + `providerSnapshot?` (walk-in shop; `closed` flags shut shops), `expiresAt?` (walk-ins, 2 h; swept), `vehicleClass?` + `vehicleLabel?` (snapshotted), `workType?`, `priceEstimate?` + `priceCurrency` (`VND`), `shopQuotedAmount?` + `quotedBy?` + `quotedAt?`, `finalAmount?`, `invoiceRef?`, `fulfilledByShopId?` (stamped on `READY`, gates shop ratings), `declineReason?` + `declineNote?`, `statusHistory` (append-only `[{status, at, by}]`, seeded at create, actor `sweep` for expiry cancels), `createdAt` |
 | `ratings` | auto ID; `targetId`, `targetKind` (`VOLUNTEER`/`SHOP`/`RIDER`), `byUserId`, `ticketId`, `score` (1–5), `reply?` + `repliedBy?` + `repliedAt?`, `createdAt`, `updatedAt` |
 | `routing_cache` | doc ID = deterministic route key; `originLat/Lng`, `destLat/Lng`, `widthBucket`, `costing`, `geometry` (JSON string — Firestore rejects nested arrays), `distanceMeters?`, `durationSeconds?`, `cachedAt` (ISO), `expiresAt` (ISO, `ROUTING_CACHE_TTL_SECONDS`, default 30d; enforced in code, legacy docs without it stay valid) |
 | `fcm_tokens` | doc ID = `userId`; `tokens` (string array, most-recent-first, capped at 5), `updatedAt` (ISO) |
@@ -169,22 +169,25 @@ functions/
 │   └── validate.ts             # Joi body validation
 ├── validation/
 │   └── schemas.ts              # All request schemas
-├── routes/                     # Route definitions (12 files)
+├── routes/                     # Route definitions (15 files)
 │   ├── userRoutes.ts
 │   ├── roleRoutes.ts
 │   ├── vehicleProfileRoutes.ts
 │   ├── alleySegmentRoutes.ts
 │   ├── flagRoutes.ts
 │   ├── landmarkRoutes.ts
+│   ├── placesRoutes.ts
 │   ├── routingRoutes.ts
-│   ├── shopRoutes.ts
+│   ├── savedPlaceRoutes.ts
+│   ├── providerRoutes.ts
 │   ├── diagnosticRoutes.ts
 │   ├── dispatchRoutes.ts
+│   ├── ratingRoutes.ts
 │   ├── statusRoutes.ts
 │   └── pushRoutes.ts
-├── controller/                 # HTTP handlers (12 files, same names)
-├── service/                    # Business logic (14 files, incl. routing/closure/push/taskQueue, dispatch/tickets+board+accept+walkin+push+candidates+helpers)
-├── repository/                 # Data access (13 files, incl. routingCache/fcmToken/activeRoute)
+├── controller/                 # HTTP handlers (16 files, same names + savedRouteController)
+├── service/                    # Business logic (18 files + dispatch/ and routing/ splits)
+├── repository/                 # Data access (19 files, incl. routingCache/fcmToken/activeRoute)
 ├── constants/
 │   ├── roles.ts                # ROLE_ADMIN/ROLE_USER + ROLES seed definitions
 │   └── status.ts               # STATUS_USER/FLAGS/DISPATCH + seed definitions
@@ -195,8 +198,8 @@ functions/
 ├── test/                       # Jest harness (see TESTING.md)
 │   ├── setup/                  # unit.ts (firebase mock), integration.ts (emulator env)
 │   ├── utils/                  # stubs.ts, app.ts (route builders), seed.ts
-│   ├── unit/                   # 21 suites: validation, utils, services
-│   ├── integration/            # 14 suites: one per domain + validation + push
+│   ├── unit/                   # 37 suites: validation, utils, services
+│   ├── integration/            # 20 suites: one per domain + validation + push
 │   └── reporters/
 │       └── markdownReporter.js # writes test-report/latest-result.md
 └── utils/

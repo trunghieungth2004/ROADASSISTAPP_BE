@@ -59,7 +59,7 @@ export const acceptAsShop = async (
     typeof shop.serviceFee === "number" ?
       {priceEstimate: shop.serviceFee, priceCurrency: "VND"} :
       {}),
-  });
+  }, userId);
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }
@@ -104,7 +104,7 @@ export const acceptAsVolunteer = async (userId: string, ticketId: string) => {
     assignedUid: userId,
     assignedKind: HELPER_KIND.VOLUNTEER,
     status: STATUS_DISPATCH.MATCHED,
-  });
+  }, userId);
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }

@@ -4,6 +4,7 @@ import {
   locationOf,
   projectOf,
   QUEUE_NAME,
+  DISPATCH_QUEUE_NAME,
 } from "./createTaskQueue";
 import {assertGcloudAuth} from "./gcloudAuth";
 
@@ -96,21 +97,26 @@ const main = async (): Promise<void> => {
   }
   const location = locationOf();
   const fn = functionOf();
+  const queues = [QUEUE_NAME, DISPATCH_QUEUE_NAME];
   if (!checkOnly) {
-    await ensureQueue(project, location, QUEUE_NAME);
+    for (const queue of queues) {
+      await ensureQueue(project, location, queue);
+    }
   } else {
-    try {
-      gcloud([
-        "tasks",
-        "queues",
-        "describe",
-        QUEUE_NAME,
-        `--location=${location}`,
-      ]);
-      console.log(`Queue ${QUEUE_NAME} exists`);
-    } catch {
-      console.log(`Queue ${QUEUE_NAME} is MISSING`);
-      process.exitCode = 1;
+    for (const queue of queues) {
+      try {
+        gcloud([
+          "tasks",
+          "queues",
+          "describe",
+          queue,
+          `--location=${location}`,
+        ]);
+        console.log(`Queue ${queue} exists`);
+      } catch {
+        console.log(`Queue ${queue} is MISSING`);
+        process.exitCode = 1;
+      }
     }
   }
   const runtimeSa = runtimeServiceAccount(project, fn);
@@ -119,12 +125,37 @@ const main = async (): Promise<void> => {
   console.log(`Invoker SA: ${invokerSa}`);
   const runtimeMember = `serviceAccount:${runtimeSa}`;
   const invokerMember = `serviceAccount:${invokerSa}`;
-  const enqueueOk = queueBindingState(
-    QUEUE_NAME,
-    location,
-    ENQUEUER_ROLE,
-    runtimeMember,
-  );
+  let enqueueOk = true;
+  for (const queue of queues) {
+    const ok = queueBindingState(
+      queue,
+      location,
+      ENQUEUER_ROLE,
+      runtimeMember,
+    );
+    enqueueOk = enqueueOk && ok;
+    if (checkOnly) {
+      console.log(
+        `Enqueue binding ${queue} (${ENQUEUER_ROLE}): ` +
+        `${ok ? "OK" : "MISSING"}`,
+      );
+    } else if (ok) {
+      console.log(
+        `Enqueue binding already present for ${runtimeSa} on ${queue}`,
+      );
+    } else {
+      gcloud([
+        "tasks",
+        "queues",
+        "add-iam-policy-binding",
+        queue,
+        `--location=${location}`,
+        `--member=${runtimeMember}`,
+        `--role=${ENQUEUER_ROLE}`,
+      ]);
+      console.log(`Granted ${ENQUEUER_ROLE} to ${runtimeSa} on ${queue}`);
+    }
+  }
   let invokeOk = false;
   try {
     invokeOk = functionBindingState(fn, INVOKER_ROLE, invokerMember);
@@ -140,20 +171,6 @@ const main = async (): Promise<void> => {
     );
     if (!enqueueOk || !invokeOk) process.exitCode = 1;
     return;
-  }
-  if (enqueueOk) {
-    console.log(`Enqueue binding already present for ${runtimeSa}`);
-  } else {
-    gcloud([
-      "tasks",
-      "queues",
-      "add-iam-policy-binding",
-      QUEUE_NAME,
-      `--location=${location}`,
-      `--member=${runtimeMember}`,
-      `--role=${ENQUEUER_ROLE}`,
-    ]);
-    console.log(`Granted ${ENQUEUER_ROLE} to ${runtimeSa}`);
   }
   if (invokeOk) {
     console.log(`Invoke binding already present for ${invokerSa}`);

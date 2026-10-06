@@ -1,6 +1,6 @@
 # Testing
 
-Backend tested with **Jest** across two tiers — 37 unit suites (643 tests) and 20 integration suites (177 tests), all green:
+Backend tested with **Jest** across two tiers — 37 unit suites (645 tests) and 20 integration suites (179 tests), all green:
 
 - **Unit tests** — mocked Firestore, run offline, no credentials needed.
 - **Integration tests** — real Firestore + Auth emulators, exercise the full request lifecycle.
@@ -147,7 +147,7 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→volunteer/SHOP + ticket `helperRating`, rider→destination shop, volunteer/operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating, by-ticket read (rider/operator pass, stranger 403). |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune. |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
-| `service/dispatchService.test.ts` | Illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (ACTIVE SHOP only) + free-form point, rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), provider accept (stranger 403, kind↔ticket match enforced, SOS takes no provider, tow auto-busy), near radius filter + sort, offers accepting filter + live-position override + `fitsAlley` labels, deliver fallback SOS-only, FCM fan-out skip/deliver, feed in/out stamping + dedupe, expiry-cancel push with full payload. |
+| `service/dispatchService.test.ts` | History actors (status/claim/sweep), feed `otherParty` join + shop enrichment (label/openNow/rating), illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (ACTIVE SHOP only) + free-form point, rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), provider accept (stranger 403, kind↔ticket match enforced, SOS takes no provider, tow auto-busy), near radius filter + sort, offers accepting filter + live-position override + `fitsAlley` labels, deliver fallback SOS-only, FCM fan-out skip/deliver, feed in/out stamping + dedupe, expiry-cancel push with full payload. |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
 ### test/integration/
@@ -175,7 +175,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /routes writes the `active_routes` doc |
 | `provider.test.ts` | POST create 201 (SHOP and TOW both pending review), duplicate-kind 409, plate normalization, near + kind filter + pending hidden, pending list + review approve/deny + lost-race no-op, availability toggle + accepting-only exclusion, report file 201 + dedupe 409 + bad reason 400, suspend hides from offers/search + restore, live-location ping (on-duty only) + off-duty 403, kind-conditionals 400, non-admin 403, unauthenticated 401 |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
-| `dispatch.test.ts` | POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot (ACTIVE SHOP), offers list, rider select (kind-matched), provider accept + tow busy, resolve restores availability, unapproved tow accept 403, near radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels, feed in/out directions |
+| `dispatch.test.ts` | History order/actors, feed counterparty names, POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot (ACTIVE SHOP), offers list, rider select (kind-matched), provider accept + tow busy, resolve restores availability, unapproved tow accept 403, near radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels, feed in/out directions |
 | `ratings.test.ts` | SOS→accept→resolve flow, unknown ticket 404, rider→volunteer + helper→rider ratings, out-of-range 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 

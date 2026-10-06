@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../functions" && pwd)/.env"
-REQUIRED="VALHALLA_URL FCM_ENABLED CLOUD_TASKS_ENABLED PUSH_DELIVER_URL TASK_INVOKER_EMAIL TASK_QUEUE_LOCATION"
+REQUIRED="VALHALLA_URL FCM_ENABLED CLOUD_TASKS_ENABLED PUSH_DELIVER_URL DISPATCH_DELIVER_URL TASK_INVOKER_EMAIL TASK_QUEUE_LOCATION"
 missing=0
 if [ ! -f "$ENV_FILE" ]; then
   echo "[env:check] missing functions/.env (see functions/.env.example)" >&2
@@ -19,6 +19,14 @@ case "$url" in
   https://*/push/deliver) ;;
   *)
     echo "[env:check] PUSH_DELIVER_URL must end with /push/deliver" >&2
+    missing=1
+    ;;
+esac
+durl="$(grep '^DISPATCH_DELIVER_URL=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+case "$durl" in
+  https://*/dispatch/deliver) ;;
+  *)
+    echo "[env:check] DISPATCH_DELIVER_URL must end with /dispatch/deliver" >&2
     missing=1
     ;;
 esac

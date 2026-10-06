@@ -18,6 +18,7 @@ jest.mock("../../../config/firebase", () => ({
     runTransaction: jest.fn(),
   },
   auth: {updateUser: jest.fn()},
+  FieldValue: {arrayUnion: (...values: unknown[]) => ({__union: values})},
 }));
 
 type Snap = {exists: boolean; id: string; data: () => unknown};
@@ -134,6 +135,20 @@ describe("dispatchRepository.claimForAssignment", () => {
       assignedUid: "vol1",
       status: "2",
       candidates: [],
+    });
+  });
+
+  test("records the claimer in history", async () => {
+    const updates = runTx({status: "1"});
+    const claimed = await claimForAssignment(
+      "t1",
+      {assignedUid: "vol1", status: "2"},
+      "vol1",
+    );
+    expect(claimed).toBe(true);
+    const patch = updates[0]?.patch as {statusHistory?: unknown};
+    expect(patch.statusHistory).toEqual({
+      __union: [{status: "2", at: expect.any(String), by: "vol1"}],
     });
   });
 

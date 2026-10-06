@@ -245,6 +245,7 @@ describe("dispatchService.updateDispatchStatus", () => {
     expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
       "t1",
       "3",
+      "u1",
     );
   });
 
@@ -802,6 +803,7 @@ describe("dispatchService.acceptDispatch", () => {
         assignedUid: "vol1",
         status: "2",
       }),
+      "vol1",
     );
   });
 
@@ -1611,7 +1613,13 @@ describe("dispatchService declineDispatch", () => {
     ).resolves.toEqual({declined: true});
     expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
       "t1",
-      expect.objectContaining({status: "8", declineReason: "FULL"}),
+      expect.objectContaining({
+        assignedShopId: "shop9",
+        assignedKind: "SHOP",
+        status: "8",
+        declineReason: "FULL",
+      }),
+      "op1",
     );
   });
   it("rejects decline of non-walk-in tickets", async () => {
@@ -1896,14 +1904,107 @@ describe("dispatchService feedTickets", () => {
     ] as never);
     jest.mocked(dispatchRepository.findRecentForShop).mockResolvedValue([]);
     jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([
+        ["rider1", {id: "rider1", displayName: "Rider One", role: "2"}],
+      ]),
+    );
     const feed = await feedTickets({userId: "op1"}) as Array<{
       id: string;
       direction: string;
+      otherParty: unknown;
     }>;
     expect(feed.map((t) => [t.id, t.direction])).toEqual([
       ["t2", "in"],
       ["t1", "out"],
     ]);
+    expect(feed.find((t) => t.id === "t2")?.otherParty).toEqual({
+      id: "rider1",
+      name: "Rider One",
+      kind: "RIDER",
+    });
+    expect(feed.find((t) => t.id === "t1")?.otherParty).toBeNull();
+  });
+
+  it("names the assigned shop and volunteer handle", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([
+      {
+        id: "t1",
+        userId: "rider1",
+        assignedShopId: "shop9",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        id: "t2",
+        userId: "rider1",
+        assignedUid: "vol1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ] as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+    jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      name: "Fix Shop",
+      label: "12 Le Loi",
+      openHours: null,
+      ratingAvg: 4.5,
+      ratingCount: 12,
+    } as never);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(new Map());
+    const feed = await feedTickets({userId: "rider1"}) as Array<{
+      id: string;
+      otherParty: unknown;
+    }>;
+    expect(feed.find((t) => t.id === "t1")?.otherParty).toEqual({
+      id: "shop9",
+      name: "Fix Shop",
+      kind: "SHOP",
+      label: "12 Le Loi",
+      ratingAvg: 4.5,
+      ratingCount: 12,
+    });
+    expect(feed.find((t) => t.id === "t2")?.otherParty).toEqual({
+      id: "vol1",
+      name: "rider-vol1",
+      kind: "VOLUNTEER",
+    });
+  });
+
+  it("falls back to the addressed shop before assignment", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([
+      {
+        id: "t5",
+        userId: "rider1",
+        providerId: "shop9",
+        status: "1",
+        createdAt: "2026-01-05T00:00:00.000Z",
+      },
+    ] as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+    jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      name: "Fix Shop",
+    } as never);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(new Map());
+    const feed = await feedTickets({userId: "rider1"}) as Array<{
+      id: string;
+      otherParty: unknown;
+    }>;
+    expect(feed.find((t) => t.id === "t5")?.otherParty).toEqual({
+      id: "shop9",
+      name: "Fix Shop",
+      kind: "SHOP",
+    });
   });
 
   it("skips denied providers and dedupes assisted tickets", async () => {
@@ -1930,6 +2031,7 @@ describe("dispatchService feedTickets", () => {
         userId: "rider2",
         createdAt: "2026-01-04T00:00:00.000Z",
         direction: "in",
+        otherParty: null,
       },
     ]);
   });
@@ -2044,6 +2146,7 @@ describe("dispatchService hardening", () => {
         declineReason: "FULL",
         declineNote: "Busy until 5",
       }),
+      "op1",
     );
   });
   it("rejects unknown decline reasons", async () => {
@@ -2243,7 +2346,15 @@ describe("dispatchService hardening", () => {
       {id: "t2"},
     ] as never);
     await expect(sweepStaleWalkIns()).resolves.toEqual({cancelled: 2});
-    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith("t1", "5");
-    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith("t2", "5");
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t1",
+      "5",
+      "sweep",
+    );
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t2",
+      "5",
+      "sweep",
+    );
   });
 });

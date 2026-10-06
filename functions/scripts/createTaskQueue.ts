@@ -1,4 +1,5 @@
 const QUEUE_NAME = "hazard-push";
+const DISPATCH_QUEUE_NAME = "dispatch-push";
 const ALREADY_EXISTS_CODE = 6;
 
 const projectOf = (): string =>
@@ -41,6 +42,11 @@ const ensureQueue = async (
 
 const main = async (): Promise<void> => {
   await ensureQueue();
+  await ensureQueue(
+    projectOf(),
+    locationOf(),
+    DISPATCH_QUEUE_NAME,
+  );
 };
 
 if (require.main === module) {
@@ -50,4 +56,5 @@ if (require.main === module) {
   });
 }
 
-export {ensureQueue, queueNameOf, projectOf, locationOf, QUEUE_NAME};
+export {ensureQueue, queueNameOf, projectOf, locationOf, QUEUE_NAME,
+  DISPATCH_QUEUE_NAME};

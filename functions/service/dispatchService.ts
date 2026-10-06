@@ -10,7 +10,7 @@ export {
   feedTickets,
   sweepStaleWalkIns,
   updateWorkOrder,
-} from "./dispatch/walkin";
+} from "./dispatch/shop";
 export {findCandidates} from "./dispatch/candidates";
 export {deliverDispatchPush} from "./dispatch/push";
 export {ForbiddenError, NotFoundError, ValidationError} from

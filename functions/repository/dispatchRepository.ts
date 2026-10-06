@@ -1,4 +1,4 @@
-import {db} from "../config/firebase";
+import {db, FieldValue} from "../config/firebase";
 import {STATUS_DISPATCH} from "../constants/status";
 
 interface DispatchTicket {
@@ -105,6 +105,11 @@ const create = async (data: {
     riderRating: null,
     helperRating: null,
     status: STATUS_DISPATCH.PENDING,
+    statusHistory: [{
+      status: STATUS_DISPATCH.PENDING,
+      at: new Date().toISOString(),
+      by: data.userId,
+    }],
     createdAt: new Date().toISOString(),
   };
   await ref.set(doc);
@@ -117,8 +122,20 @@ const findById = async (id: string): Promise<DispatchTicket | null> => {
   return {id: doc.id, ...doc.data()} as DispatchTicket;
 };
 
-const updateStatus = async (id: string, status: string): Promise<void> => {
-  await db.collection("dispatch_tickets").doc(id).update({status});
+const updateStatus = async (
+  id: string,
+  status: string,
+  byUserId?: string,
+): Promise<void> => {
+  const patch: Record<string, unknown> = {status};
+  if (byUserId !== undefined) {
+    patch.statusHistory = FieldValue.arrayUnion({
+      status,
+      at: new Date().toISOString(),
+      by: byUserId,
+    });
+  }
+  await db.collection("dispatch_tickets").doc(id).update(patch);
 };
 
 const update = async (
@@ -131,6 +148,7 @@ const update = async (
 const claimForAssignment = async (
   ticketId: string,
   fields: Record<string, unknown>,
+  byUserId?: string,
 ): Promise<boolean> => {
   let claimed = false;
   await db.runTransaction(async (tx) => {
@@ -139,7 +157,19 @@ const claimForAssignment = async (
     if (!snap.exists) return;
     const data = snap.data() ?? {};
     if (data.status !== STATUS_DISPATCH.PENDING) return;
-    tx.update(ref, {...fields, candidates: []});
+    tx.update(ref, {
+      ...fields,
+      candidates: [],
+      ...(byUserId !== undefined ?
+        {
+          statusHistory: FieldValue.arrayUnion({
+            status: fields.status ?? STATUS_DISPATCH.MATCHED,
+            at: new Date().toISOString(),
+            by: byUserId,
+          }),
+        } :
+        {}),
+    });
     claimed = true;
   });
   return claimed;

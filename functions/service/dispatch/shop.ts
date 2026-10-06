@@ -7,10 +7,13 @@ import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
 import {
   DECLINE_REASON,
+  HELPER_KIND,
   PROVIDER_STATUS,
   STATUS_DISPATCH,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
+import {isOpenNow} from "../providerService";
+import {reporterHandle} from "../../utils/points";
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
@@ -51,10 +54,12 @@ export const declineDispatch = async ({
     throw new ForbiddenError("Ticket is addressed to another provider");
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
+    assignedShopId: shopId,
+    assignedKind: HELPER_KIND.SHOP,
     status: STATUS_DISPATCH.DECLINED,
     declineReason: reason,
     declineNote: note ?? null,
-  });
+  }, userId);
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }
@@ -85,6 +90,7 @@ export const sweepStaleWalkIns = async (): Promise<{cancelled: number}> => {
     await dispatchRepository.updateStatus(
       ticket.id,
       STATUS_DISPATCH.CANCELLED,
+      "sweep",
     );
     await enqueueDispatchPush(
       ticket.id,
@@ -165,7 +171,126 @@ export const feedTickets = async ({
   merged.sort((a, b) =>
     String(b.createdAt ?? "") < String(a.createdAt ?? "") ? -1 : 1,
   );
-  return merged.slice(0, limit);
+  const rows = merged.slice(0, limit);
+  await attachParties(rows);
+  return rows;
+};
+
+type FeedRow = Record<string, unknown> & {
+  userId?: unknown;
+  assignedUid?: unknown;
+  assignedShopId?: unknown;
+  direction?: unknown;
+  otherParty?: unknown;
+};
+
+const strOf = (value: unknown): string =>
+  typeof value === "string" && value !== "" ? value : "";
+
+const attachParties = async (rows: FeedRow[]): Promise<void> => {
+  const shopIds = new Set<string>();
+  const riderIds = new Set<string>();
+  for (const row of rows) {
+    if (row.direction === "out") {
+      const shopKeys = [
+        "assignedShopId",
+        "providerId",
+        "destinationShopId",
+      ] as const;
+      for (const key of shopKeys) {
+        const shopId = strOf(row[key]);
+        if (shopId !== "") shopIds.add(shopId);
+      }
+    } else {
+      const riderId = strOf(row.userId);
+      if (riderId !== "") riderIds.add(riderId);
+    }
+  }
+  const [shops, riders] = await Promise.all([
+    Promise.all([...shopIds].map((id) => providerRepository.findById(id))),
+    userRepository.findByIds([...riderIds]),
+  ]);
+  const shopDetails = new Map<string, {
+    name: string;
+    label: string | null;
+    openNow: boolean | null;
+    ratingAvg: number | null;
+    ratingCount: number | null;
+  }>();
+  for (const shop of shops) {
+    if (shop && typeof shop.name === "string") {
+      const label = typeof shop.label === "string" && shop.label !== "" ?
+        shop.label :
+        null;
+      shopDetails.set(shop.id, {
+        name: shop.name,
+        label,
+        openNow: isOpenNow(
+          typeof shop.openHours === "string" ? shop.openHours : null,
+        ),
+        ratingAvg: typeof shop.ratingAvg === "number" ?
+          shop.ratingAvg :
+          null,
+        ratingCount: typeof shop.ratingCount === "number" ?
+          shop.ratingCount :
+          null,
+      });
+    }
+  }
+  for (const row of rows) {
+    if (row.direction === "out") {
+      row.otherParty = outParty(row, shopDetails);
+    } else {
+      const riderId = strOf(row.userId);
+      const rider = riders.get(riderId);
+      const name = typeof rider?.displayName === "string" &&
+        rider.displayName !== "" ?
+        rider.displayName :
+        null;
+      row.otherParty = name ? {id: riderId, name, kind: "RIDER"} : null;
+    }
+  }
+};
+
+type ShopDetail = {
+  name: string;
+  label: string | null;
+  openNow: boolean | null;
+  ratingAvg: number | null;
+  ratingCount: number | null;
+};
+
+const outParty = (
+  row: FeedRow,
+  shopDetails: Map<string, ShopDetail>,
+): unknown => {
+  const shopKeys = [
+    "assignedShopId",
+    "providerId",
+    "destinationShopId",
+  ] as const;
+  for (const key of shopKeys) {
+    const shopId = strOf(row[key]);
+    const shop = shopId !== "" ? shopDetails.get(shopId) ?? null : null;
+    if (shop) {
+      return {
+        id: shopId,
+        name: shop.name,
+        kind: "SHOP",
+        ...(shop.label !== null ? {label: shop.label} : {}),
+        ...(shop.openNow !== null ? {openNow: shop.openNow} : {}),
+        ...(shop.ratingAvg !== null ? {ratingAvg: shop.ratingAvg} : {}),
+        ...(shop.ratingCount !== null ?
+          {ratingCount: shop.ratingCount} :
+          {}),
+      };
+    }
+  }
+  const uid = strOf(row.assignedUid);
+  if (uid !== "") {
+    return {id: uid, name: reporterHandle(uid), kind: "VOLUNTEER"};
+  }
+  return null;
 };
 
 

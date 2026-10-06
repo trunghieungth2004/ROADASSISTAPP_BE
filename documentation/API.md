@@ -6,7 +6,7 @@ All requests use `Content-Type: application/json`. Endpoints marked with **(Auth
 
 Request-body field schemas (per-endpoint validation rules) are documented separately in [`SCHEMA.md`](./SCHEMA.md).
 
-> **Authentication:** `requireAuth` verifies the Firebase ID token via `admin.auth().verifyIdToken`, loads the user doc by the verified uid (404 if unknown, 403 if inactive), and exposes `req.uid` / `req.userRole` downstream. Missing or invalid tokens get `401`. The request body never carries identity — `userId` appears nowhere in any schema; `targetUserId` names a resource, not the caller.
+> **Authentication:** `requireAuth` verifies the Firebase ID token via `admin.auth().verifyIdToken`, auto-provisions the user doc by the verified uid when missing (403 if inactive), and exposes `req.uid` / `req.userRole` downstream. Missing or invalid tokens get `401`. The request body never carries identity — `userId` appears nowhere in any schema; `targetUserId` names a resource, not the caller.
 
 > **Response envelope (canonical):** Every response — success or error — uses the same JSON shape:
 > ```json
@@ -1393,7 +1393,7 @@ Unified in/out record feed for the Records surface: the caller's own tickets (`d
 { "limit": 20 }
 ```
 
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "...": "..." }] }`
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop, volunteer handle, or rider display name; `null` when unassigned or unnamed). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider and volunteer parties stay name-only. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, then `destinationShopId`, so pending and declined walk-ins already name their shop.
 
 ---
 

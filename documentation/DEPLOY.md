@@ -10,10 +10,12 @@ npm run deploy:all   # from functions/
 ```
 
 Runs, in order: routing engine (`setup.sh -cl`: local docker build, push,
-Cloud Run deploy, smoke test) → `firebase deploy --only functions,
-firestore:indexes` → `db:init` (role/status seeds). One-time ops
-(`queue:init`, `push:setup`) are
-printed as reminders, never auto-run. Every script that shells out to
+Cloud Run deploy, smoke test) → push queues + IAM (`push:setup`, both
+queues; warn-and-continue) → `firebase deploy --only functions,
+firestore:indexes` → `db:init` (role/status seeds). The push step also
+writes `PUSH_DELIVER_URL` / `DISPATCH_DELIVER_URL` into `functions/.env`
+when absent (never overwrites). `npm run valhalla:remove` remains the only
+manual op (engine teardown). Every script that shells out to
 `gcloud` (`deploy.sh`, `infra/valhalla/setup.sh`, `infra/valhalla/remove.sh`,
 `push:setup`) first proves the credential works via
 `gcloud auth print-access-token` (shared `scripts/lib/gcloud-auth.sh` /
@@ -21,6 +23,11 @@ printed as reminders, never auto-run. Every script that shells out to
 Full engine teardown (local
 container, Cloud Run service, images, `.env` URL) is `npm run
 engine:remove` (`infra/valhalla/remove.sh`; `valhalla:remove` alias).
+
+Partial runs: `bash scripts/deploy.sh --only engine --only push`
+(repeatable flags, canonical order kept), or bare `scripts/deploy.sh` on a
+terminal for a numbered multi-select menu (`1 3`, `2-4`, `all`, empty =
+all). Headless without flags runs everything.
 
 The script snapshots your local `VALHALLA_URL` from `functions/.env`
 first and restores it afterwards (trap-guarded, so even a failed deploy
@@ -142,15 +149,15 @@ firebase deploy --only firestore:indexes   # composite indexes
   # dedupe, rating aggregates + dedupe, provider report queue + dedupe)
 cd functions
 npm run db:init                            # seed roles + statuses
-GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup   # hazard-push queue + IAM
+GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup   # both push queues + IAM
 ```
 
 Then set the remaining `functions/.env` vars (see `functions/.env.example`):
 `ALLOWED_ORIGINS`, `ROUTING_CACHE_TTL_SECONDS=7776000`,
 `FCM_ENABLED` / `CLOUD_TASKS_ENABLED` / `PUSH_DELIVER_URL` /
-`TASK_INVOKER_EMAIL` for push — and redeploy functions once more so the
-env takes effect. Verify with `npm run push:check` and one
-`POST /routes` round-trip.
+`DISPATCH_DELIVER_URL` / `TASK_INVOKER_EMAIL` for push — and redeploy
+functions once more so the env takes effect. Verify with
+`npm run push:check` and one `POST /routes` round-trip.
 
 ## Troubleshooting
 

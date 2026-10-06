@@ -314,7 +314,7 @@ export const updateDispatchStatus = async ({
     isOperator,
     isAdmin,
   });
-  await dispatchRepository.updateStatus(id, status);
+  await dispatchRepository.updateStatus(id, status, userId);
   if (status === STATUS_DISPATCH.READY) {
     await dispatchRepository.update(id, {
       fulfilledByShopId: ticket.assignedShopId ?? null,

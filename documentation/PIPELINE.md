@@ -13,7 +13,7 @@ flagService: fresh report ("1" Suggested) or flag newly blocks ("2" Confirmed / 
 │         <status>              │  OIDC token as TASK_INVOKER_EMAIL
 └───────────────┬───────────────┘
                 │ POST /push/deliver {flagId}
-                │ guarded by X-CloudTasks-QueueName (else 403),
+                │ double gate: X-Push-Secret, then X-CloudTasks-QueueName (else 403),
                 │ mounted before the rate limiter
                 ▼
 ┌───────────────────────────────┐
@@ -110,6 +110,51 @@ Device checklist: real Android device with Play Services, notifications allowed,
 ## Known limitation
 
 Push coverage is bounded by the `active_routes` 30-minute TTL. The TTL refreshes only on `POST /routes` — a trip with no reroute loses hazard push once its route doc expires, with no client-visible signal. The merged 30-minute sweep (`sweepRoutesAndWalkIns`) does not extend coverage; it deletes expired rows sooner, so if anything it makes the expiry arrive marginally earlier. The 3 km proximity poll in the app's navigation screen still covers near-but-off-route hazards, so the app degrades rather than going blind — but polling is not redundant with push, and push is not whole-trip.
+
+## Dispatch push pipeline
+
+Ticket pushes run on a parallel track with its own queue and deliver URL —
+the hazard tooling above never touches them:
+
+```
+dispatchService: accept / status move / decline / sweep-cancel / walk-in open
+        │
+        │ enqueueDispatchPush(ticketId, suffix)   [CLOUD_TASKS_ENABLED]
+        ▼
+┌───────────────────────────────┐
+│  Cloud Tasks (dispatch-push)  │  queue: dispatch-push (asia-southeast1)
+│  task: dispatch-<ticketId>    │  deterministic name → retries dedupe
+│         <suffix>              │  OIDC token as TASK_INVOKER_EMAIL
+└───────────────┬───────────────┘
+                │ POST /dispatch/deliver {ticketId}
+                │ guarded by X-Push-Secret (else 403)
+                ▼
+┌───────────────────────────────┐
+│  deliverDispatchPush          │  [FCM_ENABLED]
+│  pending SOS → candidates     │  "SOS request near you" + ticket data
+│  pending WALK_IN → operator   │  "Walk-in request"
+│  other status → rider         │  per-type title + status body
+│  dead tokens pruned per chunk │
+└───────────────────────────────┘
+```
+
+Enqueue triggers: SOS creation (when candidates exist), walk-in creation,
+accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, decline, and sweep expiry
+(`-status-5`, the only path that pushes `CANCELLED`). Rider-cancelled tickets
+push nothing — the actor already knows. Enqueue **fails open** like hazard:
+the ticket mutation always succeeds.
+
+## Configuration (dispatch)
+
+| Var | Default | Purpose |
+|---|---|---|
+| `DISPATCH_DELIVER_URL` | — | Deployed `/dispatch/deliver` URL (task target, must end with `/dispatch/deliver`) |
+
+`push:setup` / `push:check` provision and verify **both** queues (`hazard-push`,
+`dispatch-push`) and the runtime SA's enqueue bindings on each; `queue:init`
+creates both queues. `env:check` rejects a `DISPATCH_DELIVER_URL` that does
+not end with `/dispatch/deliver`, and predeploy fails the revision rather
+than shipping push-dead.
 
 ## Testing
 

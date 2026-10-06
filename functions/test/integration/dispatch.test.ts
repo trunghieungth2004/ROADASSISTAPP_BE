@@ -7,6 +7,7 @@ import {
   PREFIX,
   BASE_LAT,
   BASE_LNG,
+  db,
 } from "../utils/seed";
 
 const app = buildIntegrationApp();
@@ -596,6 +597,57 @@ describe("dispatch walk-in flow", () => {
     expect(resolved.status).toBe(200);
   });
 
+  it("records the walk-in status history with actors", async () => {
+    const res = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket});
+    expect(res.status).toBe(200);
+    type HistoryRow = {status: string; by: string};
+    const history = res.body.data.statusHistory as HistoryRow[];
+    expect(history.map((h) => h.status)).toEqual(["1", "2", "6", "7", "4"]);
+    expect(history.map((h) => h.by)).toEqual(
+      [USER, WALKOP, WALKOP, WALKOP, USER],
+    );
+  });
+
+  it("names the counterparty on both feed sides", async () => {
+    await db.collection("users").doc(USER).update({displayName: "Rider One"});
+    const relabeled = await request(app)
+      .put("/providers")
+      .set("Authorization", bearer(WALKOP))
+      .send({providerId: walkShop, label: "12 Le Loi"});
+    expect(relabeled.status).toBe(200);
+    const out = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(USER))
+      .send({});
+    type FeedRow = {id: string; otherParty: unknown};
+    const mine = (out.body.data as FeedRow[]).find(
+      (t) => t.id === walkTicket,
+    );
+    expect(mine?.otherParty).toEqual(
+      {
+        id: walkShop,
+        name: "Walk-in Fix",
+        kind: "SHOP",
+        label: "12 Le Loi",
+        ratingAvg: 0,
+        ratingCount: 0,
+      },
+    );
+    const inbound = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(WALKOP))
+      .send({});
+    const theirs = (inbound.body.data as FeedRow[]).find(
+      (t) => t.id === walkTicket,
+    );
+    expect(theirs?.otherParty).toEqual(
+      {id: USER, name: "Rider One", kind: "RIDER"},
+    );
+  });
+
   it("rates and replies on the fulfilled walk-in", async () => {
     const rated = await request(app)
       .post("/ratings")
@@ -645,5 +697,65 @@ describe("dispatch walk-in flow", () => {
       .send({ticketId: second});
     expect(ticket.body.data.status).toBe("8");
     expect(ticket.body.data.declineReason).toBe("FULL");
+  });
+
+  it("keeps declined walk-ins on both sides", async () => {
+    const opened = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "WALK_IN",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        providerId: walkShop,
+        vehicleType: "SCOOTER",
+      });
+    expect(opened.status).toBe(201);
+    const third = opened.body.data.id as string;
+    const declined = await request(app)
+      .post("/dispatch/decline")
+      .set("Authorization", bearer(WALKOP))
+      .send({
+        ticketId: third,
+        shopId: walkShop,
+        reason: "FULL",
+        note: "Busy",
+      });
+    expect(declined.status).toBe(200);
+    type FeedRow = {
+      id: string;
+      direction: string;
+      status: string;
+      otherParty: unknown;
+    };
+    const out = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(USER))
+      .send({});
+    const mine = (out.body.data as FeedRow[]).find((t) => t.id === third);
+    expect(mine?.direction).toBe("out");
+    expect(mine?.status).toBe("8");
+    expect(mine?.otherParty).toEqual({
+      id: walkShop,
+      name: "Walk-in Fix",
+      kind: "SHOP",
+      label: "12 Le Loi",
+      ratingAvg: 5,
+      ratingCount: 1,
+    });
+    const inbound = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(WALKOP))
+      .send({});
+    const theirs = (inbound.body.data as FeedRow[]).find(
+      (t) => t.id === third,
+    );
+    expect(theirs?.direction).toBe("in");
+    expect(theirs?.status).toBe("8");
+    expect(theirs?.otherParty).toEqual({
+      id: USER,
+      name: "Rider One",
+      kind: "RIDER",
+    });
   });
 });
