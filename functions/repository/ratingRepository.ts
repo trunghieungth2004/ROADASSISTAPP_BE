@@ -7,6 +7,7 @@ interface Rating {
   byUserId: string;
   ticketId: string;
   score: number;
+  text?: string;
   createdAt: string;
   updatedAt: string;
   [key: string]: unknown;
@@ -37,6 +38,7 @@ const create = async (data: {
   byUserId: string;
   ticketId: string;
   score: number;
+  text?: string;
 }): Promise<Rating> => {
   const ref = db.collection("ratings").doc();
   const now = new Date().toISOString();
@@ -53,9 +55,11 @@ const create = async (data: {
 const updateScore = async (
   id: string,
   score: number,
+  text?: string,
 ): Promise<void> => {
   await db.collection("ratings").doc(id).update({
     score,
+    ...(text !== undefined ? {text} : {}),
     updatedAt: new Date().toISOString(),
   });
 };

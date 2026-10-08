@@ -73,6 +73,18 @@ export default (
     dispatchController.updateWorkOrder,
   );
   app.post(
+    "/dispatch/quote",
+    requireAuth,
+    validate({body: schemas.sendQuote}),
+    dispatchController.sendQuote,
+  );
+  app.post(
+    "/dispatch/quote/approve",
+    requireAuth,
+    validate({body: schemas.approveQuote}),
+    dispatchController.approveQuote,
+  );
+  app.post(
     "/dispatch/shop/requests",
     requireAuth,
     validate({body: schemas.shopTickets}),

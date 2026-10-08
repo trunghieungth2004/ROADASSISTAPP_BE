@@ -196,6 +196,7 @@ const ACTIVE_TICKET_STATUSES: Set<string> = new Set([
   STATUS_DISPATCH.ARRIVED,
   STATUS_DISPATCH.IN_PROGRESS,
   STATUS_DISPATCH.READY,
+  STATUS_DISPATCH.QUOTED,
 ]);
 
 const findByStatusForTypes = async (
@@ -362,8 +363,20 @@ const findBusyUids = async (uids: string[]): Promise<Set<string>> => {
   return busy;
 };
 
+const countFulfilled = async (shopId: string): Promise<number> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("fulfilledByShopId", "==", shopId)
+    .get();
+  let done = 0;
+  snap.forEach((doc) => {
+    if (doc.data()?.status === STATUS_DISPATCH.RESOLVED) done += 1;
+  });
+  return done;
+};
+
 export {create, findById, updateStatus, update, claimForAssignment,
   findByStatus, findByStatusForTypes, findByUserId, findActiveForUid,
   findByAssignee, findActiveForShop, findPendingForShop, findRecentForShop,
-  findStaleWalkIns,
+  findStaleWalkIns, countFulfilled,
   findBusyUids, ACTIVE_TICKET_STATUSES};

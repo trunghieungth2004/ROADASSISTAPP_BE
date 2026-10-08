@@ -93,6 +93,7 @@ const enqueueHazardPush = async (
 const enqueueDispatchPush = async (
   ticketId: string,
   taskSuffix = "",
+  extra: Record<string, string> = {},
 ): Promise<{enqueued: boolean}> => {
   if (!tasksEnabled()) return {enqueued: false};
   const project =
@@ -127,7 +128,9 @@ const enqueueDispatchPush = async (
           httpMethod: "POST",
           url,
           headers: deliverHeaders(),
-          body: Buffer.from(JSON.stringify({ticketId})).toString("base64"),
+          body: Buffer.from(
+            JSON.stringify({ticketId, ...extra}),
+          ).toString("base64"),
           oidcToken: {serviceAccountEmail},
         },
       },

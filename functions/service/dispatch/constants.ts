@@ -27,6 +27,7 @@ export const STATUS_PUSH_BODY: Record<string, string> = {
   [STATUS_DISPATCH.IN_PROGRESS]: "Work is underway on your vehicle",
   [STATUS_DISPATCH.READY]: "Your vehicle is ready for pickup",
   [STATUS_DISPATCH.DECLINED]: "The shop can't take your request",
+  [STATUS_DISPATCH.QUOTED]: "Your shop sent a quote — tap to review",
 };
 
 export const PUSH_TITLE_BY_TYPE: Record<string, string> = {

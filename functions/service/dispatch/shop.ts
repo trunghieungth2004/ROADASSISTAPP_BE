@@ -187,6 +187,20 @@ type FeedRow = Record<string, unknown> & {
 const strOf = (value: unknown): string =>
   typeof value === "string" && value !== "" ? value : "";
 
+const phoneSharingStatuses: Set<string> = new Set([
+  STATUS_DISPATCH.MATCHED,
+  STATUS_DISPATCH.ARRIVED,
+  STATUS_DISPATCH.RESOLVED,
+  STATUS_DISPATCH.IN_PROGRESS,
+  STATUS_DISPATCH.READY,
+  STATUS_DISPATCH.QUOTED,
+]);
+
+const phoneOf = (user: {phone?: unknown} | undefined): string | null =>
+  user && typeof user.phone === "string" && user.phone !== "" ?
+    user.phone :
+    null;
+
 const attachParties = async (rows: FeedRow[]): Promise<void> => {
   const shopIds = new Set<string>();
   const riderIds = new Set<string>();
@@ -210,18 +224,30 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
     Promise.all([...shopIds].map((id) => providerRepository.findById(id))),
     userRepository.findByIds([...riderIds]),
   ]);
+  const operatorIds = new Set<string>();
+  for (const shop of shops) {
+    const uid = shop && typeof shop.operatorUid === "string" ?
+      shop.operatorUid :
+      "";
+    if (uid !== "") operatorIds.add(uid);
+  }
+  const operators = await userRepository.findByIds([...operatorIds]);
   const shopDetails = new Map<string, {
     name: string;
     label: string | null;
     openNow: boolean | null;
     ratingAvg: number | null;
     ratingCount: number | null;
+    phone: string | null;
   }>();
   for (const shop of shops) {
     if (shop && typeof shop.name === "string") {
       const label = typeof shop.label === "string" && shop.label !== "" ?
         shop.label :
         null;
+      const operator = typeof shop.operatorUid === "string" ?
+        operators.get(shop.operatorUid) :
+        undefined;
       shopDetails.set(shop.id, {
         name: shop.name,
         label,
@@ -234,6 +260,7 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         ratingCount: typeof shop.ratingCount === "number" ?
           shop.ratingCount :
           null,
+        phone: phoneOf(operator),
       });
     }
   }
@@ -247,7 +274,24 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         rider.displayName !== "" ?
         rider.displayName :
         null;
-      row.otherParty = name ? {id: riderId, name, kind: "RIDER"} : null;
+      if (!name) {
+        row.otherParty = null;
+        continue;
+      }
+      const party: Record<string, unknown> = {
+        id: riderId,
+        name,
+        kind: "RIDER",
+      };
+      const shared = typeof row.status === "string" &&
+        phoneSharingStatuses.has(row.status);
+      const phone = shared ? phoneOf(rider) : null;
+      if (phone !== null) party.phone = phone;
+      const avg = rider?.ratingAvg;
+      if (typeof avg === "number") party.ratingAvg = avg;
+      const count = rider?.ratingCount;
+      if (typeof count === "number") party.ratingCount = count;
+      row.otherParty = party;
     }
   }
 };
@@ -258,6 +302,7 @@ type ShopDetail = {
   openNow: boolean | null;
   ratingAvg: number | null;
   ratingCount: number | null;
+  phone: string | null;
 };
 
 const outParty = (
@@ -273,6 +318,8 @@ const outParty = (
     const shopId = strOf(row[key]);
     const shop = shopId !== "" ? shopDetails.get(shopId) ?? null : null;
     if (shop) {
+      const shared = typeof row.status === "string" &&
+        phoneSharingStatuses.has(row.status);
       return {
         id: shopId,
         name: shop.name,
@@ -283,6 +330,7 @@ const outParty = (
         ...(shop.ratingCount !== null ?
           {ratingCount: shop.ratingCount} :
           {}),
+        ...(shared && shop.phone !== null ? {phone: shop.phone} : {}),
       };
     }
   }
@@ -332,6 +380,14 @@ export const updateWorkOrder = async ({
     ticket.status !== STATUS_DISPATCH.IN_PROGRESS) {
     throw new ValidationError("Work order is no longer editable");
   }
+  if (quotedAmount !== undefined &&
+    typeof ticket.shopQuotedAmount === "number") {
+    throw new ValidationError("Quote already sent");
+  }
+  if (finalAmount !== undefined &&
+    typeof ticket.finalAmount === "number") {
+    throw new ValidationError("Final amount already recorded");
+  }
   await dispatchRepository.update(ticketId, {
     ...(workType !== undefined ? {workType} : {}),
     ...(quotedAmount !== undefined ? {shopQuotedAmount: quotedAmount} : {}),
@@ -340,6 +396,138 @@ export const updateWorkOrder = async ({
     quotedBy: userId,
     quotedAt: new Date().toISOString(),
   });
+  if (quotedAmount !== undefined &&
+    (ticket.status === STATUS_DISPATCH.MATCHED ||
+      ticket.status === STATUS_DISPATCH.ARRIVED)) {
+    const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+      (v): v is string => typeof v === "string" && v !== "",
+    );
+    if (shopIds.length === 0) {
+      throw new ValidationError("Quotes need a shop ticket");
+    }
+    await dispatchRepository.updateStatus(
+      ticketId,
+      STATUS_DISPATCH.QUOTED,
+      userId,
+    );
+    await enqueueDispatchPush(
+      ticketId,
+      `-status-${STATUS_DISPATCH.QUOTED}`,
+    );
+  }
   cacheManager.del(NS);
   return {updated: 1};
+};
+
+type TicketActors = {
+  assignedShopId?: unknown;
+  providerId?: unknown;
+  assignedUid?: unknown;
+};
+
+const resolveTicketOperator = async (
+  ticket: TicketActors,
+  userId: string,
+): Promise<void> => {
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  if (caller.role === ROLE_ADMIN) return;
+  if (ticket.assignedUid === userId) return;
+  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+    (v): v is string => typeof v === "string" && v !== "",
+  );
+  for (const shopId of shopIds) {
+    const shop = await providerRepository.findById(shopId);
+    if (shop && shop.operatorUid === userId) return;
+  }
+  throw new ForbiddenError("Only the helper sends quotes");
+};
+
+export const sendQuote = async ({
+  userId,
+  ticketId,
+  quotedAmount,
+  workType,
+}: {
+  userId: string;
+  ticketId: string;
+  quotedAmount: number;
+  workType?: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  await resolveTicketOperator(ticket, userId);
+  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+    (v): v is string => typeof v === "string" && v !== "",
+  );
+  if (shopIds.length === 0) {
+    throw new ValidationError("Quotes need a shop ticket");
+  }
+  if (ticket.status !== STATUS_DISPATCH.MATCHED &&
+    ticket.status !== STATUS_DISPATCH.ARRIVED) {
+    throw new ValidationError("Quotes go out on active tickets");
+  }
+  if (typeof ticket.shopQuotedAmount === "number") {
+    throw new ValidationError("Quote already sent");
+  }
+  if (!Number.isInteger(quotedAmount) || quotedAmount < 0) {
+    throw new ValidationError("Quote must be a non-negative integer");
+  }
+  await dispatchRepository.update(ticketId, {
+    shopQuotedAmount: quotedAmount,
+    ...(workType !== undefined ? {workType} : {}),
+    quotedBy: userId,
+    quotedAt: new Date().toISOString(),
+  });
+  await dispatchRepository.updateStatus(
+    ticketId,
+    STATUS_DISPATCH.QUOTED,
+    userId,
+  );
+  cacheManager.del(NS);
+  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.QUOTED}`);
+  return {quoted: true};
+};
+
+export const approveQuote = async ({
+  userId,
+  ticketId,
+}: {
+  userId: string;
+  ticketId: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider approves the quote");
+  }
+  const quoted = typeof ticket.shopQuotedAmount === "number";
+  const pending = ticket.status === STATUS_DISPATCH.QUOTED;
+  const legacy = (ticket.status === STATUS_DISPATCH.MATCHED ||
+    ticket.status === STATUS_DISPATCH.ARRIVED) && quoted;
+  if (!pending && !legacy) {
+    throw new ValidationError("No quote awaiting approval");
+  }
+  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+    (v): v is string => typeof v === "string" && v !== "",
+  );
+  if (shopIds.length === 0) {
+    throw new ValidationError("Quotes need a shop ticket");
+  }
+  await dispatchRepository.updateStatus(
+    ticketId,
+    STATUS_DISPATCH.IN_PROGRESS,
+    userId,
+  );
+  cacheManager.del(NS);
+  await enqueueDispatchPush(
+    ticketId,
+    `-status-${STATUS_DISPATCH.IN_PROGRESS}-operator`,
+    {
+      audience: "operator",
+      title: "Quote approved",
+      body: "The rider approved your quote — tap to view",
+    },
+  );
+  return {approved: true};
 };

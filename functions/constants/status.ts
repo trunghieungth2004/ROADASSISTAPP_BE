@@ -23,6 +23,7 @@ const STATUS_DISPATCH = {
   IN_PROGRESS: "6",
   READY: "7",
   DECLINED: "8",
+  QUOTED: "9",
 } as const;
 
 const HELPER_KIND = {

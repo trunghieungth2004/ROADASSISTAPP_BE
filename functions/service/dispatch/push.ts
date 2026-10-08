@@ -116,12 +116,70 @@ export const deliverShopPush = async (
 };
 
 
+export const deliverOperatorPush = async (
+  ticket: Record<string, unknown> & {id: string},
+  notice?: {title: string; body: string},
+): Promise<{delivered: number; skipped: boolean}> => {
+  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+    (v): v is string => typeof v === "string" && v !== "",
+  );
+  let operatorUid: string | null = null;
+  for (const shopId of shopIds) {
+    const shop = await providerRepository.findById(shopId);
+    if (shop && typeof shop.operatorUid === "string") {
+      operatorUid = shop.operatorUid;
+      break;
+    }
+  }
+  if (!operatorUid) return {delivered: 0, skipped: true};
+  const record = await fcmTokenRepository.findByUserId(operatorUid);
+  const tokens = (record?.tokens as string[] | undefined) ?? [];
+  if (tokens.length === 0) return {delivered: 0, skipped: true};
+  let delivered = 0;
+  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
+    const chunk = tokens.slice(i, i + SEND_CHUNK);
+    const response = await messaging.sendEach(
+      chunk.map((token) => ({
+        token,
+        notification: {
+          title: notice?.title ?? "Ticket update",
+          body: notice?.body ??
+            "A ticket at your shop changed — tap to view",
+        },
+        data: {
+          ticketId: ticket.id,
+          ticketType: ticket.ticketType as string,
+          status: ticket.status as string,
+        },
+      })),
+    );
+    delivered += response.successCount ?? 0;
+    const dead: string[] = [];
+    response.responses.forEach((r, idx) => {
+      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
+        const token = chunk[idx];
+        if (token !== undefined) dead.push(token);
+      }
+    });
+    if (dead.length > 0) {
+      await fcmTokenRepository.removeTokens(operatorUid, dead);
+    }
+  }
+  return {delivered, skipped: false};
+};
+
+
 export const deliverDispatchPush = async (
   ticketId: string,
+  audience?: string,
+  notice?: {title: string; body: string},
 ): Promise<{delivered: number; skipped: boolean}> => {
   if (!fcmEnabled()) return {delivered: 0, skipped: true};
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) return {delivered: 0, skipped: true};
+  if (audience === "operator") {
+    return deliverOperatorPush(ticket, notice);
+  }
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
     return deliverStatusPush(ticket);
   }

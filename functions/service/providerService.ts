@@ -17,7 +17,6 @@ import {
   PROVIDER_REPORT_REASON,
   PROVIDER_REPORT_STATUS,
   PROVIDER_STATUS,
-  SHOP_SEARCH_MAX_RADIUS,
   VEHICLE_CLASS,
 } from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
@@ -491,7 +490,7 @@ const searchProvidersInner = async ({
   lng,
   query,
   vehicleClass,
-  radiusMeters = SHOP_SEARCH_MAX_RADIUS,
+  radiusMeters,
   limit = NEAR_SHOPS_MAX,
   now,
 }: {
@@ -523,7 +522,8 @@ const searchProvidersInner = async ({
         null;
       return {...s, distance, openNow, closesInMinutes};
     })
-    .filter((s) => (s.distance as number) <= radiusMeters);
+    .filter((s) => radiusMeters === undefined ||
+      (s.distance as number) <= radiusMeters);
   const wanted = vehicleClass ?
     scored.filter((s) => servesVehicleClass(s, vehicleClass)) :
     scored;
@@ -551,7 +551,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     lng,
     query,
     vehicleClass,
-    radiusMeters = SHOP_SEARCH_MAX_RADIUS,
+    radiusMeters,
     limit = NEAR_SHOPS_MAX,
     now,
   }: {
@@ -567,7 +567,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     const minute = Math.floor(at.getTime() / 60000);
     return `${lat.toFixed(3)},${lng.toFixed(3)},` +
       `${query.trim().toLowerCase()},${vehicleClass ?? "-"},` +
-      `${radiusMeters},${limit},${minute}`;
+      `${radiusMeters ?? "-"},${limit},${minute}`;
   },
 });
 
@@ -576,7 +576,7 @@ const searchProviders = async ({
   lng,
   query,
   vehicleClass,
-  radiusMeters = SHOP_SEARCH_MAX_RADIUS,
+  radiusMeters,
   limit = NEAR_SHOPS_MAX,
   now,
 }: {

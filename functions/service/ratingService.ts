@@ -61,12 +61,14 @@ const submitRating = async ({
   targetKind,
   ticketId,
   score,
+  text,
 }: {
   byUserId: string;
   targetId: string;
   targetKind: string;
   ticketId: string;
   score: number;
+  text?: string;
 }) => {
   if (!VALID_TARGETS.includes(targetKind)) {
     throw new ValidationError("Invalid rating target");
@@ -103,7 +105,13 @@ const submitRating = async ({
     ticketId,
   );
   if (existing) {
-    await ratingRepository.updateScore(existing.id, score);
+    await ratingRepository.updateScore(
+      existing.id,
+      score,
+      typeof text === "string" && text.trim() !== "" ?
+        text.trim() :
+        undefined,
+    );
   } else {
     await ratingRepository.create({
       targetId,
@@ -111,6 +119,9 @@ const submitRating = async ({
       byUserId,
       ticketId,
       score,
+      ...(typeof text === "string" && text.trim() !== "" ?
+        {text: text.trim()} :
+        {}),
     });
   }
   const {avg, count} = await ratingRepository.aggregate(
@@ -202,15 +213,30 @@ const userRatings = async ({
   }
   const ratings = await ratingRepository.listByTarget(userId, targetKind);
   const {avg, count} = await ratingRepository.aggregate(userId, targetKind);
+  const authorIds = ratings
+    .map((r) => r.byUserId)
+    .filter((v): v is string => typeof v === "string" && v !== "");
+  const names = await userRepository.findByIds(authorIds);
   return {
-    ratings: ratings.map((r) => ({
-      id: r.id,
-      score: r.score,
-      ticketId: r.ticketId,
-      reply: (r.reply as string | undefined) ?? null,
-      repliedAt: (r.repliedAt as string | undefined) ?? null,
-      createdAt: r.createdAt,
-    })),
+    ratings: ratings.map((r) => {
+      const author = typeof r.byUserId === "string" ?
+        names.get(r.byUserId) :
+        undefined;
+      const rawName = author?.displayName;
+      const byUserName = typeof rawName === "string" && rawName !== "" ?
+        rawName :
+        null;
+      return {
+        id: r.id,
+        score: r.score,
+        text: (r.text as string | undefined) ?? null,
+        byUserName,
+        ticketId: r.ticketId,
+        reply: (r.reply as string | undefined) ?? null,
+        repliedAt: (r.repliedAt as string | undefined) ?? null,
+        createdAt: r.createdAt,
+      };
+    }),
     avg,
     count,
   };
@@ -227,16 +253,33 @@ const providerRatings = async (providerId: string) => {
     providerId,
     RATING_TARGET.SHOP,
   );
+  const completedJobs = await dispatchRepository.countFulfilled(providerId);
+  const authorIds = ratings
+    .map((r) => r.byUserId)
+    .filter((v): v is string => typeof v === "string" && v !== "");
+  const names = await userRepository.findByIds(authorIds);
   return {
-    ratings: ratings.map((r) => ({
-      id: r.id,
-      score: r.score,
-      reply: (r.reply as string | undefined) ?? null,
-      repliedAt: (r.repliedAt as string | undefined) ?? null,
-      createdAt: r.createdAt,
-    })),
+    ratings: ratings.map((r) => {
+      const author = typeof r.byUserId === "string" ?
+        names.get(r.byUserId) :
+        undefined;
+      const rawName = author?.displayName;
+      const byUserName = typeof rawName === "string" && rawName !== "" ?
+        rawName :
+        null;
+      return {
+        id: r.id,
+        score: r.score,
+        text: (r.text as string | undefined) ?? null,
+        byUserName,
+        reply: (r.reply as string | undefined) ?? null,
+        repliedAt: (r.repliedAt as string | undefined) ?? null,
+        createdAt: r.createdAt,
+      };
+    }),
     avg,
     count,
+    completedJobs,
   };
 };
 
@@ -268,12 +311,32 @@ const ratingsByTicket = async ({
     }
   }
   const ratings = await ratingRepository.listByTicket(ticketId);
+  const nameIds = new Set<string>();
+  for (const r of ratings) {
+    if (typeof r.byUserId === "string" && r.byUserId !== "") {
+      nameIds.add(r.byUserId);
+    }
+    if (typeof r.repliedBy === "string" && r.repliedBy !== "") {
+      nameIds.add(r.repliedBy as string);
+    }
+  }
+  const users = await userRepository.findByIds([...nameIds]);
+  const nameOf = (id: unknown): string | null => {
+    if (typeof id !== "string" || id === "") return null;
+    const user = users.get(id);
+    const name = user?.displayName;
+    return typeof name === "string" && name !== "" ? name : null;
+  };
   return ratings.map((r) => ({
     id: r.id,
     targetId: r.targetId,
     targetKind: r.targetKind,
+    byUserId: r.byUserId,
+    byUserName: nameOf(r.byUserId),
     score: r.score,
+    text: (r.text as string | undefined) ?? null,
     reply: (r.reply as string | undefined) ?? null,
+    repliedByName: nameOf(r.repliedBy),
     repliedAt: (r.repliedAt as string | undefined) ?? null,
     createdAt: r.createdAt,
   }));

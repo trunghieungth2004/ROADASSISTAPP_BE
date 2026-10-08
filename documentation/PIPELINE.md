@@ -126,22 +126,25 @@ dispatchService: accept / status move / decline / sweep-cancel / walk-in open
 │  task: dispatch-<ticketId>    │  deterministic name → retries dedupe
 │         <suffix>              │  OIDC token as TASK_INVOKER_EMAIL
 └───────────────┬───────────────┘
-                │ POST /dispatch/deliver {ticketId}
+                │ POST /dispatch/deliver {ticketId, audience?}
                 │ guarded by X-Push-Secret (else 403)
                 ▼
 ┌───────────────────────────────┐
 │  deliverDispatchPush          │  [FCM_ENABLED]
 │  pending SOS → candidates     │  "SOS request near you" + ticket data
 │  pending WALK_IN → operator   │  "Walk-in request"
+│  audience operator → operator │  "Quote approved" (quote approval)
 │  other status → rider         │  per-type title + status body
 │  dead tokens pruned per chunk │
 └───────────────────────────────┘
 ```
 
 Enqueue triggers: SOS creation (when candidates exist), walk-in creation,
-accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, decline, and sweep expiry
+accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, quote send (`9`), quote
+approval and rider cancel (operator audience, the latter only with shop
+context), decline, and sweep expiry
 (`-status-5`, the only path that pushes `CANCELLED`). Rider-cancelled tickets
-push nothing — the actor already knows. Enqueue **fails open** like hazard:
+push nothing to the rider — the actor already knows. Enqueue **fails open** like hazard:
 the ticket mutation always succeeds.
 
 ## Configuration (dispatch)

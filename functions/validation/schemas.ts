@@ -318,7 +318,6 @@ const schemas = {
       .optional(),
     radiusMeters: Joi.number()
       .min(200)
-      .max(SHOP_SEARCH_MAX_RADIUS)
       .optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
   }),
@@ -426,6 +425,14 @@ const schemas = {
     shopId: strReq(),
     limit: Joi.number().integer().min(1).max(50).optional(),
   }),
+  sendQuote: Joi.object({
+    ticketId: strReq(),
+    quotedAmount: Joi.number().integer().min(0).max(999999999).required(),
+    workType: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  approveQuote: Joi.object({
+    ticketId: strReq(),
+  }),
   feedTickets: Joi.object({
     limit: Joi.number().integer().min(1).max(50).optional(),
   }),
@@ -486,6 +493,7 @@ const schemas = {
       .min(RATING_MIN)
       .max(RATING_MAX)
       .required(),
+    text: Joi.string().trim().max(280).allow("", null).optional(),
   }),
   replyRating: Joi.object({
     ratingId: strReq(),
@@ -499,6 +507,9 @@ const schemas = {
   }),
   deliverDispatch: Joi.object({
     ticketId: strReq(),
+    audience: Joi.string().valid("operator").optional(),
+    title: Joi.string().trim().max(120).optional(),
+    body: Joi.string().trim().max(280).optional(),
   }),
   getRoles: emptyBody(),
   getRoleByUser: emptyBody(),

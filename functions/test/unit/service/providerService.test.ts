@@ -842,10 +842,42 @@ describe("providerService.searchProviders", () => {
       lat: 10.7626,
       lng: 106.6602,
       query: "far fix",
+      radiusMeters: 10000,
       limit: 10,
       now: new Date(Date.UTC(2026, 9, 5, 3, 51)),
     });
     expect(result.map((p) => (p as {id: string}).id)).toEqual(["near"]);
+  });
+  it("leaves distance unfiltered when radius is omitted", async () => {
+    const far = Array.from({length: 3}, (_, i) => ({
+      id: `far${i}`,
+      name: "Far Fix",
+      nameLower: "far fix",
+      lat: 11.5,
+      lng: 107.5,
+      kind: "SHOP",
+      status: "ACTIVE",
+      openHours: null,
+    }));
+    jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([
+      ...far,
+      {id: "near", name: "Far Fixup", nameLower: "far fixup",
+        lat: 10.7626, lng: 106.6602, kind: "SHOP", status: "ACTIVE",
+        openHours: null},
+    ] as never);
+    const result = await searchProviders({
+      lat: 10.7626,
+      lng: 106.6602,
+      query: "far fix",
+      limit: 10,
+      now: new Date(Date.UTC(2026, 9, 5, 3, 51)),
+    });
+    expect(result.map((p) => (p as {id: string}).id)).toEqual([
+      "far0",
+      "far1",
+      "far2",
+      "near",
+    ]);
   });
   it("applies the vehicle class filter", async () => {
     jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([

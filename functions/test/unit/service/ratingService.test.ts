@@ -143,10 +143,12 @@ describe("ratingService.submitRating", () => {
       targetKind: "VOLUNTEER",
       ticketId: "t1",
       score: 3,
+      text: "Slow but solid",
     });
     expect(ratingRepository.updateScore).toHaveBeenCalledWith(
       "rate1",
       3,
+      "Slow but solid",
     );
     expect(ratingRepository.create).not.toHaveBeenCalled();
   });
@@ -375,15 +377,18 @@ describe("ratingService.providerRatings", () => {
       avg: 4,
       count: 2,
     });
+    jest.mocked(dispatchRepository.countFulfilled).mockResolvedValue(7);
     await expect(providerRatings("shop9")).resolves.toEqual({
       ratings: [
-        {id: "r1", score: 5, reply: null, repliedAt: null,
-          createdAt: "2026-01-01"},
-        {id: "r2", score: 3, reply: "Sorry", repliedAt: "2026-01-02",
+        {id: "r1", score: 5, text: null, byUserName: null,
+          reply: null, repliedAt: null, createdAt: "2026-01-01"},
+        {id: "r2", score: 3, text: null, byUserName: null,
+          reply: "Sorry", repliedAt: "2026-01-02",
           createdAt: "2026-01-02"},
       ],
       avg: 4,
       count: 2,
+      completedJobs: 7,
     });
   });
   it("throws 404 for an unknown provider", async () => {
@@ -412,7 +417,8 @@ describe("ratingService.ratingsByTicket", () => {
       ratingsByTicket({userId: "rider1", ticketId: "t1"}),
     ).resolves.toEqual([
       {id: "r1", targetId: "vol1", targetKind: "VOLUNTEER", score: 5,
-        reply: null, repliedAt: null, createdAt: "2026-01-01"},
+        text: null, byUserName: null, repliedByName: null, reply: null,
+        repliedAt: null, createdAt: "2026-01-01"},
     ]);
   });
 
@@ -430,10 +436,31 @@ describe("ratingService.ratingsByTicket", () => {
       id: "shop9",
       operatorUid: "op1",
     } as never);
-    jest.mocked(ratingRepository.listByTicket).mockResolvedValue([]);
+    jest.mocked(ratingRepository.listByTicket).mockResolvedValue([
+      {id: "r1", byUserId: "rider1", score: 5, createdAt: "2026-01-01"},
+    ] as never);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([
+        ["rider1", {id: "rider1", displayName: "Rider One", role: "2"}],
+      ]),
+    );
     await expect(
       ratingsByTicket({userId: "op1", ticketId: "t1"}),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([
+      {
+        id: "r1",
+        targetId: undefined,
+        targetKind: undefined,
+        byUserId: "rider1",
+        byUserName: "Rider One",
+        score: 5,
+        text: null,
+        reply: null,
+        repliedByName: null,
+        repliedAt: null,
+        createdAt: "2026-01-01",
+      },
+    ]);
   });
 
   it("rejects strangers with 403", async () => {
@@ -490,8 +517,8 @@ describe("ratingService.userRatings", () => {
       }),
     ).resolves.toEqual({
       ratings: [
-        {id: "r1", score: 5, ticketId: "t1", reply: null, repliedAt: null,
-          createdAt: "2026-01-01"},
+        {id: "r1", score: 5, text: null, byUserName: null, ticketId: "t1",
+          reply: null, repliedAt: null, createdAt: "2026-01-01"},
       ],
       avg: 5,
       count: 1,

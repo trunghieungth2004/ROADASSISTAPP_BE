@@ -214,14 +214,12 @@ export const assertTransition = ({
   ticket,
   status,
   isRider,
-  isAssignee,
   isOperator,
   isAdmin,
 }: {
-  ticket: {status: string; ticketType: string};
+  ticket: {status: string; ticketType: string; shopQuotedAmount?: unknown};
   status: string;
   isRider: boolean;
-  isAssignee: boolean;
   isOperator: boolean;
   isAdmin: boolean;
 }): void => {
@@ -230,7 +228,7 @@ export const assertTransition = ({
   if (TERMINAL_STATUSES.has(from)) {
     throw new ValidationError("Ticket is already closed");
   }
-  const shopFlow = isOperator || isAssignee;
+  const shopFlow = isOperator;
   if (status === STATUS_DISPATCH.MATCHED) {
     throw new ValidationError("Use accept to match a ticket");
   }
@@ -238,9 +236,16 @@ export const assertTransition = ({
     if (from === STATUS_DISPATCH.MATCHED && isRider) return;
     throw new ForbiddenError("Only the rider marks arrival");
   }
+  if (status === STATUS_DISPATCH.QUOTED) {
+    throw new ValidationError("Quotes are sent, not set");
+  }
   if (status === STATUS_DISPATCH.IN_PROGRESS) {
+    if (from === STATUS_DISPATCH.QUOTED) {
+      throw new ForbiddenError("Quote needs rider approval");
+    }
+    const quoted = typeof ticket.shopQuotedAmount === "number";
     const arrived = from === STATUS_DISPATCH.MATCHED &&
-      ticket.ticketType === "WALK_IN";
+      ticket.ticketType === "WALK_IN" && !quoted;
     if ((from === STATUS_DISPATCH.ARRIVED || arrived) && shopFlow) return;
     throw new ForbiddenError("Only the helper starts work");
   }
@@ -256,8 +261,10 @@ export const assertTransition = ({
     throw new ForbiddenError("Only the rider resolves a ticket");
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
-    if (isRider) return;
-    throw new ForbiddenError("Only the rider cancels a ticket");
+    if (isRider && from !== STATUS_DISPATCH.IN_PROGRESS) return;
+    throw new ForbiddenError(
+      "Cannot cancel once work is underway",
+    );
   }
   if (status === STATUS_DISPATCH.DECLINED) {
     if (from === STATUS_DISPATCH.PENDING &&
@@ -307,10 +314,10 @@ export const updateDispatchStatus = async ({
     ticket: {
       status: ticket.status,
       ticketType: ticket.ticketType,
+      shopQuotedAmount: ticket.shopQuotedAmount,
     },
     status,
     isRider,
-    isAssignee,
     isOperator,
     isAdmin,
   });
@@ -330,6 +337,18 @@ export const updateDispatchStatus = async ({
     status === STATUS_DISPATCH.DECLINED
   ) {
     await enqueueDispatchPush(id, `-status-${status}`);
+  }
+  if (status === STATUS_DISPATCH.CANCELLED) {
+    const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+      (v): v is string => typeof v === "string" && v !== "",
+    );
+    if (shopIds.length > 0) {
+      await enqueueDispatchPush(id, `-status-${status}-operator`, {
+        audience: "operator",
+        title: "Request cancelled",
+        body: "The rider cancelled this ticket — tap to view",
+      });
+    }
   }
   if (
     (status === STATUS_DISPATCH.RESOLVED ||

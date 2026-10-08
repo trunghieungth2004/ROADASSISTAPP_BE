@@ -575,11 +575,21 @@ describe("dispatch walk-in flow", () => {
       .set("Authorization", bearer(WALKOP))
       .send({ticketId: walkTicket, workType: "Chain", quotedAmount: 150000});
     expect(work.status).toBe(200);
-    const progress = await request(app)
-      .put("/dispatch/status")
-      .set("Authorization", bearer(WALKOP))
-      .send({ticketId: walkTicket, status: "6"});
-    expect(progress.status).toBe(200);
+    const quoted = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket});
+    expect(quoted.body.data.status).toBe("9");
+    const approve = await request(app)
+      .post("/dispatch/quote/approve")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket});
+    expect(approve.status).toBe(200);
+    const started = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket});
+    expect(started.body.data.status).toBe("6");
     const ready = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(WALKOP))
@@ -605,9 +615,11 @@ describe("dispatch walk-in flow", () => {
     expect(res.status).toBe(200);
     type HistoryRow = {status: string; by: string};
     const history = res.body.data.statusHistory as HistoryRow[];
-    expect(history.map((h) => h.status)).toEqual(["1", "2", "6", "7", "4"]);
+    expect(history.map((h) => h.status)).toEqual(
+      ["1", "2", "9", "6", "7", "4"],
+    );
     expect(history.map((h) => h.by)).toEqual(
-      [USER, WALKOP, WALKOP, WALKOP, USER],
+      [USER, WALKOP, WALKOP, USER, WALKOP, USER],
     );
   });
 
@@ -757,5 +769,77 @@ describe("dispatch walk-in flow", () => {
       name: "Rider One",
       kind: "RIDER",
     });
+  });
+
+  it("quotes and approves before work starts", async () => {
+    const opened = await request(app)
+      .post("/dispatch")
+      .set("Authorization", bearer(USER))
+      .send({
+        ticketType: "WALK_IN",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        providerId: walkShop,
+        vehicleType: "SCOOTER",
+      });
+    expect(opened.status).toBe(201);
+    const quotedTicket = opened.body.data.id as string;
+    const acceptQuoted = await request(app)
+      .post("/dispatch/accept")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: quotedTicket, shopId: walkShop});
+    expect(acceptQuoted.status).toBe(200);
+    const send = await request(app)
+      .post("/dispatch/quote")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: quotedTicket, quotedAmount: 150000});
+    expect(send.status).toBe(200);
+    const pending = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: quotedTicket});
+    expect(pending.body.data.status).toBe("9");
+    expect(pending.body.data.shopQuotedAmount).toBe(150000);
+    const blocked = await request(app)
+      .put("/dispatch/status")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: quotedTicket, status: "6"});
+    expect(blocked.status).toBe(403);
+    const approve = await request(app)
+      .post("/dispatch/quote/approve")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: quotedTicket});
+    expect(approve.status).toBe(200);
+    const started = await request(app)
+      .post("/dispatch/one")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: quotedTicket});
+    expect(started.body.data.status).toBe("6");
+  });
+
+  it("shares phones on live tickets only", async () => {
+    await db.collection("users").doc(USER).update({phone: "+84001"});
+    await db.collection("users").doc(WALKOP).update({phone: "+84002"});
+    type FeedRow = {id: string; otherParty: unknown};
+    const out = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(USER))
+      .send({});
+    const mine = (out.body.data as FeedRow[]).find(
+      (t) => t.id === walkTicket,
+    );
+    expect(mine?.otherParty).toEqual(
+      expect.objectContaining({phone: "+84002"}),
+    );
+    const inbound = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(WALKOP))
+      .send({});
+    const theirs = (inbound.body.data as FeedRow[]).find(
+      (t) => t.id === walkTicket,
+    );
+    expect(theirs?.otherParty).toEqual(
+      expect.objectContaining({phone: "+84001"}),
+    );
   });
 });

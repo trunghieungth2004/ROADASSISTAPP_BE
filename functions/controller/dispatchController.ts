@@ -196,6 +196,33 @@ const updateWorkOrder = async (req: Request, res: Response) => {
   }
 };
 
+const sendQuote = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, quotedAmount, workType} = req.body;
+    const result = await dispatchService.sendQuote({
+      userId,
+      ticketId,
+      quotedAmount,
+      workType,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const approveQuote = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.approveQuote({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const shopRequests = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -235,8 +262,14 @@ const feedTickets = async (req: Request, res: Response) => {
 
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
-    const {ticketId} = req.body;
-    const result = await dispatchService.deliverDispatchPush(ticketId);
+    const {ticketId, audience, title, body} = req.body;
+    const result = await dispatchService.deliverDispatchPush(
+      ticketId,
+      audience,
+      typeof title === "string" && typeof body === "string" ?
+        {title, body} :
+        undefined,
+    );
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -246,6 +279,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
+  sendQuote, approveQuote,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

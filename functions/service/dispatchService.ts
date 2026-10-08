@@ -5,6 +5,8 @@ export {nearDispatch, dispatchOffers, selectDispatch} from "./dispatch/board";
 export {acceptDispatch} from "./dispatch/accept";
 export {
   declineDispatch,
+  sendQuote,
+  approveQuote,
   shopRequests,
   shopRecords,
   feedTickets,
@@ -12,6 +14,6 @@ export {
   updateWorkOrder,
 } from "./dispatch/shop";
 export {findCandidates} from "./dispatch/candidates";
-export {deliverDispatchPush} from "./dispatch/push";
+export {deliverDispatchPush, deliverOperatorPush} from "./dispatch/push";
 export {ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";
