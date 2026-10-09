@@ -433,6 +433,9 @@ const schemas = {
   approveQuote: Joi.object({
     ticketId: strReq(),
   }),
+  declineDestination: Joi.object({
+    ticketId: strReq(),
+  }),
   feedTickets: Joi.object({
     limit: Joi.number().integer().min(1).max(50).optional(),
   }),
@@ -507,7 +510,7 @@ const schemas = {
   }),
   deliverDispatch: Joi.object({
     ticketId: strReq(),
-    audience: Joi.string().valid("operator").optional(),
+    audience: Joi.string().valid("operator", "tower-candidates").optional(),
     title: Joi.string().trim().max(120).optional(),
     body: Joi.string().trim().max(280).optional(),
   }),

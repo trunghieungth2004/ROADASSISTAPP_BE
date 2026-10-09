@@ -3,12 +3,19 @@ import * as dispatchRepository from
 import * as userRepository from "../../repository/userRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
+import * as providerLocationRepository from
+  "../../repository/providerLocationRepository";
 import {isOpenNow} from "../providerService";
 import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
-import {requireProviderForTicket, volunteerFitsTicket} from "./helpers";
+import {
+  estimateTowEta,
+  requireProviderForTicket,
+  volunteerFitsTicket,
+} from "./helpers";
 import {
   HELPER_KIND,
+  PROVIDER_FRESH_MS,
   PROVIDER_KIND,
   SERVICE_ROLE,
   STATUS_DISPATCH,
@@ -53,7 +60,9 @@ export const acceptAsShop = async (
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
-    assignedKind: HELPER_KIND.SHOP,
+    assignedKind: shop.kind === PROVIDER_KIND.TOW ?
+      HELPER_KIND.TOW :
+      HELPER_KIND.SHOP,
     status: STATUS_DISPATCH.MATCHED,
     ...(ticket.ticketType === "WALK_IN" &&
     typeof shop.serviceFee === "number" ?
@@ -66,11 +75,89 @@ export const acceptAsShop = async (
   if (shop.kind === PROVIDER_KIND.TOW) {
     await providerRepository.update(shopId, {accepting: false});
   }
+  if (ticket.ticketType === "TOW") {
+    await stampTowEta(ticketId, ticket, shopId);
+  }
   cacheManager.del(NS);
   cacheManager.del("shop");
   cacheManager.del("provider");
-  await enqueueDispatchPush(ticketId);
-  return {matched: true, kind: HELPER_KIND.SHOP};
+  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.MATCHED}`);
+  return {
+    matched: true,
+    kind: shop.kind === PROVIDER_KIND.TOW ?
+      HELPER_KIND.TOW :
+      HELPER_KIND.SHOP,
+  };
+};
+
+const stampTowEta = async (
+  ticketId: string,
+  ticket: {
+    lat: number;
+    lng: number;
+    vehicleType?: unknown;
+    destinationShopId?: unknown;
+    destinationPoint?: unknown;
+  },
+  shopId: string,
+): Promise<void> => {
+  try {
+    const fixes = await providerLocationRepository.findByIds([shopId]);
+    const fix = fixes.get(shopId);
+    if (!fix || typeof fix.lat !== "number" || typeof fix.lng !== "number" ||
+      typeof fix.lastSeen !== "string" ||
+      Date.now() - Date.parse(fix.lastSeen) >= PROVIDER_FRESH_MS) {
+      return;
+    }
+    const towerLat = fix.lat;
+    const towerLng = fix.lng;
+    let destLat: number | undefined;
+    let destLng: number | undefined;
+    if (typeof ticket.destinationShopId === "string" &&
+      ticket.destinationShopId !== "") {
+      const dest = await providerRepository.findById(
+        ticket.destinationShopId as string,
+      );
+      if (dest && typeof dest.lat === "number" &&
+        typeof dest.lng === "number") {
+        destLat = dest.lat;
+        destLng = dest.lng;
+      }
+    } else if (ticket.destinationPoint &&
+      typeof ticket.destinationPoint === "object") {
+      const point = ticket.destinationPoint as {
+        lat?: unknown;
+        lng?: unknown;
+      };
+      if (typeof point.lat === "number" && typeof point.lng === "number") {
+        destLat = point.lat;
+        destLng = point.lng;
+      }
+    }
+    const eta = await estimateTowEta({
+      towerLat,
+      towerLng,
+      ticketLat: ticket.lat,
+      ticketLng: ticket.lng,
+      ...(destLat !== undefined && destLng !== undefined ?
+        {destLat, destLng} :
+        {}),
+      ...(typeof ticket.vehicleType === "string" ?
+        {vehicleType: ticket.vehicleType} :
+        {}),
+    });
+    if (!eta) return;
+    const now = Date.now();
+    await dispatchRepository.update(ticketId, {
+      etaPickupAt: new Date(now + eta.pickupSeconds * 1000).toISOString(),
+      etaDropoffAt: eta.dropoffSeconds === null ?
+        null :
+        new Date(now + eta.dropoffSeconds * 1000).toISOString(),
+      etaNotifiedAt: null,
+    });
+  } catch {
+    return;
+  }
 };
 
 
@@ -109,7 +196,7 @@ export const acceptAsVolunteer = async (userId: string, ticketId: string) => {
     throw new ValidationError("Ticket is no longer pending");
   }
   cacheManager.del(NS);
-  await enqueueDispatchPush(ticketId);
+  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.MATCHED}`);
   return {matched: true, kind: HELPER_KIND.VOLUNTEER};
 };
 

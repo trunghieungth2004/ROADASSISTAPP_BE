@@ -62,7 +62,7 @@ export const nearDispatchInner = async ({
     ticketType ? [ticketType] : ["SOS", "TOW", "MECHANIC"],
     limit,
   );
-  return tickets
+  const nearby = tickets
     .filter((t) =>
       t.ticketType !== "SOS" ||
       volunteerFitsTicket(
@@ -77,6 +77,24 @@ export const nearDispatchInner = async ({
     .filter((t) => (t.distance as number) <= radiusMeters)
     .sort((a, b) => (a.distance as number) - (b.distance as number))
     .slice(0, limit);
+  const riderIds = [...new Set(
+    nearby
+      .map((t) => t.userId as unknown)
+      .filter((id): id is string => typeof id === "string" && id !== ""),
+  )];
+  const riders = riderIds.length > 0 ?
+    await userRepository.findByIds(riderIds) :
+    new Map();
+  return nearby.map((t) => {
+    const rider = riders.get(t.userId as string) as
+      | {displayName?: unknown}
+      | undefined;
+    const name = typeof rider?.displayName === "string" &&
+      rider.displayName !== "" ?
+      rider.displayName :
+      null;
+    return {...t, riderName: name};
+  });
 };
 
 export const nearDispatchCached = cacheManager.wrap(nearDispatchInner, {

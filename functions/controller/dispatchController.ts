@@ -223,6 +223,20 @@ const approveQuote = async (req: Request, res: Response) => {
   }
 };
 
+const declineDestination = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.declineDestination({
+      userId,
+      ticketId,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const shopRequests = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -279,7 +293,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
-  sendQuote, approveQuote,
+  sendQuote, approveQuote, declineDestination,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

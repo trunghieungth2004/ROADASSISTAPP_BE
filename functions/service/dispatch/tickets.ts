@@ -148,6 +148,9 @@ export const createDispatch = async ({
   if (ticketType === "WALK_IN") {
     await enqueueDispatchPush(ticket.id);
   }
+  if (ticketType === "TOW") {
+    await enqueueDispatchPush(ticket.id);
+  }
   cacheManager.del(NS);
   return ticket;
 };
@@ -240,6 +243,9 @@ export const assertTransition = ({
     throw new ValidationError("Quotes are sent, not set");
   }
   if (status === STATUS_DISPATCH.IN_PROGRESS) {
+    if (ticket.ticketType === "SOS" || ticket.ticketType === "TOW") {
+      throw new ForbiddenError("Work states are shop-ticket only");
+    }
     if (from === STATUS_DISPATCH.QUOTED) {
       throw new ForbiddenError("Quote needs rider approval");
     }
@@ -250,6 +256,9 @@ export const assertTransition = ({
     throw new ForbiddenError("Only the helper starts work");
   }
   if (status === STATUS_DISPATCH.READY) {
+    if (ticket.ticketType === "SOS" || ticket.ticketType === "TOW") {
+      throw new ForbiddenError("Work states are shop-ticket only");
+    }
     if (from === STATUS_DISPATCH.IN_PROGRESS && shopFlow) return;
     throw new ForbiddenError("Only the helper marks work ready");
   }
@@ -339,6 +348,18 @@ export const updateDispatchStatus = async ({
     await enqueueDispatchPush(id, `-status-${status}`);
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
+    await enqueueDispatchPush(id, "-cancelled-rider", {
+      title: "Request cancelled",
+      body: "Your request was cancelled",
+    });
+    if (ticket.status === STATUS_DISPATCH.PENDING &&
+      ticket.ticketType === "TOW") {
+      await enqueueDispatchPush(id, "-cancelled-towers", {
+        audience: "tower-candidates",
+        title: "Tow request withdrawn",
+        body: "A tow request near you was cancelled",
+      });
+    }
     const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
       (v): v is string => typeof v === "string" && v !== "",
     );
@@ -365,7 +386,54 @@ export const updateDispatchStatus = async ({
       cacheManager.del("provider");
     }
   }
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW" &&
+    typeof ticket.destinationShopId === "string" &&
+    ticket.destinationShopId !== "" &&
+    !Array.isArray(ticket.linkedTicketIds)) {
+    try {
+      await spawnShopTicket(id, ticket, ticket.destinationShopId as string);
+    } catch {
+      return {updated: 1};
+    }
+  }
   return {updated: 1};
+};
+
+const spawnShopTicket = async (
+  parentId: string,
+  ticket: {
+    userId: string;
+    lat: number;
+    lng: number;
+    vehicleType?: unknown;
+    vehicleWidth?: unknown;
+    vehicleClass?: unknown;
+    vehicleLabel?: unknown;
+  },
+  shopId: string,
+): Promise<void> => {
+  const shop = await providerRepository.findById(shopId);
+  if (!shop || shop.status !== PROVIDER_STATUS.ACTIVE) return;
+  const child = await createDispatch({
+    userId: ticket.userId,
+    ticketType: "WALK_IN",
+    lat: typeof shop.lat === "number" ? shop.lat : ticket.lat,
+    lng: typeof shop.lng === "number" ? shop.lng : ticket.lng,
+    providerId: shopId,
+    ...(typeof ticket.vehicleType === "string" ?
+      {vehicleType: ticket.vehicleType} :
+      {}),
+    ...(typeof ticket.vehicleWidth === "number" ?
+      {vehicleWidth: ticket.vehicleWidth} :
+      {}),
+    ...(typeof ticket.vehicleLabel === "string" ?
+      {vehicleLabel: ticket.vehicleLabel} :
+      {}),
+  });
+  await dispatchRepository.update(parentId, {linkedTicketIds: [child.id]});
+  await dispatchRepository.update(child.id, {linkedTicketIds: [parentId]});
+  cacheManager.del(NS);
 };
 
 
@@ -410,5 +478,19 @@ export const updateDispatchDestination = async ({
     destinationSnapshot: destinationSnapshot ?? null,
   });
   cacheManager.del(NS);
+  if (typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "") {
+    const dest = destinationSnapshot as {name?: unknown} | null;
+    const name = dest !== null && typeof dest.name === "string" ?
+      dest.name :
+      null;
+    await enqueueDispatchPush(ticketId, "-destination-updated", {
+      audience: "operator",
+      title: "Drop-off updated",
+      body: name !== null ?
+        `The rider changed the drop-off to ${name}` :
+        "The rider changed the drop-off — tap to view",
+    });
+  }
   return dispatchRepository.findById(ticketId);
 };

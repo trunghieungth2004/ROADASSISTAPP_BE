@@ -6,6 +6,10 @@ export const VALID_STATUSES: string[] = Object.values(STATUS_DISPATCH);
 export const NS = "dispatch";
 export const SEND_CHUNK = 500;
 export const WALK_IN_TTL_MS = 2 * 60 * 60 * 1000;
+export const SECURE_MINUTES_BIKE = 10;
+export const SECURE_MINUTES_CAR = 20;
+export const LOADED_FACTOR = 1.1;
+export const LATE_GRACE_MS = 10 * 60 * 1000;
 export const DEAD_TOKEN_CODES = new Set([
   "messaging/registration-token-not-registered",
   "messaging/invalid-registration-token",

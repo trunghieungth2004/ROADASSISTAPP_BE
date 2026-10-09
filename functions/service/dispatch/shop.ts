@@ -3,15 +3,20 @@ import * as dispatchRepository from
 import * as userRepository from "../../repository/userRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
+import * as providerLocationRepository from
+  "../../repository/providerLocationRepository";
 import {enqueueDispatchPush} from "../taskQueueService";
-import {NS} from "./constants";
+import {LATE_GRACE_MS, NS, TERMINAL_STATUSES} from "./constants";
 import {
   DECLINE_REASON,
   HELPER_KIND,
+  PROVIDER_FRESH_MS,
+  PROVIDER_KIND,
   PROVIDER_STATUS,
   STATUS_DISPATCH,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
+import {haversineMeters} from "../../utils/geo";
 import {isOpenNow} from "../providerService";
 import {reporterHandle} from "../../utils/points";
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -99,6 +104,35 @@ export const sweepStaleWalkIns = async (): Promise<{cancelled: number}> => {
   }
   if (stale.length > 0) cacheManager.del(NS);
   return {cancelled: stale.length};
+};
+
+export const sweepLateTows = async (): Promise<{notified: number}> => {
+  const tickets = await dispatchRepository.findByStatusForTypes(
+    STATUS_DISPATCH.MATCHED,
+    ["TOW"],
+  );
+  const now = Date.now();
+  let notified = 0;
+  for (const ticket of tickets) {
+    if (typeof ticket.etaPickupAt !== "string") continue;
+    if (typeof ticket.etaNotifiedAt === "string") continue;
+    if (Date.parse(ticket.etaPickupAt) + LATE_GRACE_MS > now) continue;
+    await dispatchRepository.update(ticket.id, {
+      etaNotifiedAt: new Date().toISOString(),
+    });
+    await enqueueDispatchPush(ticket.id, "-late-rider", {
+      title: "Driver delayed",
+      body: "Your tow is running late — tap to view",
+    });
+    await enqueueDispatchPush(ticket.id, "-late-operator", {
+      audience: "operator",
+      title: "Pickup running late",
+      body: "This pickup is past its ETA — tap to view",
+    });
+    notified += 1;
+  }
+  if (notified > 0) cacheManager.del(NS);
+  return {notified};
 };
 
 
@@ -234,6 +268,9 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
   const operators = await userRepository.findByIds([...operatorIds]);
   const shopDetails = new Map<string, {
     name: string;
+    kind: string;
+    lat: number | null;
+    lng: number | null;
     label: string | null;
     openNow: boolean | null;
     ratingAvg: number | null;
@@ -250,6 +287,9 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         undefined;
       shopDetails.set(shop.id, {
         name: shop.name,
+        kind: shop.kind === "TOW" ? "TOW" : "SHOP",
+        lat: typeof shop.lat === "number" ? shop.lat : null,
+        lng: typeof shop.lng === "number" ? shop.lng : null,
         label,
         openNow: isOpenNow(
           typeof shop.openHours === "string" ? shop.openHours : null,
@@ -264,9 +304,39 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
       });
     }
   }
+  const towerIds = [...new Set(
+    rows
+      .filter((row) => row.direction === "out" &&
+        row.ticketType === "TOW" &&
+        (row.status === STATUS_DISPATCH.MATCHED ||
+          row.status === STATUS_DISPATCH.ARRIVED) &&
+        strOf(row.assignedShopId) !== "")
+      .map((row) => strOf(row.assignedShopId)),
+  )];
+  const towerFixes = towerIds.length > 0 ?
+    await providerLocationRepository.findByIds(towerIds) :
+    new Map();
   for (const row of rows) {
     if (row.direction === "out") {
       row.otherParty = outParty(row, shopDetails);
+      const dest = destinationPartyOf(row, shopDetails);
+      if (dest) row.destinationParty = dest;
+      row.towerFix = null;
+      if (row.ticketType === "TOW" &&
+        (row.status === STATUS_DISPATCH.MATCHED ||
+          row.status === STATUS_DISPATCH.ARRIVED)) {
+        const fix = towerFixes.get(strOf(row.assignedShopId));
+        if (fix && typeof fix.lat === "number" &&
+          typeof fix.lng === "number" &&
+          typeof fix.lastSeen === "string" &&
+          Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS) {
+          row.towerFix = {
+            lat: fix.lat,
+            lng: fix.lng,
+            at: fix.lastSeen,
+          };
+        }
+      }
     } else {
       const riderId = strOf(row.userId);
       const rider = riders.get(riderId);
@@ -298,12 +368,35 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
 
 type ShopDetail = {
   name: string;
+  kind: string;
+  lat: number | null;
+  lng: number | null;
   label: string | null;
   openNow: boolean | null;
   ratingAvg: number | null;
   ratingCount: number | null;
   phone: string | null;
 };
+
+const buildShopParty = (
+  shopId: string,
+  shop: ShopDetail,
+  shared: boolean,
+): Record<string, unknown> => ({
+  id: shopId,
+  name: shop.name,
+  kind: shop.kind,
+  ...(shop.lat !== null && shop.lng !== null ?
+    {lat: shop.lat, lng: shop.lng} :
+    {}),
+  ...(shop.label !== null ? {label: shop.label} : {}),
+  ...(shop.openNow !== null ? {openNow: shop.openNow} : {}),
+  ...(shop.ratingAvg !== null ? {ratingAvg: shop.ratingAvg} : {}),
+  ...(shop.ratingCount !== null ?
+    {ratingCount: shop.ratingCount} :
+    {}),
+  ...(shared && shop.phone !== null ? {phone: shop.phone} : {}),
+});
 
 const outParty = (
   row: FeedRow,
@@ -320,18 +413,7 @@ const outParty = (
     if (shop) {
       const shared = typeof row.status === "string" &&
         phoneSharingStatuses.has(row.status);
-      return {
-        id: shopId,
-        name: shop.name,
-        kind: "SHOP",
-        ...(shop.label !== null ? {label: shop.label} : {}),
-        ...(shop.openNow !== null ? {openNow: shop.openNow} : {}),
-        ...(shop.ratingAvg !== null ? {ratingAvg: shop.ratingAvg} : {}),
-        ...(shop.ratingCount !== null ?
-          {ratingCount: shop.ratingCount} :
-          {}),
-        ...(shared && shop.phone !== null ? {phone: shop.phone} : {}),
-      };
+      return buildShopParty(shopId, shop, shared);
     }
   }
   const uid = strOf(row.assignedUid);
@@ -339,6 +421,19 @@ const outParty = (
     return {id: uid, name: reporterHandle(uid), kind: "VOLUNTEER"};
   }
   return null;
+};
+
+const destinationPartyOf = (
+  row: FeedRow,
+  shopDetails: Map<string, ShopDetail>,
+): unknown => {
+  const shopId = strOf(row.destinationShopId);
+  if (shopId === "") return null;
+  const shop = shopDetails.get(shopId) ?? null;
+  if (!shop || shop.kind !== "SHOP") return null;
+  const shared = typeof row.status === "string" &&
+    phoneSharingStatuses.has(row.status);
+  return buildShopParty(shopId, shop, shared);
 };
 
 
@@ -362,6 +457,7 @@ export const updateWorkOrder = async ({
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
   let isOperator = false;
+  let operatedKind: unknown = null;
   const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
     (v): v is string => typeof v === "string" && v !== "",
   );
@@ -369,11 +465,15 @@ export const updateWorkOrder = async ({
     const shop = await providerRepository.findById(shopId);
     if (shop && shop.operatorUid === userId) {
       isOperator = true;
+      operatedKind = shop.kind;
       break;
     }
   }
   if (!isOperator && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator updates the work order");
+  }
+  if (operatedKind !== PROVIDER_KIND.SHOP && caller.role !== ROLE_ADMIN) {
+    throw new ForbiddenError("Only shops update work orders");
   }
   if (ticket.status !== STATUS_DISPATCH.MATCHED &&
     ticket.status !== STATUS_DISPATCH.ARRIVED &&
@@ -463,6 +563,21 @@ export const sendQuote = async ({
   if (shopIds.length === 0) {
     throw new ValidationError("Quotes need a shop ticket");
   }
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  if (caller.role !== ROLE_ADMIN) {
+    let shopKind: unknown = null;
+    for (const shopId of shopIds) {
+      const shop = await providerRepository.findById(shopId);
+      if (shop && shop.operatorUid === userId) {
+        shopKind = shop.kind;
+        break;
+      }
+    }
+    if (shopKind !== PROVIDER_KIND.SHOP) {
+      throw new ForbiddenError("Only shops send quotes");
+    }
+  }
   if (ticket.status !== STATUS_DISPATCH.MATCHED &&
     ticket.status !== STATUS_DISPATCH.ARRIVED) {
     throw new ValidationError("Quotes go out on active tickets");
@@ -487,6 +602,80 @@ export const sendQuote = async ({
   cacheManager.del(NS);
   await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.QUOTED}`);
   return {quoted: true};
+};
+
+export const declineDestination = async ({
+  userId,
+  ticketId,
+}: {
+  userId: string;
+  ticketId: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (typeof ticket.destinationShopId !== "string" ||
+    ticket.destinationShopId === "") {
+    throw new ValidationError("Ticket has no shop destination");
+  }
+  if (ticket.status === STATUS_DISPATCH.PENDING ||
+    TERMINAL_STATUSES.has(ticket.status)) {
+    throw new ValidationError("Destination is no longer declinable");
+  }
+  const shop = await providerRepository.findById(
+    ticket.destinationShopId as string,
+  );
+  if (!shop) throw new NotFoundError("Provider not found");
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  if (shop.operatorUid !== userId && caller.role !== ROLE_ADMIN) {
+    throw new ForbiddenError("Only the destination shop declines");
+  }
+  const destShopId = ticket.destinationShopId as string;
+  const legs = Array.isArray(ticket.towLegs) ? [...ticket.towLegs] : [];
+  let legKm = 0;
+  let actual = false;
+  if (typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "") {
+    const fixes = await providerLocationRepository.findByIds(
+      [ticket.assignedShopId as string],
+    );
+    const fix = fixes.get(ticket.assignedShopId as string);
+    if (fix && typeof fix.lat === "number" && typeof fix.lng === "number") {
+      legKm = Math.round(
+        haversineMeters(fix.lat, fix.lng, ticket.lat, ticket.lng),
+      );
+      actual = Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
+    }
+  }
+  legs.push({
+    toShopId: destShopId,
+    km: legKm,
+    actual,
+    at: new Date().toISOString(),
+  });
+  const total = (typeof ticket.towDistanceMeters === "number" ?
+    ticket.towDistanceMeters :
+    0) + legKm;
+  await dispatchRepository.update(ticketId, {
+    destinationShopId: null,
+    destinationSnapshot: null,
+    towLegs: legs,
+    towDistanceMeters: total,
+  });
+  cacheManager.del(NS);
+  await enqueueDispatchPush(ticketId, "-destination-declined", {
+    title: "Destination declined",
+    body: "The shop can't take your vehicle — pick another drop-off",
+  });
+  if (typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "") {
+    await enqueueDispatchPush(ticketId, "-destination-declined-operator", {
+      audience: "operator",
+      title: "Drop-off declined",
+      body: "The destination shop declined — await the rider's new drop-off",
+    });
+  }
+  return {declined: true, legKm};
 };
 
 export const approveQuote = async ({

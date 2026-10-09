@@ -118,6 +118,9 @@ the hazard tooling above never touches them:
 
 ```
 dispatchService: accept / status move / decline / sweep-cancel / walk-in open
+/ tow open / quote send+approve / rider cancel (rider confirm + shop-context
+operator) / pending-tow cancel (tower-candidates withdrawn fan-out) /
+destination edit + decline (operator) / late tow / destination decline
         │
         │ enqueueDispatchPush(ticketId, suffix)   [CLOUD_TASKS_ENABLED]
         ▼
@@ -132,9 +135,16 @@ dispatchService: accept / status move / decline / sweep-cancel / walk-in open
 ┌───────────────────────────────┐
 │  deliverDispatchPush          │  [FCM_ENABLED]
 │  pending SOS → candidates     │  "SOS request near you" + ticket data
+│  pending TOW → towers         │  "Tow request near you" (accepting, plated,
+│                               │  class-fit, 15 km)
 │  pending WALK_IN → operator   │  "Walk-in request"
-│  audience operator → operator │  "Quote approved" (quote approval)
-│  other status → rider         │  per-type title + status body
+│  audience operator → operator │  explicit title/body (approvals, cancels,
+│                               │  late pickups, destination edits/declines)
+│                               │  or generic fallback
+│  audience tower-candidates →   │  "Tow request withdrawn" + ticket data
+│  towers (recomputed)          │  (pending-TOW cancel only)
+│  other status → rider         │  per-type title + status body (explicit
+│                               │  title/body override for notices)
 │  dead tokens pruned per chunk │
 └───────────────────────────────┘
 ```
@@ -142,10 +152,17 @@ dispatchService: accept / status move / decline / sweep-cancel / walk-in open
 Enqueue triggers: SOS creation (when candidates exist), walk-in creation,
 accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, quote send (`9`), quote
 approval and rider cancel (operator audience, the latter only with shop
-context), decline, and sweep expiry
-(`-status-5`, the only path that pushes `CANCELLED`). Rider-cancelled tickets
-push nothing to the rider — the actor already knows. Enqueue **fails open** like hazard:
+context), rider-cancel confirmation to the rider (explicit copy, so the sweep
+expiry body stays expiry-only), withdrawn fan-out to nearby towers on
+pending-TOW cancel, operator pushes on destination edit and decline
+(assigned towers only), decline, and sweep expiry
+(`-status-5`, which keeps the `CANCELLED` expiry body). Enqueue **fails open** like hazard:
 the ticket mutation always succeeds.
+
+Task-name rule: the suffix must be unique per event per ticket
+(`dispatch-<ticketId><suffix>` dedupes retries *and* distinct events —
+a repeated suffix silently swallows the later push, which is exactly how
+accept pushes went missing behind creates).
 
 ## Configuration (dispatch)
 

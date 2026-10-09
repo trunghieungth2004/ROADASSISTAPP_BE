@@ -32,6 +32,17 @@ interface DispatchTicket {
   fulfilledByShopId?: string | null;
   declineReason?: string | null;
   declineNote?: string | null;
+  towLegs?: Array<{
+    toShopId: string | null;
+    km: number;
+    actual: boolean;
+    at: string;
+  }>;
+  towDistanceMeters?: number | null;
+  etaPickupAt?: string | null;
+  etaDropoffAt?: string | null;
+  etaNotifiedAt?: string | null;
+  linkedTicketIds?: string[];
   expiresAt?: string | null;
   suggestedShopId?: string | null;
   assignedUid?: string | null;
@@ -326,14 +337,23 @@ const findRecentForShop = async (
   shopId: string,
   limit = 20,
 ): Promise<DispatchTicket[]> => {
-  const snap = await db
-    .collection("dispatch_tickets")
-    .where("assignedShopId", "==", shopId)
-    .get();
+  const [assigned, addressed] = await Promise.all([
+    db.collection("dispatch_tickets")
+      .where("assignedShopId", "==", shopId)
+      .get(),
+    db.collection("dispatch_tickets")
+      .where("destinationShopId", "==", shopId)
+      .get(),
+  ]);
+  const seen = new Set<string>();
   const results: DispatchTicket[] = [];
-  snap.forEach((doc) =>
-    results.push({id: doc.id, ...doc.data()} as DispatchTicket),
-  );
+  for (const snap of [assigned, addressed]) {
+    snap.forEach((doc) => {
+      if (seen.has(doc.id)) return;
+      seen.add(doc.id);
+      results.push({id: doc.id, ...doc.data()} as DispatchTicket);
+    });
+  }
   results.sort((a, b) =>
     String(a.createdAt ?? "") < String(b.createdAt ?? "") ? 1 : -1,
   );

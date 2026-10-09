@@ -175,5 +175,6 @@ export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
   async () => {
     await routingService.sweepActiveRoutes();
     await dispatchService.sweepStaleWalkIns();
+    await dispatchService.sweepLateTows();
   },
 );

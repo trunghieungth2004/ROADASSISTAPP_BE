@@ -421,7 +421,7 @@ Clear a suspension. Idempotent (`{restored: false}` when the provider was never 
 
 ### `POST /providers/location` **(Auth)**
 
-Ping a tow operator's live position. The body carries no `providerId` — the service resolves the caller's own `TOW` record and requires `ACTIVE`, `accepting`, and non-suspended (`403`/`404` otherwise). Backed by the `provider_locations` collection (doc id = provider id, 15-minute freshness window); stale rows are swept hourly. `POST /dispatch/offers` prefers the live position when fresh and falls back to the registered base; `/providers/near` always uses the registered base.
+Ping a tow operator's live position. The body carries no `providerId` — the service resolves the caller's own `TOW` record and requires `ACTIVE` and non-suspended (`403`/`404` otherwise); `accepting` is required except while holding an active job, so tracking survives the accept flip. Backed by the `provider_locations` collection (doc id = provider id, 15-minute freshness window); stale rows are swept hourly. `POST /dispatch/offers` prefers the live position when fresh and falls back to the registered base; `/providers/near` always uses the registered base.
 
 ```json
 { "lat": 10.7626, "lng": 106.6602 }
@@ -1258,7 +1258,7 @@ Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the ass
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED` is set only by `POST /dispatch/quote` or a quoting work order (the status endpoint refuses it); arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` with the rider as actor); quotes themselves need a shop ticket (volunteer-held SOS stays on money-free work orders); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`) accept no further moves. Admins bypass the matrix. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
+Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED` is set only by `POST /dispatch/quote` or a quoting work order (the status endpoint refuses it); arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator on shop tickets (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` with the rider as actor); quotes themselves need a shop ticket (volunteer-held SOS stays on money-free work orders); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`) accept no further moves. Admins bypass the matrix. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
 
 **Request:**
 ```json
@@ -1316,7 +1316,7 @@ The rider picks a provider for a pending ticket (stays pending until the provide
 
 ### `POST /dispatch/accept` **(Auth)**
 
-Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended; for addressed tickets the shop must be the named one). Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC`/`WALK_IN` tickets need a `SHOP` provider, and `SOS` tickets take no provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedUid` or `assignedShopId`. Concurrent accepts on a taken ticket get `400`.
+Accept a pending ticket at will. Without `shopId`, the caller accepts as a volunteer (requires the `VOLUNTEER` license, volunteer mode on, no active ticket, and car capability for car tickets: `403` otherwise). With `shopId`, the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended; for addressed tickets the shop must be the named one). Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC`/`WALK_IN` tickets need a `SHOP` provider, and `SOS` tickets take no provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedUid` or `assignedShopId` (with `assignedKind` mirroring the provider — `TOW` for towers). The response `kind` mirrors it too. Concurrent accepts on a taken ticket get `400`.
 
 **Request:**
 ```json
@@ -1348,7 +1348,7 @@ Decline a pending walk-in addressed to the caller's shop (`403` for other provid
 
 ### `POST /dispatch/work` **(Auth)**
 
-Record the repair order on an open ticket: free-text `workType`, integer VND `quotedAmount`/`finalAmount`, and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is matched/arrived/in-progress (`400` once closed). Setting a quote on a matched/arrived ticket flips it to `"9"` (Quoted) for rider approval, same as `POST /dispatch/quote`.
+Record the repair order on an open ticket: free-text `workType`, integer VND `quotedAmount`/`finalAmount`, and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is matched/arrived/in-progress (`400` once closed). Shop-only: tower operators get `403`, even on tows they hold. Setting a quote on a matched/arrived ticket flips it to `"9"` (Quoted) for rider approval, same as `POST /dispatch/quote`.
 
 **Request:**
 ```json
@@ -1364,7 +1364,7 @@ Record the repair order on an open ticket: free-text `workType`, integer VND `qu
 
 ### `POST /dispatch/quote` **(Auth)**
 
-Send a quote on a matched/arrived ticket: integer VND `quotedAmount` plus optional `workType`. Only the assigned (or, for walk-ins, named) shop's operator or an admin. Sending a quote flips the ticket to `"9"` (Quoted) and notifies the rider — work cannot start until the rider approves, and any quote (here or via `/dispatch/work`) routes through approval.
+Send a quote on a matched/arrived ticket: integer VND `quotedAmount` plus optional `workType`. Only the assigned (or, for walk-ins, named) shop's operator or an admin. Shop-only: tower operators get `403`. Sending a quote flips the ticket to `"9"` (Quoted) and notifies the rider — work cannot start until the rider approves, and any quote (here or via `/dispatch/work`) routes through approval.
 
 **Request:**
 ```json
@@ -1425,7 +1425,7 @@ Unified in/out record feed for the Records surface: the caller's own tickets (`d
 { "limit": 20 }
 ```
 
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop, volunteer handle, or rider display name; `null` when unassigned or unnamed). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider and volunteer parties carry names; rider parties additionally carry
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop or tower — `kind` mirrors the provider record, `TOW` for towers — volunteer handle, or rider display name; `null` when unassigned or unnamed). Shop and tower parties carry `lat`/`lng` when the provider record holds them. Nearby (`/dispatch/near`) rows additionally carry `riderName` (the requesting rider\u2019s display name, `null` when unnamed). Tickets with a registered destination additionally carry `destinationParty` in the same shape (shop only). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider and volunteer parties carry names; rider parties additionally carry
 `ratingAvg`/`ratingCount` when the rider record holds them. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, then `destinationShopId`, so pending and declined walk-ins already name their shop. Live tickets (`2`/`3`/`4`/`6`/`7`/`9`) additionally carry the counterparty `phone` — the rider's number on inbound rows, the operator's on shop rows — omitted on pending, cancelled, and declined tickets and whenever no number is registered.
 
 ---
@@ -1441,13 +1441,29 @@ Change a ticket's drop-off: a registered repair-shop destination (`destinationSh
 
 ---
 
-### `POST /dispatch/deliver` (Cloud Tasks only)
+### `POST /dispatch/destination/decline` **(Auth)**
 
-Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near you"` + ticket data); pending `WALK_IN` goes to the named shop's operator (`"Walk-in request"`); any other status notifies the rider with a per-type title (`SOS`/`Tow`/`Repair`/`Walk-in update`). Skipped when FCM is disabled, the ticket is gone, or (for status pushes on cancelled tickets) there is no body.
+Decline a drop-off: only the destination shop's operator (or admin), on a non-pending, non-terminal ticket carrying that shop as `destinationShopId`. Clears the destination (+ snapshot) without touching the ticket status — the tower keeps the job — freezes the traveled leg (`towLegs`, haversine from the tower's last fix, `actual` only when fresh) into the running `towDistanceMeters`, and notifies the rider to pick a new drop-off.
 
 **Request:**
 ```json
 { "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "declined": true, "legKm": 2000 } }
+```
+
+---
+
+### `POST /dispatch/deliver` (Cloud Tasks only)
+
+Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near you"` + ticket data); pending `TOW` goes to nearby accepting towers (`"Tow request near you"`); pending `WALK_IN` goes to the named shop's operator (`"Walk-in request"`); `audience: "operator"` routes to the ticket's operator instead (quote approvals, rider cancels, late pickups, destination edits/declines) with an explicit `title`/`body`, falling back to a generic ticket update; `audience: "tower-candidates"` recomputes nearby towers and sends `"Tow request withdrawn"` (pending-TOW cancel only); manual rider cancels also push the rider a `"Request cancelled"` confirmation (the `CANCELLED` status body stays expiry-only for sweeps); any other status notifies the rider with a per-type title (`SOS`/`Tow`/`Repair`/`Walk-in update`). Skipped when FCM is disabled, the ticket is gone, or (for status pushes on cancelled tickets) there is no body.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "audience": "operator", "title": "Quote approved", "body": "The rider approved your quote — tap to view" }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "delivered": 1, "skipped": false } }`
@@ -1456,7 +1472,7 @@ Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near
 
 ## Ratings
 
-Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update), each with an optional ≤280-char comment. Targets are `VOLUNTEER`, `SHOP`, or `RIDER`. Averages denormalize to `ratingAvg`/`ratingCount` on users/providers and onto the ticket (`helperRating`/`riderRating`). Provider reads additionally report `completedJobs` (resolved tickets fulfilled by the shop).
+Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update), each with an optional ≤280-char comment. Targets are `VOLUNTEER`, `SHOP`, or `RIDER` — towers are rated under `SHOP` by design (same provider collection and target-id keying, so the kind is moot; splitting kinds would strand historic ratings across two aggregates). Averages denormalize to `ratingAvg`/`ratingCount` on users/providers and onto the ticket (`helperRating`/`riderRating`). Provider reads additionally report `completedJobs` (resolved tickets fulfilled by the shop).
 
 ### `POST /ratings` **(Auth)**
 

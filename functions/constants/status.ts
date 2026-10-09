@@ -29,6 +29,7 @@ const STATUS_DISPATCH = {
 const HELPER_KIND = {
   VOLUNTEER: "VOLUNTEER",
   SHOP: "SHOP",
+  TOW: "TOW",
 } as const;
 
 const RATING_TARGET = {
@@ -45,10 +46,11 @@ const TOW_CLASS_MULTIPLIER_CAR = 2.5;
 
 const VOLUNTEER_FRESH_MS = 15 * 60 * 1000;
 const VOLUNTEER_DEFAULT_RADIUS = 5000;
+const TOW_DISPATCH_RADIUS = 15000;
 const PROVIDER_FRESH_MS = 15 * 60 * 1000;
 const WALK_RADIUS_MIN = 500;
 const WALK_RADIUS_MAX = 2000;
-const SHOP_SEARCH_MAX_RADIUS = 10000;
+const SHOP_SEARCH_MAX_RADIUS = 20000;
 const NEAR_SHOPS_MAX = 10;
 
 const VEHICLE_TYPE = {
@@ -200,21 +202,21 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
     "dispatch",
     STATUS_DISPATCH.PENDING,
     "Pending",
-    "Ticket opened, awaiting a mechanic match",
+    "Ticket opened, awaiting a match",
     1,
   ),
   [STATUS_DISPATCH.MATCHED]: definition(
     "dispatch",
     STATUS_DISPATCH.MATCHED,
     "Matched",
-    "Mechanic assigned and en route",
+    "Helper assigned and en route",
     2,
   ),
   [STATUS_DISPATCH.ARRIVED]: definition(
     "dispatch",
     STATUS_DISPATCH.ARRIVED,
     "Arrived",
-    "Mechanic on scene",
+    "Helper on scene",
     3,
   ),
   [STATUS_DISPATCH.RESOLVED]: definition(
@@ -251,6 +253,13 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
     "Declined",
     "Provider cannot take the job",
     8,
+  ),
+  [STATUS_DISPATCH.QUOTED]: definition(
+    "dispatch",
+    STATUS_DISPATCH.QUOTED,
+    "Quoted",
+    "Shop quote sent, awaiting rider approval",
+    9,
   ),
 };
 
@@ -297,6 +306,7 @@ export {
   TOW_CLASS_MULTIPLIER_CAR,
   VOLUNTEER_FRESH_MS,
   VOLUNTEER_DEFAULT_RADIUS,
+  TOW_DISPATCH_RADIUS,
   WALK_RADIUS_MIN,
   WALK_RADIUS_MAX,
   SHOP_SEARCH_MAX_RADIUS,

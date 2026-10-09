@@ -11,7 +11,12 @@ import {
   VOLUNTEER_CAPABILITY,
 } from "../../constants/status";
 import {vehicleClassOf, servesVehicleClass} from "../providerService";
-import {isCarVehicle} from "../../utils/valhalla";
+import {isCarVehicle, postRoute} from "../../utils/valhalla";
+import {
+  LOADED_FACTOR,
+  SECURE_MINUTES_BIKE,
+  SECURE_MINUTES_CAR,
+} from "./constants";
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 
@@ -136,4 +141,51 @@ export const towEstimateFor = ({
     TOW_CLASS_MULTIPLIER_CAR :
     TOW_CLASS_MULTIPLIER_BIKE;
   return Math.round(shop.towBaseFee + shop.towPerKmFee * mult * km);
+};
+
+export const estimateTowEta = async ({
+  towerLat,
+  towerLng,
+  ticketLat,
+  ticketLng,
+  destLat,
+  destLng,
+  vehicleType,
+}: {
+  towerLat: number;
+  towerLng: number;
+  ticketLat: number;
+  ticketLng: number;
+  destLat?: number;
+  destLng?: number;
+  vehicleType?: string;
+}): Promise<{pickupSeconds: number; dropoffSeconds: number | null} | null> => {
+  try {
+    const costing = isCarVehicle(vehicleType) ? "auto" : "motor_scooter";
+    const leg0 = await postRoute(
+      [{lat: towerLat, lng: towerLng}, {lat: ticketLat, lng: ticketLng}],
+      [],
+      costing,
+    );
+    const secureMinutes = isCarVehicle(vehicleType) ?
+      SECURE_MINUTES_CAR :
+      SECURE_MINUTES_BIKE;
+    const pickupSeconds = Math.ceil(
+      (leg0.durationSeconds / 60 + secureMinutes) / 5,
+    ) * 5 * 60;
+    if (typeof destLat !== "number" || typeof destLng !== "number") {
+      return {pickupSeconds, dropoffSeconds: null};
+    }
+    const leg1 = await postRoute(
+      [{lat: ticketLat, lng: ticketLng}, {lat: destLat, lng: destLng}],
+      [],
+      costing,
+    );
+    const dropoffSeconds = Math.ceil(
+      (pickupSeconds / 60 + leg1.durationSeconds * LOADED_FACTOR / 60) / 5,
+    ) * 5 * 60;
+    return {pickupSeconds, dropoffSeconds};
+  } catch {
+    return null;
+  }
 };

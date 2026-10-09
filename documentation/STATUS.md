@@ -37,9 +37,9 @@ Stored in the `status` field of `flags` docs. New flags are created as `"1"`; th
 
 | Code | Name | Meaning |
 |------|------|---------|
-| `"1"` | Pending | Ticket opened, awaiting a mechanic match |
-| `"2"` | Matched | Mechanic assigned and en route |
-| `"3"` | Arrived | Mechanic on scene |
+| `"1"` | Pending | Ticket opened, awaiting a match |
+| `"2"` | Matched | Helper assigned and en route |
+| `"3"` | Arrived | Helper on scene |
 | `"4"` | Resolved | Ticket completed |
 | `"5"` | Cancelled | Ticket withdrawn |
 | `"6"` | In progress | Repair work underway |
@@ -47,7 +47,28 @@ Stored in the `status` field of `flags` docs. New flags are created as `"1"`; th
 | `"8"` | Declined | Provider cannot take the job |
 | `"9"` | Quoted | Shop quote sent, awaiting rider approval |
 
-Stored in the `status` field of `dispatch_tickets` docs. New tickets are created as `"1"`. Moves are validated per actor (`PUT /dispatch/status` refuses `MATCHED` — claiming stays atomic in `POST /dispatch/accept`; terminal `4`/`5`/`8` accept no further moves); see `API.md` → Dispatch for the matrix.
+Stored in the `status` field of `dispatch_tickets` docs. New tickets are created as `"1"`. The table above is helper-neutral on purpose — who can hold a ticket differs per kind (see below); the served `description` strings mirror this table verbatim.
+
+Terminal codes (`4`/`5`/`8`) accept no further moves. `2` is set only by `POST /dispatch/accept` (claiming stays atomic) and `9` only by the quote endpoints — `PUT /dispatch/status` refuses both. Arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator (`3→6→7`, plus walk-in `2→6` only with no quote pending — quoted tickets start via `POST /dispatch/quote/approve`, `9→6` with the rider as actor); cancel belongs to the rider from any non-terminal status except `6` (committed — stalled jobs go through admin support); decline (`8`) belongs to the named shop on a pending walk-in. Admins bypass the matrix. See `API.md` → Dispatch for the full matrix and `PIPELINE.md` for the push fired per move.
+
+Reachability per ticket kind (all else is rejected by the transition matrix):
+
+| Kind | Reachable codes |
+|------|-----------------|
+| SOS | `1` → `2` (volunteer/tower claim) → `3` → `4`; `5` by rider cancel. No work, quotes, or declines. |
+| TOW | `1` (pickup + destination mandatory) → `2` (tower/volunteer claim, ETA on fresh fix) → `3` (at pickup) → `4`, which auto-spawns a linked `WALK_IN` at a registered destination. `5` by rider cancel pre-work. No `6`/`7`/`9` on this row — that lifecycle runs on the linked walk-in. Destination decline freezes the leg without touching status. |
+| MECHANIC | `1` → `2` (shop accept) → `3` → `4`, with the full `9`/`6`/`7` workbench on shop-held tickets. `5` by rider cancel (not from `6`). No `8` (decline is walk-in-only). |
+| WALK_IN | The full ladder `1` → `2` → `9` → `6` → `7` → `4`, plus `8` (pending + operator only) and sweep expiry → `5`. Linked-spawn target on tow resolve. |
+
+### providers
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `"PENDING"` | Pending | Tow provider awaiting admin review |
+| `"ACTIVE"` | Active | Provider visible to riders and able to accept work |
+| `"DENIED"` | Denied | Provider rejected by admin review |
+
+Stored in the `status` field of `providers` docs. Only `ACTIVE` providers accept jobs or appear in listings; a `DENIED` record reads as missing so re-applying stays possible.
 
 ## The `statuses` collection
 
@@ -63,12 +84,13 @@ Authenticated, empty body. Returns the mapping grouped by domain (`users`, `flag
   "data": {
     "users": [{"domain": "users", "code": "1", "name": "Active", "...": "..."}],
     "flags": [],
-    "dispatch": []
+    "dispatch": [],
+    "providers": []
   }
 }
 ```
 
-Client guidance: fetch once at startup, cache in memory, and map codes to display names locally. Full endpoint schemas live in [`API.md`](./API.md) (Status Codes section) and [`SCHEMA.md`](./SCHEMA.md).
+Client guidance: fetch once at startup, cache in memory, and map codes to display names locally. Full endpoint schemas live in [`API.md`](./API.md) (Status Codes section) and [`SCHEMA.md`](./SCHEMA.md). After adding or renaming a dispatch code, run `npm run db:init` on the target project — seeds merge, so existing docs are untouched.
 
 ## Adding a new status
 

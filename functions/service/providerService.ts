@@ -1,4 +1,5 @@
 import * as providerRepository from "../repository/providerRepository";
+import * as dispatchRepository from "../repository/dispatchRepository";
 import * as providerReportRepository from
   "../repository/providerReportRepository";
 import * as providerLocationRepository from
@@ -832,7 +833,10 @@ const updateProviderLocation = async ({
     throw new ForbiddenError("Only active tow providers share location");
   }
   if (tow.accepting !== true) {
-    throw new ForbiddenError("Location sharing needs accepting mode on");
+    const holding = await dispatchRepository.findActiveForShop(tow.id);
+    if (holding.length === 0) {
+      throw new ForbiddenError("Location sharing needs accepting mode on");
+    }
   }
   await providerLocationRepository.upsert(tow.id, lat, lng);
   return {updated: 1, providerId: tow.id};

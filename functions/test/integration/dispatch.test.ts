@@ -275,7 +275,7 @@ describe("dispatch assist flow", () => {
       .set("Authorization", bearer(USER))
       .send({ticketId: flowTicket, shopId});
     expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({matched: true, kind: "SHOP"});
+    expect(res.body.data).toEqual({matched: true, kind: "TOW"});
     const ticket = await request(app)
       .post("/dispatch/one")
       .set("Authorization", bearer(USER))
@@ -643,6 +643,8 @@ describe("dispatch walk-in flow", () => {
         id: walkShop,
         name: "Walk-in Fix",
         kind: "SHOP",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
         label: "12 Le Loi",
         ratingAvg: 0,
         ratingCount: 0,
@@ -751,6 +753,8 @@ describe("dispatch walk-in flow", () => {
       id: walkShop,
       name: "Walk-in Fix",
       kind: "SHOP",
+      lat: BASE_LAT,
+      lng: BASE_LNG,
       label: "12 Le Loi",
       ratingAvg: 5,
       ratingCount: 1,

@@ -14,13 +14,14 @@ import {
   STATUS_PUSH_BODY,
 } from "./constants";
 import {STATUS_DISPATCH} from "../../constants/status";
-import {findCandidates} from "./candidates";
+import {findCandidates, findTowOperators} from "./candidates";
 import {fcmEnabled} from "../pushService";
 
 export const deliverStatusPush = async (
   ticket: Record<string, unknown> & {id: string},
+  notice?: {title: string; body: string},
 ): Promise<{delivered: number; skipped: boolean}> => {
-  let body = STATUS_PUSH_BODY[ticket.status as string];
+  let body = notice?.body ?? STATUS_PUSH_BODY[ticket.status as string];
   if (ticket.status === STATUS_DISPATCH.MATCHED) {
     body = MATCHED_BODY_BY_TYPE[ticket.ticketType as string] ?? body;
   }
@@ -34,7 +35,7 @@ export const deliverStatusPush = async (
   }
   const record = await fcmTokenRepository.findByUserId(ticket.userId);
   const tokens = (record?.tokens as string[] | undefined) ?? [];
-  const title =
+  const title = notice?.title ??
     PUSH_TITLE_BY_TYPE[ticket.ticketType as string] ?? "SOS update";
   let delivered = 0;
   for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
@@ -169,32 +170,12 @@ export const deliverOperatorPush = async (
 };
 
 
-export const deliverDispatchPush = async (
-  ticketId: string,
-  audience?: string,
-  notice?: {title: string; body: string},
+export const fanOutToCandidates = async (
+  ticket: Record<string, unknown> & {id: string},
+  candidates: string[],
+  title: string,
+  body: string,
 ): Promise<{delivered: number; skipped: boolean}> => {
-  if (!fcmEnabled()) return {delivered: 0, skipped: true};
-  const ticket = await dispatchRepository.findById(ticketId);
-  if (!ticket) return {delivered: 0, skipped: true};
-  if (audience === "operator") {
-    return deliverOperatorPush(ticket, notice);
-  }
-  if (ticket.status !== STATUS_DISPATCH.PENDING) {
-    return deliverStatusPush(ticket);
-  }
-  if (ticket.ticketType === "WALK_IN" &&
-    typeof ticket.providerId === "string" && ticket.providerId !== "") {
-    return deliverShopPush(ticket, ticket.providerId as string);
-  }
-  let candidates = (ticket.candidates as string[] | undefined) ?? [];
-  if (candidates.length === 0 && ticket.ticketType === "SOS") {
-    candidates = await findCandidates({
-      lat: ticket.lat,
-      lng: ticket.lng,
-      vehicleType: ticket.vehicleType as string | undefined,
-    });
-  }
   const targets: Array<{userId: string; token: string}> = [];
   const records = await fcmTokenRepository.findByUserIds(candidates);
   for (const userId of candidates) {
@@ -210,13 +191,10 @@ export const deliverDispatchPush = async (
     const response = await messaging.sendEach(
       chunk.map(({token}) => ({
         token,
-        notification: {
-          title: "SOS request near you",
-          body: `${ticket.ticketType} help needed — tap to view`,
-        },
+        notification: {title, body},
         data: {
           ticketId: ticket.id,
-          ticketType: ticket.ticketType,
+          ticketType: ticket.ticketType as string,
           lat: String(ticket.lat),
           lng: String(ticket.lng),
         },
@@ -235,4 +213,75 @@ export const deliverDispatchPush = async (
     }
   }
   return {delivered, skipped: false};
+};
+
+export const deliverTowWithdrawn = async (
+  ticketId: string,
+  notice?: {title: string; body: string},
+): Promise<{delivered: number; skipped: boolean}> => {
+  if (!fcmEnabled()) return {delivered: 0, skipped: true};
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) return {delivered: 0, skipped: true};
+  let candidates = (ticket.candidates as string[] | undefined) ?? [];
+  if (candidates.length === 0 && ticket.ticketType === "TOW") {
+    candidates = await findTowOperators({
+      lat: ticket.lat,
+      lng: ticket.lng,
+      vehicleType: ticket.vehicleType as string | undefined,
+    });
+  }
+  if (candidates.length === 0) return {delivered: 0, skipped: true};
+  return fanOutToCandidates(
+    ticket as Record<string, unknown> & {id: string},
+    candidates,
+    notice?.title ?? "Tow request withdrawn",
+    notice?.body ?? "A tow request near you was cancelled",
+  );
+};
+
+export const deliverDispatchPush = async (
+  ticketId: string,
+  audience?: string,
+  notice?: {title: string; body: string},
+): Promise<{delivered: number; skipped: boolean}> => {
+  if (!fcmEnabled()) return {delivered: 0, skipped: true};
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) return {delivered: 0, skipped: true};
+  if (audience === "operator") {
+    return deliverOperatorPush(ticket, notice);
+  }
+  if (audience === "tower-candidates") {
+    return deliverTowWithdrawn(ticketId, notice);
+  }
+  if (ticket.status !== STATUS_DISPATCH.PENDING) {
+    return deliverStatusPush(ticket, notice);
+  }
+  if (ticket.ticketType === "WALK_IN" &&
+    typeof ticket.providerId === "string" && ticket.providerId !== "") {
+    return deliverShopPush(ticket, ticket.providerId as string);
+  }
+  let candidates = (ticket.candidates as string[] | undefined) ?? [];
+  if (candidates.length === 0 && ticket.ticketType === "SOS") {
+    candidates = await findCandidates({
+      lat: ticket.lat,
+      lng: ticket.lng,
+      vehicleType: ticket.vehicleType as string | undefined,
+    });
+  }
+  if (candidates.length === 0 && ticket.ticketType === "TOW") {
+    candidates = await findTowOperators({
+      lat: ticket.lat,
+      lng: ticket.lng,
+      vehicleType: ticket.vehicleType as string | undefined,
+    });
+  }
+  if (candidates.length === 0) return {delivered: 0, skipped: true};
+  return fanOutToCandidates(
+    ticket as Record<string, unknown> & {id: string},
+    candidates,
+    ticket.ticketType === "TOW" ?
+      "Tow request near you" :
+      "SOS request near you",
+    `${ticket.ticketType} help needed — tap to view`,
+  );
 };

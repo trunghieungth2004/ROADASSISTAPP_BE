@@ -288,6 +288,22 @@ describe("schemas reject invalid input", () => {
     ).toBeDefined();
   });
 
+  it("deliverDispatch accepts operator and tower audiences", () => {
+    expect(
+      table.deliverDispatch.validate({ticketId: "t1", audience: "operator"})
+        .error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate(
+        {ticketId: "t1", audience: "tower-candidates"},
+      ).error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate({ticketId: "t1", audience: "everyone"})
+        .error,
+    ).toBeDefined();
+  });
+
   it("provider schemas reject bad kind", () => {
     const base = {lat: 10.7, lng: 106.6};
     expect(
@@ -298,6 +314,12 @@ describe("schemas reject invalid input", () => {
     ).toBeDefined();
     expect(
       table.nearProviders.validate({...base, radiusMeters: 50}).error,
+    ).toBeDefined();
+    expect(
+      table.nearProviders.validate({...base, radiusMeters: 20000}).error,
+    ).toBeUndefined();
+    expect(
+      table.nearProviders.validate({...base, radiusMeters: 20001}).error,
     ).toBeDefined();
     expect(
       table.createProvider.validate({

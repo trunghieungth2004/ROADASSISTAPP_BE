@@ -85,6 +85,12 @@ export default (
     dispatchController.approveQuote,
   );
   app.post(
+    "/dispatch/destination/decline",
+    requireAuth,
+    validate({body: schemas.declineDestination}),
+    dispatchController.declineDestination,
+  );
+  app.post(
     "/dispatch/shop/requests",
     requireAuth,
     validate({body: schemas.shopTickets}),

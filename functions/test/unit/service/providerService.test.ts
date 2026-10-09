@@ -20,6 +20,10 @@ import {
   updateProviderLocation,
 } from "../../../service/providerService";
 
+jest.mock("../../../repository/dispatchRepository", () => ({
+  findActiveForShop: jest.fn(async () => []),
+}));
+
 jest.mock("../../../repository/providerRepository", () => {
   const actual = jest.requireActual(
     "../../../repository/providerRepository",
@@ -471,6 +475,25 @@ describe("providerService moderation", () => {
     await expect(
       updateProviderLocation({userId: "op1", lat: 10.7, lng: 106.6}),
     ).rejects.toMatchObject({statusCode: 403});
+  });
+
+  it("pings live location while holding an active job", async () => {
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {id: "30A12345", kind: "TOW", status: "ACTIVE", accepting: false},
+    ] as never);
+    const dispatch = jest.requireMock(
+      "../../../repository/dispatchRepository",
+    ) as {findActiveForShop: jest.Mock};
+    dispatch.findActiveForShop.mockResolvedValue([{id: "t1"}]);
+    const locations =
+      jest.requireMock("../../../repository/providerLocationRepository") as {
+        upsert: jest.Mock;
+      };
+    await expect(
+      updateProviderLocation({userId: "op1", lat: 10.7, lng: 106.6}),
+    ).resolves.toMatchObject({updated: 1, providerId: "30A12345"});
+    expect(locations.upsert).toHaveBeenCalledWith("30A12345", 10.7, 106.6);
+    expect(dispatch.findActiveForShop).toHaveBeenCalledWith("30A12345");
   });
 });
 
