@@ -187,7 +187,7 @@ Record an onboarding choice without touching the admin `users.role` field. Sets 
 
 ### `PUT /users/services` **(Auth)**
 
-Grant or revoke service licenses. Admins may change any user; a non-admin may only change its own record and only the `VOLUNTEER` license (the `RIDER` license is irrevocable — `403` otherwise). At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effect on net loss: revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
+Grant or revoke service licenses (`grant`/`revoke` reject duplicated entries). Stored licenses dedupe on read, so legacy duplicated rows heal without a migration. Admins may change any user; a non-admin may only change its own record and only the `VOLUNTEER` license (the `RIDER` license is irrevocable — `403` otherwise). At least one of `grant`/`revoke` is required; unknown licenses are rejected (`400`). Does not change `onboarded`. Side effect on net loss: revoking a held `VOLUNTEER` switches availability off and drops the live location (reported as `volunteerCleared`). Re-granting never auto re-lists.
 
 **Request:**
 ```json
@@ -1079,7 +1079,7 @@ Hazard push notifications (FCM, direct-to-token — no topics). Clients register
 { "token": "fcm-device-token", "platform": "android" }
 ```
 
-**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user. Any authenticated user may register (shop and tow operators receive walk-in and job pushes on the same path).
+**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "data": { "userId": "u1", "tokens": ["fcm-device-token"], "updatedAt": "..." } }` — tokens are most-recent-first, capped at 5 per user. Any authenticated user may register (shop and tow operators receive walk-in and job pushes on the same path). Presenting a token steals it from any other uid's array, so a device is never reachable under two accounts at once.
 
 ### `POST /push/unregister` **(Auth)**
 
@@ -1089,6 +1089,12 @@ Hazard push notifications (FCM, direct-to-token — no topics). Clients register
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "removed": true } }`.
+
+### `POST /push/ping` **(Auth)**
+
+**Request:** `{}`
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "tokens": 2, "sent": 1, "failed": 0, "firstError": null } }` — sends a test notification to the caller's own tokens only, prunes dead tokens with the same codes as dispatch delivery, and never touches another user's tokens. `firstError` is `"FCM_DISABLED"` with FCM off and `"NO_TOKENS"` when the caller has no registered tokens.
 
 ### `POST /push/deliver` (Cloud Tasks only)
 
@@ -1225,11 +1231,14 @@ Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (cle
 | `vehicleType` | string | no | Rider vehicle, one of `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` |
 | `vehicleWidth` | number | no | Rider vehicle width in meters (0.3–3) |
 | `vehicleLabel` | string | no | Free-form vehicle label, max 120 chars (defaults to `vehicleType`) |
+| `force` | boolean | no | Skip the same-type live-ticket guard (the client's "file anyway" escape) |
 
 **Response `201`:**
 ```json
 { "statusCode": 201, "status": "SUCCESS", "message": "Dispatch created", "data": { "id": "tick1", "status": "1", "...": "..." } }
 ```
+
+Filing while holding a non-terminal ticket of the same type is refused with `409` (`errors: {ticketId, status, createdAt}` naming the live ticket) unless `force: true` — cross-type filings and refiles after terminal states pass freely. The system-spawned walk-in at tow resolve always files forced.
 
 ---
 
@@ -1425,14 +1434,14 @@ Unified in/out record feed for the Records surface: the caller's own tickets (`d
 { "limit": 20 }
 ```
 
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop or tower — `kind` mirrors the provider record, `TOW` for towers — volunteer handle, or rider display name; `null` when unassigned or unnamed). Shop and tower parties carry `lat`/`lng` when the provider record holds them. Nearby (`/dispatch/near`) rows additionally carry `riderName` (the requesting rider\u2019s display name, `null` when unnamed). Tickets with a registered destination additionally carry `destinationParty` in the same shape (shop only). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider and volunteer parties carry names; rider parties additionally carry
-`ratingAvg`/`ratingCount` when the rider record holds them. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, then `destinationShopId`, so pending and declined walk-ins already name their shop. Live tickets (`2`/`3`/`4`/`6`/`7`/`9`) additionally carry the counterparty `phone` — the rider's number on inbound rows, the operator's on shop rows — omitted on pending, cancelled, and declined tickets and whenever no number is registered.
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop or tower — `kind` mirrors the provider record, `TOW` for towers — volunteer handle, or rider display name; `null` when unassigned or unnamed, including pending tows that only have a drop-off shop). Shop and tower parties carry `lat`/`lng` when the provider record holds them. Nearby (`/dispatch/near`) rows additionally carry `riderName` (the requesting rider\u2019s display name, `null` when unnamed). Tickets with a registered destination additionally carry `destinationParty` in the same shape (shop only). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider and volunteer parties carry names; rider parties additionally carry
+`ratingAvg`/`ratingCount` when the rider record holds them. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, so pending and declined walk-ins already name their shop; the tow drop-off shop is never the counterparty and arrives only via `destinationParty`. Live tickets (`2`/`3`/`4`/`6`/`7`/`9`) additionally carry the counterparty `phone` — the rider's number on inbound rows, the operator's on shop rows — omitted on pending, cancelled, and declined tickets and whenever no number is registered.
 
 ---
 
 ### `POST /dispatch/destination` **(Auth + `RIDER` license)**
 
-Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP` that services the towed class) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. Walk-in tickets have no editable destination. The chosen destination is snapshotted onto the ticket.
+Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP` that services the towed class) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. Walk-in tickets have no editable destination. The chosen destination is snapshotted onto the ticket. The new shop hears `"Incoming tow"` and the previous shop (when replaced) hears `"Drop-off changed"`; on matched/arrived tickets with an engaged tower the tower hears `"Drop-off updated"` and its pickup/drop-off ETAs are restamped from the live fix.
 
 **Request:**
 ```json
@@ -1443,7 +1452,7 @@ Change a ticket's drop-off: a registered repair-shop destination (`destinationSh
 
 ### `POST /dispatch/destination/decline` **(Auth)**
 
-Decline a drop-off: only the destination shop's operator (or admin), on a non-pending, non-terminal ticket carrying that shop as `destinationShopId`. Clears the destination (+ snapshot) without touching the ticket status — the tower keeps the job — freezes the traveled leg (`towLegs`, haversine from the tower's last fix, `actual` only when fresh) into the running `towDistanceMeters`, and notifies the rider to pick a new drop-off.
+Decline a drop-off: only the destination shop's operator (or admin), on a non-terminal ticket carrying that shop as `destinationShopId` — pending included, so the shop can bow out as soon as it is told. Clears the destination (+ snapshot + the creation-time point shadow, so no ghost drop-off survives) without touching the ticket status — the tower keeps the job and waits for the rider's new drop-off — freezes the traveled leg (`towLegs`, haversine from the tower's last fix, `actual` only when fresh; no leg is written when no tower is engaged) into the running `towDistanceMeters`, and notifies the rider (`rider` audience, so the notice reaches the rider at any status) to pick a new drop-off plus the engaged tower when there is one. Re-picking a shop recorded in `towLegs` is refused with `400` — first picks pass, declined shops stay declined for the life of the ticket.
 
 **Request:**
 ```json
@@ -1455,15 +1464,29 @@ Decline a drop-off: only the destination shop's operator (or admin), on a non-pe
 { "statusCode": 200, "status": "SUCCESS", "data": { "declined": true, "legKm": 2000 } }
 ```
 
+### `POST /dispatch/eta/refresh` **(Auth + `RIDER` license)**
+
+Restamp a tow's ETAs from the tower's live fix (same computation as accept: drive plus hook-up, minute-rounded under 15 min). Only the rider, only their own tow, only while matched/arrived with an engaged tower — strangers get `403`, anything else `400`. Best-effort: a stale tower fix simply leaves the stored ETAs untouched. The rider client polls this every few minutes while a job is live.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "updated": 1 } }
+```
+
 ---
 
 ### `POST /dispatch/deliver` (Cloud Tasks only)
 
-Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near you"` + ticket data); pending `TOW` goes to nearby accepting towers (`"Tow request near you"`); pending `WALK_IN` goes to the named shop's operator (`"Walk-in request"`); `audience: "operator"` routes to the ticket's operator instead (quote approvals, rider cancels, late pickups, destination edits/declines) with an explicit `title`/`body`, falling back to a generic ticket update; `audience: "tower-candidates"` recomputes nearby towers and sends `"Tow request withdrawn"` (pending-TOW cancel only); manual rider cancels also push the rider a `"Request cancelled"` confirmation (the `CANCELLED` status body stays expiry-only for sweeps); any other status notifies the rider with a per-type title (`SOS`/`Tow`/`Repair`/`Walk-in update`). Skipped when FCM is disabled, the ticket is gone, or (for status pushes on cancelled tickets) there is no body.
+Fan out a ticket: pending `SOS` goes to candidate volunteers (`"SOS request near you"` + ticket data); pending `TOW` goes to nearby accepting towers (`"Tow request near you"`); a tow naming a shop destination additionally notifies that shop's operator (`"Incoming tow"`, `destination-shop` audience with the target `shopId` carried in the task body, on creation and on shop retargets — informational, the shop still cannot accept); a tow retargeted away notifies the previous shop (`"Drop-off changed"`, same audience, carried `shopId`); cancelling a tow with a shop drop-off notifies that shop (`"Tow cancelled"`); an expired walk-in notifies its shop (`"Walk-in expired"`); pending `WALK_IN` goes to the named shop's operator (`"Walk-in request"`); `audience: "operator"` routes to the ticket's operator instead (quote approvals, rider cancels, arrivals, resolves, late pickups, destination edits/declines) with an explicit `title`/`body`, falling back to a generic ticket update; `audience: "rider"` routes to the rider with an explicit `title`/`body` at any status (destination declines); `audience: "tower-candidates"` recomputes nearby towers and sends `"Tow request withdrawn"` (pending-TOW cancel only); `audience: "destination-shop"` routes to the carried `shopId` (falling back to the ticket's `destinationShopId`) operator with an explicit `title`/`body`; manual rider cancels also push the rider a `"Request cancelled"` confirmation (the `CANCELLED` status body stays expiry-only for sweeps); any other status notifies the rider with a per-type title (`SOS`/`Tow`/`Repair`/`Walk-in update`). Skipped when FCM is disabled, the ticket is gone, or (for status pushes on cancelled tickets) there is no body.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "audience": "operator", "title": "Quote approved", "body": "The rider approved your quote — tap to view" }
+{ "ticketId": "tick1", "audience": "operator", "shopId": "shop9", "title": "Quote approved", "body": "The rider approved your quote — tap to view" }
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "delivered": 1, "skipped": false } }`

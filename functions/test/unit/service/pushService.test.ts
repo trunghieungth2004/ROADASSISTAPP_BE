@@ -3,7 +3,7 @@ import * as activeRouteRepository from
   "../../../repository/activeRouteRepository";
 import * as fcmTokenRepository from "../../../repository/fcmTokenRepository";
 import {messaging} from "../../../config/firebase";
-import {deliverHazardPush} from "../../../service/pushService";
+import {deliverHazardPush, pingOwnPush} from "../../../service/pushService";
 
 jest.mock("../../../repository/flagRepository");
 jest.mock("../../../repository/activeRouteRepository");
@@ -241,5 +241,57 @@ describe("pushService.deliverHazardPush", () => {
       }),
     ).resolves.toEqual({delivered: 0, skipped: true});
     expect(sendEach).not.toHaveBeenCalled();
+  });
+});
+
+describe("pushService.pingOwnPush", () => {
+  it("reports disabled FCM without touching tokens", async () => {
+    await expect(pingOwnPush("u1")).resolves.toEqual({
+      tokens: 0,
+      sent: 0,
+      failed: 0,
+      firstError: "FCM_DISABLED",
+    });
+    expect(fcmTokenRepository.findByUserId).not.toHaveBeenCalled();
+  });
+
+  it("reports missing tokens", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(fcmTokenRepository.findByUserId).mockResolvedValue(null);
+    await expect(pingOwnPush("u1")).resolves.toEqual({
+      tokens: 0,
+      sent: 0,
+      failed: 0,
+      firstError: "NO_TOKENS",
+    });
+  });
+
+  it("sends a test push to own tokens and prunes dead ones", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(fcmTokenRepository.findByUserId).mockResolvedValue({
+      userId: "u1",
+      tokens: ["good", "dead"],
+    } as never);
+    sendEach.mockResolvedValue({
+      successCount: 1,
+      failureCount: 1,
+      responses: [
+        {success: true} as never,
+        {
+          success: false,
+          error: {code: "messaging/registration-token-not-registered"},
+        } as never,
+      ],
+    });
+    await expect(pingOwnPush("u1")).resolves.toEqual({
+      tokens: 2,
+      sent: 1,
+      failed: 1,
+      firstError: "messaging/registration-token-not-registered",
+    });
+    expect(sendEach).toHaveBeenCalledTimes(1);
+    expect(fcmTokenRepository.removeTokens).toHaveBeenCalledWith("u1", [
+      "dead",
+    ]);
   });
 });

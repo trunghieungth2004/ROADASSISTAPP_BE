@@ -28,6 +28,12 @@ export default (
     validate({body: schemas.unregisterPush}),
     pushController.unregister,
   );
+  app.post(
+    "/push/ping",
+    requireAuth,
+    validate({body: schemas.pingPush}),
+    pushController.ping,
+  );
 };
 
 export {mountPushDeliver};

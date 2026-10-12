@@ -77,6 +77,7 @@ export const deliverStatusPush = async (
 export const deliverShopPush = async (
   ticket: Record<string, unknown> & {id: string},
   shopId: string,
+  notice?: {title: string; body: string},
 ): Promise<{delivered: number; skipped: boolean}> => {
   const shop = await providerRepository.findById(shopId);
   const operatorUid = shop?.operatorUid as string | null;
@@ -91,8 +92,8 @@ export const deliverShopPush = async (
       chunk.map((token) => ({
         token,
         notification: {
-          title: "Walk-in request",
-          body: "A rider arrived at your shop — tap to review",
+          title: notice?.title ?? "Walk-in request",
+          body: notice?.body ?? "A rider arrived at your shop — tap to review",
         },
         data: {
           ticketId: ticket.id,
@@ -243,6 +244,7 @@ export const deliverDispatchPush = async (
   ticketId: string,
   audience?: string,
   notice?: {title: string; body: string},
+  shopId?: string,
 ): Promise<{delivered: number; skipped: boolean}> => {
   if (!fcmEnabled()) return {delivered: 0, skipped: true};
   const ticket = await dispatchRepository.findById(ticketId);
@@ -250,8 +252,20 @@ export const deliverDispatchPush = async (
   if (audience === "operator") {
     return deliverOperatorPush(ticket, notice);
   }
+  if (audience === "rider") {
+    return deliverStatusPush(ticket, notice);
+  }
   if (audience === "tower-candidates") {
     return deliverTowWithdrawn(ticketId, notice);
+  }
+  if (audience === "destination-shop") {
+    const target = typeof shopId === "string" && shopId !== "" ?
+      shopId :
+      typeof ticket.destinationShopId === "string" ?
+        ticket.destinationShopId :
+        "";
+    if (target === "") return {delivered: 0, skipped: true};
+    return deliverShopPush(ticket, target, notice);
   }
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
     return deliverStatusPush(ticket, notice);

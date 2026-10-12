@@ -14,10 +14,12 @@ const app = buildIntegrationApp();
 const bearer = (uid: string) => `Bearer ${uid}`;
 
 const USER = `${PREFIX}-push-user`;
+const OTHER = `${PREFIX}-push-other`;
 
 beforeAll(async () => {
   await cleanAll();
   await seedUser(USER, "2");
+  await seedUser(OTHER, "2");
 });
 
 afterAll(async () => {
@@ -55,6 +57,24 @@ describe("push endpoints", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /push/register steals a token from its previous owner", async () => {
+    const first = await request(app)
+      .post("/push/register")
+      .set("Authorization", bearer(USER))
+      .send({token: "shared-tok"});
+    expect(first.status).toBe(201);
+    const second = await request(app)
+      .post("/push/register")
+      .set("Authorization", bearer(OTHER))
+      .send({token: "shared-tok"});
+    expect(second.status).toBe(201);
+    expect(second.body.data.tokens).toContain("shared-tok");
+    const oldDoc = await db.collection("fcm_tokens").doc(USER).get();
+    expect(oldDoc.data()?.tokens ?? []).not.toContain("shared-tok");
+    const newDoc = await db.collection("fcm_tokens").doc(OTHER).get();
+    expect(newDoc.data()?.tokens).toContain("shared-tok");
+  });
+
   it("POST /push/unregister removes tokens", async () => {
     const removed = await request(app)
       .post("/push/unregister")
@@ -85,6 +105,20 @@ describe("push endpoints", () => {
       .send({flagId: "flood-1"});
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({delivered: 0, skipped: true});
+  });
+
+  it("POST /push/ping reports disabled FCM", async () => {
+    const res = await request(app)
+      .post("/push/ping")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({
+      tokens: 0,
+      sent: 0,
+      failed: 0,
+      firstError: "FCM_DISABLED",
+    });
   });
 
   it("POST /routes records the active route for push matching", async () => {

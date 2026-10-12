@@ -78,9 +78,11 @@ const schemas = {
     targetUserId: strReq(),
     grant: Joi.array()
       .items(Joi.string().valid(...Object.values(SERVICE_ROLE)))
+      .unique()
       .optional(),
     revoke: Joi.array()
       .items(Joi.string().valid(...Object.values(SERVICE_ROLE)))
+      .unique()
       .optional(),
   }).or("grant", "revoke"),
   updateUserTrust: Joi.object({
@@ -218,6 +220,7 @@ const schemas = {
   unregisterPush: Joi.object({
     token: Joi.string().min(1).max(4096).required(),
   }),
+  pingPush: emptyBody(),
   deliverPush: Joi.object({
     flagId: strReq(),
     type: Joi.string().optional(),
@@ -391,6 +394,7 @@ const schemas = {
       .optional(),
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
     vehicleLabel: Joi.string().trim().max(120).allow("", null).optional(),
+    force: Joi.boolean().optional(),
   }),
   getDispatch: Joi.object({
     ticketId: strReq(),
@@ -434,6 +438,9 @@ const schemas = {
     ticketId: strReq(),
   }),
   declineDestination: Joi.object({
+    ticketId: strReq(),
+  }),
+  refreshTowEta: Joi.object({
     ticketId: strReq(),
   }),
   feedTickets: Joi.object({
@@ -510,7 +517,13 @@ const schemas = {
   }),
   deliverDispatch: Joi.object({
     ticketId: strReq(),
-    audience: Joi.string().valid("operator", "tower-candidates").optional(),
+    audience: Joi.string().valid(
+      "operator",
+      "rider",
+      "tower-candidates",
+      "destination-shop",
+    ).optional(),
+    shopId: Joi.string().trim().max(120).optional(),
     title: Joi.string().trim().max(120).optional(),
     body: Joi.string().trim().max(280).optional(),
   }),

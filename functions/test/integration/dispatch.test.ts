@@ -239,6 +239,7 @@ describe("dispatch assist flow", () => {
         lng: BASE_LNG,
         destinationPoint: {lat: 10.71, lng: 106.61},
         vehicleType: "CAR",
+        force: true,
       });
     expect(tow.status).toBe(201);
     const res = await request(app)
@@ -372,7 +373,7 @@ describe("dispatch assist flow", () => {
     const sos = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(USER))
-      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG});
+      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG, force: true});
     const res = await request(app)
       .post("/dispatch/accept")
       .set("Authorization", bearer(VOL))
@@ -420,6 +421,7 @@ describe("dispatch vehicle and capability flow", () => {
         destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
         vehicleType: "CAR",
         vehicleWidth: 1.9,
+        force: true,
       });
     expect(res.status).toBe(201);
     expect(res.body.data.vehicleType).toBe("CAR");
@@ -441,6 +443,7 @@ describe("dispatch vehicle and capability flow", () => {
         lng: BASE_LNG,
         vehicleType: "CAR",
         vehicleWidth: 1.9,
+        force: true,
       });
     expect(sos.status).toBe(201);
     expect(sos.body.data.candidates).toEqual([CARVOL]);

@@ -26,6 +26,16 @@ const unregister = async (req: Request, res: Response) => {
   }
 };
 
+const ping = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await pushService.pingOwnPush(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const deliver = async (req: Request, res: Response) => {
   try {
     if (req.header("X-CloudTasks-QueueName") !== QUEUE_NAME) {
@@ -59,4 +69,4 @@ const deliver = async (req: Request, res: Response) => {
   }
 };
 
-export {register, unregister, deliver};
+export {register, unregister, ping, deliver};

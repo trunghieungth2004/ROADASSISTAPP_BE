@@ -91,6 +91,13 @@ export default (
     dispatchController.declineDestination,
   );
   app.post(
+    "/dispatch/eta/refresh",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.refreshTowEta}),
+    dispatchController.refreshTowEta,
+  );
+  app.post(
     "/dispatch/shop/requests",
     requireAuth,
     validate({body: schemas.shopTickets}),

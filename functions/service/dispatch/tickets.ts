@@ -17,6 +17,7 @@ import {
   resolveDestination,
 } from "./helpers";
 import {findCandidates} from "./candidates";
+import {stampTowEta} from "./accept";
 import {
   PROVIDER_KIND,
   PROVIDER_STATUS,
@@ -24,7 +25,7 @@ import {
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
 import {isCarVehicle} from "../../utils/valhalla";
-import {ForbiddenError, NotFoundError, ValidationError} from
+import {ForbiddenError, NotFoundError, ValidationError, ConflictError} from
   "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 
@@ -43,6 +44,7 @@ export const createDispatch = async ({
   vehicleType,
   vehicleWidth,
   vehicleLabel,
+  force,
   now,
 }: {
   userId: string;
@@ -59,6 +61,7 @@ export const createDispatch = async ({
   vehicleType?: string;
   vehicleWidth?: number;
   vehicleLabel?: string;
+  force?: boolean;
   now?: Date;
 }) => {
   const user = await userRepository.findById(userId);
@@ -99,6 +102,22 @@ export const createDispatch = async ({
       kind: shop.kind,
       closed: isOpenNow(shop.openHours as string | null, now) === false,
     };
+  }
+  if (!force) {
+    const mine = await dispatchRepository.findByUserId(userId);
+    const live = mine.find((t) =>
+      t.ticketType === ticketType &&
+      !TERMINAL_STATUSES.has(t.status as string));
+    if (live) {
+      throw new ConflictError(
+        "Rider already holds a live ticket of this type",
+        {
+          ticketId: live.id,
+          status: live.status,
+          createdAt: live.createdAt ?? null,
+        },
+      );
+    }
   }
   const width = await resolveAccessWidth(
     alleySegmentId,
@@ -150,6 +169,18 @@ export const createDispatch = async ({
   }
   if (ticketType === "TOW") {
     await enqueueDispatchPush(ticket.id);
+    if (typeof destinationShopId === "string" && destinationShopId !== "") {
+      await enqueueDispatchPush(
+        ticket.id,
+        `-destination-shop-${destinationShopId}`,
+        {
+          audience: "destination-shop",
+          shopId: destinationShopId,
+          title: "Incoming tow",
+          body: "A rider picked your shop as drop-off — tap to view",
+        },
+      );
+    }
   }
   cacheManager.del(NS);
   return ticket;
@@ -336,6 +367,14 @@ export const updateDispatchStatus = async ({
       fulfilledByShopId: ticket.assignedShopId ?? null,
     });
   }
+  if (status === STATUS_DISPATCH.RESOLVED ||
+    status === STATUS_DISPATCH.CANCELLED) {
+    await dispatchRepository.update(id, {
+      etaPickupAt: null,
+      etaDropoffAt: null,
+      etaNotifiedAt: null,
+    });
+  }
   cacheManager.del(NS);
   if (
     status === STATUS_DISPATCH.MATCHED ||
@@ -346,6 +385,22 @@ export const updateDispatchStatus = async ({
     status === STATUS_DISPATCH.DECLINED
   ) {
     await enqueueDispatchPush(id, `-status-${status}`);
+  }
+  if (status === STATUS_DISPATCH.ARRIVED ||
+    status === STATUS_DISPATCH.RESOLVED) {
+    const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
+      (v): v is string => typeof v === "string" && v !== "",
+    );
+    if (shopIds.length > 0) {
+      const arrived = status === STATUS_DISPATCH.ARRIVED;
+      await enqueueDispatchPush(id, `-status-${status}-operator`, {
+        audience: "operator",
+        title: arrived ? "Arrival confirmed" : "Ticket resolved",
+        body: arrived ?
+          "The rider confirmed arrival — tap to view" :
+          "The rider closed this ticket — tap to view",
+      });
+    }
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
     await enqueueDispatchPush(id, "-cancelled-rider", {
@@ -368,6 +423,17 @@ export const updateDispatchStatus = async ({
         audience: "operator",
         title: "Request cancelled",
         body: "The rider cancelled this ticket — tap to view",
+      });
+    }
+    if (ticket.ticketType === "TOW" &&
+      typeof ticket.destinationShopId === "string" &&
+      ticket.destinationShopId !== "") {
+      const destId = ticket.destinationShopId as string;
+      await enqueueDispatchPush(id, "-cancelled-destination", {
+        audience: "destination-shop",
+        shopId: destId,
+        title: "Tow cancelled",
+        body: "The rider cancelled the tow to your shop",
       });
     }
   }
@@ -421,6 +487,7 @@ const spawnShopTicket = async (
     lat: typeof shop.lat === "number" ? shop.lat : ticket.lat,
     lng: typeof shop.lng === "number" ? shop.lng : ticket.lng,
     providerId: shopId,
+    force: true,
     ...(typeof ticket.vehicleType === "string" ?
       {vehicleType: ticket.vehicleType} :
       {}),
@@ -437,8 +504,7 @@ const spawnShopTicket = async (
 };
 
 
-export const updateDispatchDestination = async ({
-  userId,
+export const updateDispatchDestination = async ({  userId,
   ticketId,
   destinationShopId,
   destinationPoint,
@@ -466,18 +532,42 @@ export const updateDispatchDestination = async ({
   if (ticket.ticketType === "WALK_IN") {
     throw new ValidationError("Walk-in tickets have no editable destination");
   }
+  if (typeof destinationShopId === "string" && destinationShopId !== "") {
+    const legs = Array.isArray(ticket.towLegs) ? ticket.towLegs : [];
+    const refused = legs.some((leg) =>
+      typeof leg === "object" && leg !== null &&
+      (leg as {toShopId?: unknown}).toShopId === destinationShopId);
+    if (refused) {
+      throw new ValidationError("Shop already declined this ticket");
+    }
+  }
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
     destinationPoint,
     ticket.ticketType as string,
     ticket.vehicleType ?? undefined,
   );
+  const prevShopId = typeof ticket.destinationShopId === "string" ?
+    ticket.destinationShopId :
+    "";
   await dispatchRepository.update(ticketId, {
     destinationShopId: destinationShopId ?? null,
     destinationPoint: destinationPoint ?? null,
     destinationSnapshot: destinationSnapshot ?? null,
   });
   cacheManager.del(NS);
+  if ((ticket.status === STATUS_DISPATCH.MATCHED ||
+    ticket.status === STATUS_DISPATCH.ARRIVED) &&
+    typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "") {
+    await stampTowEta(ticketId, {
+      lat: ticket.lat,
+      lng: ticket.lng,
+      vehicleType: ticket.vehicleType,
+      destinationShopId: destinationShopId ?? null,
+      destinationPoint: destinationPoint ?? null,
+    }, ticket.assignedShopId as string);
+  }
   if (typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== "") {
     const dest = destinationSnapshot as {name?: unknown} | null;
@@ -492,5 +582,55 @@ export const updateDispatchDestination = async ({
         "The rider changed the drop-off — tap to view",
     });
   }
+  if (typeof destinationShopId === "string" && destinationShopId !== "") {
+    await enqueueDispatchPush(
+      ticketId,
+      `-destination-shop-${destinationShopId}`,
+      {
+        audience: "destination-shop",
+        shopId: destinationShopId,
+        title: "Incoming tow",
+        body: "A rider picked your shop as drop-off — tap to view",
+      },
+    );
+  }
+  if (prevShopId !== "" && prevShopId !== (destinationShopId ?? "")) {
+    await enqueueDispatchPush(ticketId, `-dropped-${prevShopId}`, {
+      audience: "destination-shop",
+      shopId: prevShopId,
+      title: "Drop-off changed",
+      body: "Your shop is no longer the drop-off for this tow",
+    });
+  }
   return dispatchRepository.findById(ticketId);
+};
+
+
+export const refreshTowEta = async ({
+  userId,
+  ticketId,
+}: {
+  userId: string;
+  ticketId: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider refreshes the ETA");
+  }
+  if (ticket.ticketType !== "TOW" ||
+    (ticket.status !== STATUS_DISPATCH.MATCHED &&
+      ticket.status !== STATUS_DISPATCH.ARRIVED) ||
+    typeof ticket.assignedShopId !== "string" ||
+    ticket.assignedShopId === "") {
+    throw new ValidationError("ETA refresh needs an engaged tow");
+  }
+  await stampTowEta(ticketId, {
+    lat: ticket.lat,
+    lng: ticket.lng,
+    vehicleType: ticket.vehicleType,
+    destinationShopId: ticket.destinationShopId ?? null,
+    destinationPoint: ticket.destinationPoint ?? null,
+  }, ticket.assignedShopId as string);
+  return {updated: 1};
 };

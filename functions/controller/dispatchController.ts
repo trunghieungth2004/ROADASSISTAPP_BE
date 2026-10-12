@@ -20,6 +20,7 @@ const createDispatch = async (req: Request, res: Response) => {
       vehicleType,
       vehicleWidth,
       vehicleLabel,
+      force,
     } = req.body;
     const result = await dispatchService.createDispatch({
       userId,
@@ -36,6 +37,7 @@ const createDispatch = async (req: Request, res: Response) => {
       vehicleType,
       vehicleWidth,
       vehicleLabel,
+      force: force === true,
     });
     sendSuccess(res, result, {message: "Dispatch created", statusCode: 201});
   } catch (error) {
@@ -237,6 +239,17 @@ const declineDestination = async (req: Request, res: Response) => {
   }
 };
 
+const refreshTowEta = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.refreshTowEta({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const shopRequests = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -276,13 +289,14 @@ const feedTickets = async (req: Request, res: Response) => {
 
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
-    const {ticketId, audience, title, body} = req.body;
+    const {ticketId, audience, title, body, shopId} = req.body;
     const result = await dispatchService.deliverDispatchPush(
       ticketId,
       audience,
       typeof title === "string" && typeof body === "string" ?
         {title, body} :
         undefined,
+      typeof shopId === "string" && shopId !== "" ? shopId : undefined,
     );
     sendSuccess(res, result);
   } catch (error) {
@@ -293,7 +307,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
-  sendQuote, approveQuote, declineDestination,
+  sendQuote, approveQuote, declineDestination, refreshTowEta,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

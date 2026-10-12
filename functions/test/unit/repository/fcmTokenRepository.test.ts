@@ -33,8 +33,19 @@ const setupTx = (snapshot: unknown) => {
   const fakeTx = {get: txGet, set: txSet};
   const ref = {id: "u1"};
   const docMock = jest.fn(() => ref);
+  const whereGet = jest.fn(async () => ({
+    forEach: () => undefined,
+  }));
+  const whereMock = jest.fn(() => ({get: whereGet}));
+  const batchSet = jest.fn();
+  const batchCommit = jest.fn(async () => undefined);
+  jest.mocked(db.batch).mockReturnValue({
+    set: batchSet,
+    commit: batchCommit,
+  } as never);
   jest.mocked(db.collection).mockReturnValue({
     doc: docMock,
+    where: whereMock,
   } as never);
   jest.mocked(db.runTransaction).mockImplementation(
     (async (fn: never) =>
@@ -42,7 +53,8 @@ const setupTx = (snapshot: unknown) => {
         fakeTx,
       )) as never,
   );
-  return {txGet, txSet, docMock, ref};
+  return {txGet, txSet, docMock, ref, whereGet, whereMock, batchSet,
+    batchCommit};
 };
 
 describe("fcmTokenRepository.registerToken", () => {
@@ -106,5 +118,50 @@ describe("fcmTokenRepository.registerToken", () => {
     expect(jest.mocked(db.runTransaction)).toHaveBeenCalledTimes(
       1,
     );
+  });
+
+  test("steals the token from previous owners", async () => {
+    const {batchSet, batchCommit} = setupTx({
+      exists: false,
+      data: () => ({}),
+    });
+    const other = {
+      id: "u2",
+      data: () => ({tokens: ["shared", "other"]}),
+      ref: {id: "u2"},
+    };
+    const self = {
+      id: "u1",
+      data: () => ({tokens: ["shared"]}),
+      ref: {id: "u1"},
+    };
+    jest.mocked(db.collection).mockReturnValue({
+      doc: jest.fn(() => ({id: "u1"})),
+      where: jest.fn(() => ({
+        get: jest.fn(async () => ({
+          forEach: (fn: (d: unknown) => void) => {
+            fn(other);
+            fn(self);
+          },
+        })),
+      })),
+    } as never);
+    await registerToken("u1", "shared");
+    expect(batchSet).toHaveBeenCalledTimes(1);
+    expect(batchSet.mock.calls[0][1]).toMatchObject({
+      userId: "u2",
+      tokens: ["other"],
+    });
+    expect(batchCommit).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips the steal commit with no previous owners", async () => {
+    const {batchSet, batchCommit} = setupTx({
+      exists: false,
+      data: () => ({}),
+    });
+    await registerToken("u1", "t1");
+    expect(batchSet).not.toHaveBeenCalled();
+    expect(batchCommit).not.toHaveBeenCalled();
   });
 });

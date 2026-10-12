@@ -58,6 +58,7 @@ const valid: Record<string, unknown> = {
   acceptDispatch: {ticketId: "t1"},
   selectDispatch: {ticketId: "t1", shopId: "s1"},
   updateDispatchDestination: {ticketId: "t1", destinationShopId: "s1"},
+  refreshTowEta: {ticketId: "t1"},
   nearDispatch: {lat: 10.7, lng: 106.6},
   dispatchOffers: {lat: 10.7, lng: 106.6, kind: "TOW"},
   volunteerToggle: {available: true},
@@ -69,6 +70,7 @@ const valid: Record<string, unknown> = {
     score: 5,
   },
   deliverDispatch: {ticketId: "t1"},
+  pingPush: {},
   updateProvider: {providerId: "p1", accepting: false},
   reportProvider: {providerId: "p1", reason: "SPAM"},
   dismissReport: {reportId: "r1"},
@@ -145,6 +147,19 @@ describe("schemas reject invalid input", () => {
     expect(
       table.updateUserServices.validate(
         {targetUserId: "u1", revoke: ["NOPE"]},
+      ).error,
+    ).toBeDefined();
+  });
+
+  it("updateUserServices rejects duplicated licenses", () => {
+    expect(
+      table.updateUserServices.validate(
+        {targetUserId: "u1", grant: ["VOLUNTEER", "VOLUNTEER"]},
+      ).error,
+    ).toBeDefined();
+    expect(
+      table.updateUserServices.validate(
+        {targetUserId: "u1", revoke: ["VOLUNTEER", "VOLUNTEER"]},
       ).error,
     ).toBeDefined();
   });
@@ -294,8 +309,22 @@ describe("schemas reject invalid input", () => {
         .error,
     ).toBeUndefined();
     expect(
+      table.deliverDispatch.validate({ticketId: "t1", audience: "rider"})
+        .error,
+    ).toBeUndefined();
+    expect(
       table.deliverDispatch.validate(
         {ticketId: "t1", audience: "tower-candidates"},
+      ).error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate(
+        {ticketId: "t1", audience: "destination-shop"},
+      ).error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate(
+        {ticketId: "t1", audience: "destination-shop", shopId: "shop9"},
       ).error,
     ).toBeUndefined();
     expect(

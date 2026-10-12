@@ -170,9 +170,11 @@ export const estimateTowEta = async ({
     const secureMinutes = isCarVehicle(vehicleType) ?
       SECURE_MINUTES_CAR :
       SECURE_MINUTES_BIKE;
-    const pickupSeconds = Math.ceil(
-      (leg0.durationSeconds / 60 + secureMinutes) / 5,
-    ) * 5 * 60;
+    const rawMinutes = leg0.durationSeconds / 60 + secureMinutes;
+    const pickupMinutes = rawMinutes < 15 ?
+      Math.ceil(rawMinutes) :
+      Math.ceil(rawMinutes / 5) * 5;
+    const pickupSeconds = pickupMinutes * 60;
     if (typeof destLat !== "number" || typeof destLng !== "number") {
       return {pickupSeconds, dropoffSeconds: null};
     }
@@ -181,9 +183,11 @@ export const estimateTowEta = async ({
       [],
       costing,
     );
-    const dropoffSeconds = Math.ceil(
-      (pickupSeconds / 60 + leg1.durationSeconds * LOADED_FACTOR / 60) / 5,
-    ) * 5 * 60;
+    const dropoffRaw = pickupSeconds / 60 + leg1.durationSeconds * LOADED_FACTOR / 60;
+    const dropoffSeconds = (dropoffRaw < 15 ?
+      Math.ceil(dropoffRaw) :
+      Math.ceil(dropoffRaw / 5) * 5) * 60;
+    return {pickupSeconds, dropoffSeconds};
     return {pickupSeconds, dropoffSeconds};
   } catch {
     return null;

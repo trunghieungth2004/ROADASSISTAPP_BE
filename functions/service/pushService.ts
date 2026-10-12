@@ -25,6 +25,57 @@ const registerPushToken = async (userId: string, token: string) =>
 const unregisterPushToken = async (userId: string, token: string) =>
   fcmTokenRepository.unregisterToken(userId, token);
 
+const pingOwnPush = async (
+  userId: string,
+): Promise<{
+  tokens: number;
+  sent: number;
+  failed: number;
+  firstError: string | null;
+}> => {
+  if (!fcmEnabled()) {
+    return {tokens: 0, sent: 0, failed: 0, firstError: "FCM_DISABLED"};
+  }
+  const record = await fcmTokenRepository.findByUserId(userId);
+  const tokens = (record?.tokens as string[] | undefined) ?? [];
+  if (tokens.length === 0) {
+    return {tokens: 0, sent: 0, failed: 0, firstError: "NO_TOKENS"};
+  }
+  let sent = 0;
+  let failed = 0;
+  let firstError: string | null = null;
+  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
+    const chunk = tokens.slice(i, i + SEND_CHUNK);
+    const response = await messaging.sendEach(
+      chunk.map((token) => ({
+        token,
+        notification: {
+          title: "RoadAssist test push",
+          body: "This is a test notification — tap to dismiss",
+        },
+        data: {ping: "true"},
+      })),
+    );
+    sent += response.successCount ?? 0;
+    const dead: string[] = [];
+    response.responses.forEach((r, idx) => {
+      if (!r.success) {
+        failed += 1;
+        const code = r.error?.code ?? "UNKNOWN";
+        if (firstError === null) firstError = code;
+        if (r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
+          const token = chunk[idx];
+          if (token !== undefined) dead.push(token);
+        }
+      }
+    });
+    if (dead.length > 0) {
+      await fcmTokenRepository.removeTokens(userId, dead);
+    }
+  }
+  return {tokens: tokens.length, sent, failed, firstError};
+};
+
 const radiusFor = (flag: {
   type: string;
   radiusMeters?: number | null;
@@ -163,5 +214,6 @@ export {
   registerPushToken,
   unregisterPushToken,
   deliverHazardPush,
+  pingOwnPush,
   fcmEnabled,
 };

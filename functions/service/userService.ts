@@ -209,7 +209,11 @@ const me = async (userId: string) => {
       ratingAvg: user.ratingAvg ?? 0,
       ratingCount: user.ratingCount ?? 0,
       onboarded: user.onboarded === true,
-      services: Array.isArray(user.services) ? user.services : [],
+      services: Array.isArray(user.services) ?
+        [...new Set(
+          user.services.filter((s): s is string => typeof s === "string"),
+        )] :
+        [],
     },
     vehicles: vehicles.map((v) => ({
       id: v.id,

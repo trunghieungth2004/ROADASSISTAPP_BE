@@ -90,7 +90,7 @@ export const acceptAsShop = async (
   };
 };
 
-const stampTowEta = async (
+export const stampTowEta = async (
   ticketId: string,
   ticket: {
     lat: number;

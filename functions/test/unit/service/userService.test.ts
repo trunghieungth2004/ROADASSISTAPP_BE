@@ -321,6 +321,19 @@ describe("userService.me", () => {
     const result = await me("u1");
     expect(result.activeVehicle).toBeNull();
   });
+
+  it("dedupes legacy duplicated licenses on read", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      activeVehicleId: null,
+      onboarded: true,
+      services: ["RIDER", "VOLUNTEER", "VOLUNTEER"],
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([]);
+    const result = await me("u1");
+    expect(result.user.services).toEqual(["RIDER", "VOLUNTEER"]);
+  });
 });
 
 describe("userService.setActiveVehicle", () => {

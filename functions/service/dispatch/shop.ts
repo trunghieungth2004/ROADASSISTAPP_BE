@@ -101,6 +101,14 @@ export const sweepStaleWalkIns = async (): Promise<{cancelled: number}> => {
       ticket.id,
       `-status-${STATUS_DISPATCH.CANCELLED}`,
     );
+    if (typeof ticket.providerId === "string" && ticket.providerId !== "") {
+      await enqueueDispatchPush(ticket.id, "-expired-shop", {
+        audience: "destination-shop",
+        shopId: ticket.providerId as string,
+        title: "Walk-in expired",
+        body: "The rider's visit request expired",
+      });
+    }
   }
   if (stale.length > 0) cacheManager.del(NS);
   return {cancelled: stale.length};
@@ -405,7 +413,6 @@ const outParty = (
   const shopKeys = [
     "assignedShopId",
     "providerId",
-    "destinationShopId",
   ] as const;
   for (const key of shopKeys) {
     const shopId = strOf(row[key]);
@@ -617,8 +624,7 @@ export const declineDestination = async ({
     ticket.destinationShopId === "") {
     throw new ValidationError("Ticket has no shop destination");
   }
-  if (ticket.status === STATUS_DISPATCH.PENDING ||
-    TERMINAL_STATUSES.has(ticket.status)) {
+  if (TERMINAL_STATUSES.has(ticket.status)) {
     throw new ValidationError("Destination is no longer declinable");
   }
   const shop = await providerRepository.findById(
@@ -634,8 +640,9 @@ export const declineDestination = async ({
   const legs = Array.isArray(ticket.towLegs) ? [...ticket.towLegs] : [];
   let legKm = 0;
   let actual = false;
-  if (typeof ticket.assignedShopId === "string" &&
-    ticket.assignedShopId !== "") {
+  const hasTower = typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "";
+  if (hasTower) {
     const fixes = await providerLocationRepository.findByIds(
       [ticket.assignedShopId as string],
     );
@@ -646,24 +653,25 @@ export const declineDestination = async ({
       );
       actual = Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
     }
+    legs.push({
+      toShopId: destShopId,
+      km: legKm,
+      actual,
+      at: new Date().toISOString(),
+    });
   }
-  legs.push({
-    toShopId: destShopId,
-    km: legKm,
-    actual,
-    at: new Date().toISOString(),
-  });
   const total = (typeof ticket.towDistanceMeters === "number" ?
     ticket.towDistanceMeters :
     0) + legKm;
   await dispatchRepository.update(ticketId, {
     destinationShopId: null,
     destinationSnapshot: null,
-    towLegs: legs,
-    towDistanceMeters: total,
+    destinationPoint: null,
+    ...(hasTower ? {towLegs: legs, towDistanceMeters: total} : {}),
   });
   cacheManager.del(NS);
   await enqueueDispatchPush(ticketId, "-destination-declined", {
+    audience: "rider",
     title: "Destination declined",
     body: "The shop can't take your vehicle — pick another drop-off",
   });
