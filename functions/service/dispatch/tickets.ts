@@ -504,7 +504,7 @@ const spawnShopTicket = async (
 };
 
 
-export const updateDispatchDestination = async ({  userId,
+export const updateDispatchDestination = async ({userId,
   ticketId,
   destinationShopId,
   destinationPoint,

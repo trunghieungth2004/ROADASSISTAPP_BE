@@ -183,7 +183,8 @@ export const estimateTowEta = async ({
       [],
       costing,
     );
-    const dropoffRaw = pickupSeconds / 60 + leg1.durationSeconds * LOADED_FACTOR / 60;
+    const dropoffRaw = pickupSeconds / 60 +
+      leg1.durationSeconds * LOADED_FACTOR / 60;
     const dropoffSeconds = (dropoffRaw < 15 ?
       Math.ceil(dropoffRaw) :
       Math.ceil(dropoffRaw / 5) * 5) * 60;
