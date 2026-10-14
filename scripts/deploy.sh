@@ -162,6 +162,14 @@ if [ -z "$WANT" ]; then
   WANT=" engine push functions seeds"
 fi
 
+case "$WANT" in
+  *" functions"*)
+    echo "[deploy] env (secrets + check)"
+    bash "$ROOT/scripts/lib/setup-secrets.sh" || exit 1
+    bash "$ROOT/scripts/lib/check-env.sh" || exit 1
+    ;;
+esac
+
 ORDERED=""
 for step in engine push functions seeds; do
   case "$WANT" in

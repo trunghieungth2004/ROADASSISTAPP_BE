@@ -1,6 +1,10 @@
 export {createDispatch, getMyTickets, getDispatch} from "./dispatch/tickets";
-export {updateDispatchStatus, updateDispatchDestination, refreshTowEta} from
-  "./dispatch/tickets";
+export {
+  updateDispatchStatus,
+  updateDispatchDestination,
+  refreshTowEta,
+  estimateTowFarePreview,
+} from "./dispatch/tickets";
 export {nearDispatch, dispatchOffers, selectDispatch} from "./dispatch/board";
 export {acceptDispatch} from "./dispatch/accept";
 export {

@@ -2,8 +2,13 @@ import * as alleySegmentRepository from
   "../../repository/alleySegmentRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
+import * as dispatchRepository from
+  "../../repository/dispatchRepository";
+import * as providerLocationRepository from
+  "../../repository/providerLocationRepository";
 import {haversineMeters} from "../../utils/geo";
 import {
+  PROVIDER_FRESH_MS,
   PROVIDER_KIND,
   PROVIDER_STATUS,
   TOW_CLASS_MULTIPLIER_BIKE,
@@ -193,4 +198,52 @@ export const estimateTowEta = async ({
   } catch {
     return null;
   }
+};
+
+export const freezeTowLeg = async (
+  ticketId: string,
+  ticket: {
+    towLegs?: unknown;
+    towDistanceMeters?: unknown;
+    assignedShopId?: unknown;
+    lat: number;
+    lng: number;
+  },
+  toShopId: string | null,
+): Promise<number> => {
+  const legs = Array.isArray(ticket.towLegs) ?
+    [...(ticket.towLegs as unknown[])] :
+    [];
+  let legKm = 0;
+  let actual = false;
+  const towerId = typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "" ?
+    ticket.assignedShopId :
+    "";
+  if (towerId !== "") {
+    const fixes = await providerLocationRepository.findByIds([towerId]);
+    const fix = fixes.get(towerId);
+    if (fix && typeof fix.lat === "number" && typeof fix.lng === "number") {
+      legKm = Math.round(
+        haversineMeters(fix.lat, fix.lng, ticket.lat, ticket.lng),
+      );
+      actual = Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
+    }
+    legs.push({
+      toShopId,
+      km: legKm,
+      actual,
+      at: new Date().toISOString(),
+    });
+  }
+  const total = (typeof ticket.towDistanceMeters === "number" ?
+    ticket.towDistanceMeters :
+    0) + legKm;
+  if (towerId !== "") {
+    await dispatchRepository.update(ticketId, {
+      towLegs: legs,
+      towDistanceMeters: total,
+    });
+  }
+  return legKm;
 };

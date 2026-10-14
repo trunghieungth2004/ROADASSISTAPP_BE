@@ -1,5 +1,19 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
+
+const mockVerifyIdToken = jest.fn();
+
+jest.mock("google-auth-library", () => {
+  const actual = jest.requireActual("google-auth-library") as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...actual,
+    OAuth2Client: jest.fn(() => ({verifyIdToken: mockVerifyIdToken})),
+  };
+});
+
 import {
   cleanAll,
   seedUser,
@@ -90,18 +104,37 @@ describe("push endpoints", () => {
     await db.collection("fcm_tokens").doc(USER).delete();
   });
 
-  it("POST /push/deliver rejects callers without the queue header",
-    async () => {
-      const res = await request(app)
-        .post("/push/deliver")
-        .send({flagId: "flood-1"});
-      expect(res.status).toBe(403);
-    });
-
-  it("POST /push/deliver skips when FCM is disabled", async () => {
+  it("POST /push/deliver rejects callers without credentials", async () => {
     const res = await request(app)
       .post("/push/deliver")
       .set("X-CloudTasks-QueueName", "hazard-push")
+      .send({flagId: "flood-1"});
+    expect(res.status).toBe(403);
+  });
+
+  it("POST /push/deliver rejects verified callers off the queue", async () => {
+    mockVerifyIdToken.mockResolvedValue({
+      getPayload: () => ({
+        email: "tasks@test-project.iam.gserviceaccount.com",
+      }),
+    });
+    const res = await request(app)
+      .post("/push/deliver")
+      .set("Authorization", "Bearer task-token")
+      .send({flagId: "flood-1"});
+    expect(res.status).toBe(403);
+  });
+
+  it("POST /push/deliver skips when FCM is disabled", async () => {
+    mockVerifyIdToken.mockResolvedValue({
+      getPayload: () => ({
+        email: "tasks@test-project.iam.gserviceaccount.com",
+      }),
+    });
+    const res = await request(app)
+      .post("/push/deliver")
+      .set("X-CloudTasks-QueueName", "hazard-push")
+      .set("Authorization", "Bearer task-token")
       .send({flagId: "flood-1"});
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({delivered: 0, skipped: true});

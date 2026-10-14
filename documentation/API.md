@@ -357,10 +357,10 @@ List `ACTIVE`, non-suspended providers near a point, capped (`limit` 1–20, def
 
 ### `POST /providers/search` **(Auth)**
 
-Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercased name (up to 50 candidates), then geo-filtered against the rider and ranked exact-match first, open-first, nearest-first. Same `vehicleClass` filter as `/providers/near`. `radiusMeters` (≥200) is optional — omitted leaves distance unfiltered for long-range callers like tow dispatch; the walk panel caps browsing at 2000 m.
+Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercased name (up to 50 candidates), then geo-filtered against the rider and ranked exact-match first, open-first, nearest-first. Same `vehicleClass` filter as `/providers/near`, plus an optional `kind` (`SHOP`/`TOW`) — the tow drop-off picker passes `SHOP` so tower listings can never appear as destinations (tapping one used to fail at file time with "Destination must be a repair shop"). `radiusMeters` (≥200) is optional — omitted leaves distance unfiltered for long-range callers like tow dispatch; the walk panel caps browsing at 2000 m.
 
 ```json
-{ "lat": 10.7626, "lng": 106.6602, "query": "Thanh Cong", "vehicleClass": "SOLO_BIKE", "radiusMeters": 10000, "limit": 10 }
+{ "lat": 10.7626, "lng": 106.6602, "query": "Thanh Cong", "kind": "SHOP", "vehicleClass": "SOLO_BIKE", "radiusMeters": 10000, "limit": 10 }
 ```
 
 ### `PUT /providers` **(Auth)**
@@ -1211,7 +1211,7 @@ Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"`
 
 ### `POST /dispatch` **(Auth + `RIDER` license)**
 
-Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point). `WALK_IN` records an arrival at a chosen shop (`providerId`, bike-only) instead of requesting dispatch; the shop is pushed and accepts or declines. The creation response flags `providerSnapshot.closed` when the shop's own hours say closed (advisory only — creation is never blocked), and walk-ins carry `expiresAt` (2 h); unanswered walk-ins are cancelled by the half-hourly sweep.
+Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (clearance auto-attached), the rider vehicle, and a tow destination (shop or free-form point). `WALK_IN` records an arrival at a chosen shop (`providerId`, bike-only) instead of requesting dispatch; the shop is pushed and accepts or declines. Filing to a shop that switched duty off is rejected as unavailable, and duty-off shops receive no shop-audience pushes — the duty switch is enforced inbound, not just on accept. The creation response flags `providerSnapshot.closed` when the shop's own hours say closed (advisory only — creation is never blocked), and walk-ins carry `expiresAt` (2 h); unanswered walk-ins are cancelled by the half-hourly sweep.
 
 **Request:**
 ```json
@@ -1476,6 +1476,20 @@ Restamp a tow's ETAs from the tower's live fix (same computation as accept: driv
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "data": { "updated": 1 } }
+```
+
+### `POST /dispatch/fare/estimate` **(Auth)**
+
+Preview a pending tow's fare from a viewer position (deadhead) plus the ticket destination (loaded), using the platform rate card. Display-only — nothing is stored and no ceiling is committed; the binding quote is stamped at accept. Any authenticated user (towers browsing the board are the intended callers); non-pending or non-tow tickets get `400`.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "lat": 10.69, "lng": 106.59 }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "estimate": 200000, "ceiling": 220000, "deadheadKm": 3, "loadedKm": 8, "night": false, "vehicleClass": "SOLO_BIKE" } }
 ```
 
 ---

@@ -8,6 +8,7 @@ import * as providerLocationRepository from
 import {isOpenNow} from "../providerService";
 import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
+import {stampTowFare} from "./fare";
 import {
   estimateTowEta,
   requireProviderForTicket,
@@ -77,11 +78,16 @@ export const acceptAsShop = async (
   }
   if (ticket.ticketType === "TOW") {
     await stampTowEta(ticketId, ticket, shopId);
+    await stampTowFare(ticketId, ticket, shopId);
   }
   cacheManager.del(NS);
   cacheManager.del("shop");
   cacheManager.del("provider");
-  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.MATCHED}`);
+  await enqueueDispatchPush(
+    ticketId,
+    `-status-${STATUS_DISPATCH.MATCHED}-rider`,
+    {audience: "rider"},
+  );
   return {
     matched: true,
     kind: shop.kind === PROVIDER_KIND.TOW ?
@@ -196,7 +202,11 @@ export const acceptAsVolunteer = async (userId: string, ticketId: string) => {
     throw new ValidationError("Ticket is no longer pending");
   }
   cacheManager.del(NS);
-  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.MATCHED}`);
+  await enqueueDispatchPush(
+    ticketId,
+    `-status-${STATUS_DISPATCH.MATCHED}-rider`,
+    {audience: "rider"},
+  );
   return {matched: true, kind: HELPER_KIND.VOLUNTEER};
 };
 

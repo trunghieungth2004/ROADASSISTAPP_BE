@@ -214,11 +214,12 @@ const updateProviderLocation = async (req: Request, res: Response) => {
 
 const searchProviders = async (req: Request, res: Response) => {
   try {
-    const {lat, lng, query, vehicleClass, radiusMeters, limit} = req.body;
+    const {lat, lng, query, kind, vehicleClass, radiusMeters, limit} = req.body;
     const result = await providerService.searchProviders({
       lat,
       lng,
       query,
+      kind,
       vehicleClass,
       radiusMeters,
       limit,

@@ -22,6 +22,8 @@ import {
 
 jest.mock("../../../repository/dispatchRepository", () => ({
   findActiveForShop: jest.fn(async () => []),
+  findActiveForDestination: jest.fn(async () => []),
+  findPendingForShop: jest.fn(async () => []),
 }));
 
 jest.mock("../../../repository/providerRepository", () => {
@@ -182,6 +184,88 @@ describe("providerService.updateProvider", () => {
   it("lets the operator toggle availability", async () => {
     jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "s1",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    await expect(
+      updateProvider({userId: "op1", providerId: "s1",
+        fields: {accepting: false}}),
+    ).resolves.toEqual({updated: 1});
+    expect(providerRepository.update).toHaveBeenCalledWith("s1", {
+      accepting: false,
+    });
+  });
+
+  it("blocks tow duty back on with a live assignment", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "t1",
+      kind: "TOW",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    const {findActiveForShop} = jest.requireMock(
+      "../../../repository/dispatchRepository",
+    ) as {findActiveForShop: jest.Mock};
+    findActiveForShop.mockResolvedValueOnce([{id: "job1"}]);
+    await expect(
+      updateProvider({userId: "op1", providerId: "t1",
+        fields: {accepting: true}}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(providerRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks shop close with open walk-in tickets", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "s1",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    const {findPendingForShop} = jest.requireMock(
+      "../../../repository/dispatchRepository",
+    ) as {findPendingForShop: jest.Mock};
+    findPendingForShop.mockResolvedValueOnce([{id: "w1"}]);
+    await expect(
+      updateProvider({userId: "op1", providerId: "s1",
+        fields: {accepting: false}}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(providerRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks shop close while named as a tow destination", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "s1",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    const {findActiveForDestination} = jest.requireMock(
+      "../../../repository/dispatchRepository",
+    ) as {findActiveForDestination: jest.Mock};
+    findActiveForDestination.mockResolvedValueOnce([{id: "tow1"}]);
+    await expect(
+      updateProvider({userId: "op1", providerId: "s1",
+        fields: {accepting: false}}),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(providerRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("lets a free shop close", async () => {
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "s1",
+      kind: "SHOP",
       operatorUid: "op1",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
@@ -825,6 +909,43 @@ describe("providerService.nearProviders vehicleClass", () => {
 });
 
 describe("providerService.searchProviders", () => {
+  it("drops non-shop kinds when kind is SHOP", async () => {
+    jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([
+      {id: "tow1", name: "Near Haul", nameLower: "near haul",
+        lat: 10.7626, lng: 106.6602, kind: "TOW", status: "ACTIVE",
+        openHours: null},
+      {id: "shop1", name: "Near Repair", nameLower: "near repair",
+        lat: 10.7626, lng: 106.6602, kind: "SHOP", status: "ACTIVE",
+        openHours: null},
+    ] as never);
+    const result = await searchProviders({
+      lat: 10.7626,
+      lng: 106.6602,
+      query: "near",
+      kind: "SHOP",
+      now: new Date(Date.UTC(2026, 9, 5, 3, 50)),
+    });
+    expect(result.map((p) => (p as {id: string}).id)).toEqual(["shop1"]);
+  });
+  it("keeps every kind when kind is omitted", async () => {
+    jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([
+      {id: "tow1", name: "Near Haul", nameLower: "near haul",
+        lat: 10.7626, lng: 106.6602, kind: "TOW", status: "ACTIVE",
+        openHours: null},
+      {id: "shop1", name: "Near Repair", nameLower: "near repair",
+        lat: 10.7626, lng: 106.6602, kind: "SHOP", status: "ACTIVE",
+        openHours: null},
+    ] as never);
+    const result = await searchProviders({
+      lat: 10.7626,
+      lng: 106.6602,
+      query: "near",
+      now: new Date(Date.UTC(2026, 9, 5, 3, 50)),
+    });
+    expect(result.map((p) => (p as {id: string}).id).sort()).toEqual(
+      ["shop1", "tow1"],
+    );
+  });
   it("ranks exact names above prefix matches", async () => {
     jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([
       {id: "long", name: "Good Shop Extra", nameLower: "good shop extra",

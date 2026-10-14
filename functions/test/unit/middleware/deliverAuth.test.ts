@@ -1,9 +1,16 @@
 import {Request, Response} from "express";
-import {requireDeliverSecret} from "../../../middleware/deliverAuth";
+import {
+  __resetOidcClientForTests,
+  requireDeliverIdentity,
+} from "../../../middleware/deliverAuth";
 
-const mockReq = (secret?: string) =>
+jest.mock("google-auth-library", () => ({
+  OAuth2Client: jest.fn(),
+}));
+
+const mockAuthReq = (headers: Record<string, string>) =>
   ({
-    header: jest.fn().mockReturnValue(secret ?? ""),
+    header: jest.fn((name: string) => headers[name] ?? ""),
   }) as unknown as Request;
 
 const mockRes = () => {
@@ -16,36 +23,98 @@ const mockRes = () => {
   return res;
 };
 
-describe("requireDeliverSecret", () => {
-  const previous = process.env.PUSH_DELIVER_SECRET;
-  afterEach(() => {
-    if (previous === undefined) delete process.env.PUSH_DELIVER_SECRET;
-    else process.env.PUSH_DELIVER_SECRET = previous;
-  });
-
-  it("passes through when no secret is configured", () => {
+describe("requireDeliverIdentity", () => {
+  const OLD_ENV = process.env;
+  let OAuth2ClientMock: jest.Mock;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = {...OLD_ENV};
     delete process.env.PUSH_DELIVER_SECRET;
-    const res = mockRes();
-    const next = jest.fn();
-    requireDeliverSecret(mockReq(), res, next);
-    expect(next).toHaveBeenCalled();
-    expect(res.status).not.toHaveBeenCalled();
+    process.env.TASK_INVOKER_EMAIL = "tasks@example.iam.gserviceaccount.com";
+    process.env.PUSH_DELIVER_URL = "https://api.example.com/push/deliver";
+    process.env.DISPATCH_DELIVER_URL =
+      "https://api.example.com/dispatch/deliver";
+    OAuth2ClientMock = (
+      jest.requireMock("google-auth-library") as {
+        OAuth2Client: jest.Mock;
+      }
+    ).OAuth2Client;
+    __resetOidcClientForTests();
+  });
+  afterAll(() => {
+    process.env = OLD_ENV;
   });
 
-  it("rejects a wrong secret with 403", () => {
-    process.env.PUSH_DELIVER_SECRET = "s3cret";
+  const verifiedAs = (email: string) => {
+    OAuth2ClientMock.mockImplementation(() => ({
+      verifyIdToken: jest.fn(async () => ({
+        getPayload: () => ({email}),
+      })),
+    }));
+  };
+
+  it("accepts a Google-signed token for the invoker", async () => {
+    verifiedAs("tasks@example.iam.gserviceaccount.com");
     const res = mockRes();
     const next = jest.fn();
-    requireDeliverSecret(mockReq("wrong"), res, next);
+    await requireDeliverIdentity(
+      mockAuthReq({Authorization: "Bearer good-token"}),
+      res,
+      next,
+    );
+    expect(next).toHaveBeenCalled();
+    expect(OAuth2ClientMock).toHaveBeenCalled();
+  });
+
+  it("rejects a valid token for the wrong identity", async () => {
+    verifiedAs("stranger@example.iam.gserviceaccount.com");
+    const res = mockRes();
+    const next = jest.fn();
+    await requireDeliverIdentity(
+      mockAuthReq({Authorization: "Bearer good-token"}),
+      res,
+      next,
+    );
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("accepts the configured secret", () => {
-    process.env.PUSH_DELIVER_SECRET = "s3cret";
+  it("rejects an unverifiable token", async () => {
+    OAuth2ClientMock.mockImplementation(() => ({
+      verifyIdToken: jest.fn(async () => {
+        throw new Error("bad signature");
+      }),
+    }));
     const res = mockRes();
     const next = jest.fn();
-    requireDeliverSecret(mockReq("s3cret"), res, next);
-    expect(next).toHaveBeenCalled();
+    await requireDeliverIdentity(
+      mockAuthReq({Authorization: "Bearer bad-token"}),
+      res,
+      next,
+    );
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("rejects when nothing is presented", async () => {
+    const res = mockRes();
+    const next = jest.fn();
+    await requireDeliverIdentity(mockAuthReq({}), res, next);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the invoker email is unset", async () => {
+    verifiedAs("tasks@example.iam.gserviceaccount.com");
+    delete process.env.TASK_INVOKER_EMAIL;
+    const res = mockRes();
+    const next = jest.fn();
+    await requireDeliverIdentity(
+      mockAuthReq({Authorization: "Bearer good-token"}),
+      res,
+      next,
+    );
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
   });
 });

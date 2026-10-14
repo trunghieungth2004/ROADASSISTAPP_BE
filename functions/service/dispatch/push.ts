@@ -12,19 +12,71 @@ import {
   PUSH_TITLE_BY_TYPE,
   SEND_CHUNK,
   STATUS_PUSH_BODY,
+  URGENT_DISPATCH_CHANNEL,
+  DISPATCH_CHANNEL,
+  URGENT_DISPATCH_STATUSES,
 } from "./constants";
 import {STATUS_DISPATCH} from "../../constants/status";
 import {findCandidates, findTowOperators} from "./candidates";
 import {fcmEnabled} from "../pushService";
+import {logInfo} from "../../utils/logger";
+import type {Message} from "firebase-admin/messaging";
+
+type Notice = {title: string; body: string};
+
+type AddressedMessage = {userId: string; token: string; message: Message};
+
+const sendChunked = async (
+  addressed: AddressedMessage[],
+): Promise<number> => {
+  let delivered = 0;
+  const dead = new Map<string, string[]>();
+  for (let i = 0; i < addressed.length; i += SEND_CHUNK) {
+    const chunk = addressed.slice(i, i + SEND_CHUNK);
+    const response = await messaging.sendEach(
+      chunk.map((entry) => entry.message),
+    );
+    delivered += response.successCount ?? 0;
+    response.responses.forEach((r, idx) => {
+      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
+        const {userId, token} = chunk[idx];
+        dead.set(userId, [...(dead.get(userId) ?? []), token]);
+      }
+    });
+  }
+  for (const [userId, tokens] of dead) {
+    await fcmTokenRepository.removeTokens(userId, tokens);
+  }
+  return delivered;
+};
+
+const URGENT_TTL_MS = 3600_000;
+
+const androidFor = (urgent: boolean, tag: string) => ({
+  priority: (urgent ? "high" : "normal") as "high" | "normal",
+  ...(urgent ? {ttl: URGENT_TTL_MS} : {}),
+  notification: {
+    ...(urgent ?
+      {channelId: URGENT_DISPATCH_CHANNEL, sound: "default"} :
+      {channelId: DISPATCH_CHANNEL}),
+    tag,
+  },
+});
+
+const statusIsUrgent = (status: unknown): boolean =>
+  typeof status === "string" && URGENT_DISPATCH_STATUSES.has(status);
 
 export const deliverStatusPush = async (
   ticket: Record<string, unknown> & {id: string},
-  notice?: {title: string; body: string},
+  notice?: Notice,
+  urgentOverride = false,
 ): Promise<{delivered: number; skipped: boolean}> => {
-  let body = notice?.body ?? STATUS_PUSH_BODY[ticket.status as string];
-  if (ticket.status === STATUS_DISPATCH.MATCHED) {
-    body = MATCHED_BODY_BY_TYPE[ticket.ticketType as string] ?? body;
-  }
+  const urgent = urgentOverride || statusIsUrgent(ticket.status);
+  let body = notice?.body ??
+    (ticket.status === STATUS_DISPATCH.MATCHED ?
+      MATCHED_BODY_BY_TYPE[ticket.ticketType as string] :
+      undefined) ??
+    STATUS_PUSH_BODY[ticket.status as string];
   if (ticket.status === STATUS_DISPATCH.DECLINED &&
     typeof ticket.declineReason === "string") {
     const label = DECLINE_REASON_LABEL[ticket.declineReason] ?? "";
@@ -37,39 +89,29 @@ export const deliverStatusPush = async (
   const tokens = (record?.tokens as string[] | undefined) ?? [];
   const title = notice?.title ??
     PUSH_TITLE_BY_TYPE[ticket.ticketType as string] ?? "SOS update";
-  let delivered = 0;
-  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
-    const chunk = tokens.slice(i, i + SEND_CHUNK);
-    const response = await messaging.sendEach(
-      chunk.map((token) => ({
-        token,
-        notification: {
-          title,
-          body,
-        },
-        data: {
-          ticketId: ticket.id,
-          ticketType: ticket.ticketType as string,
-          status: ticket.status as string,
-          ...(typeof ticket.declineReason === "string" &&
-          ticket.declineReason !== "" ?
-            {declineReason: ticket.declineReason} :
-            {}),
-        },
-      })),
-    );
-    delivered += response.successCount ?? 0;
-    const dead: string[] = [];
-    response.responses.forEach((r, idx) => {
-      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
-        const token = chunk[idx];
-        if (token !== undefined) dead.push(token);
-      }
-    });
-    if (dead.length > 0 && typeof ticket.userId === "string") {
-      await fcmTokenRepository.removeTokens(ticket.userId, dead);
-    }
-  }
+  const addressed: AddressedMessage[] = tokens.map((token) => ({
+    userId: ticket.userId as string,
+    token,
+    message: {
+      token,
+      notification: {
+        title,
+        body,
+      },
+      android: androidFor(urgent, ticket.id),
+      data: {
+        ticketId: ticket.id,
+        ticketType: ticket.ticketType as string,
+        status: ticket.status as string,
+        ...(urgent ? {urgent: "true"} : {}),
+        ...(typeof ticket.declineReason === "string" &&
+        ticket.declineReason !== "" ?
+          {declineReason: ticket.declineReason} :
+          {}),
+      },
+    } as Message,
+  }));
+  const delivered = await sendChunked(addressed);
   return {delivered, skipped: false};
 };
 
@@ -77,50 +119,43 @@ export const deliverStatusPush = async (
 export const deliverShopPush = async (
   ticket: Record<string, unknown> & {id: string},
   shopId: string,
-  notice?: {title: string; body: string},
+  notice?: Notice,
+  urgent = false,
 ): Promise<{delivered: number; skipped: boolean}> => {
   const shop = await providerRepository.findById(shopId);
   const operatorUid = shop?.operatorUid as string | null;
   if (!operatorUid) return {delivered: 0, skipped: true};
+  if (shop?.accepting === false) return {delivered: 0, skipped: true};
   const record = await fcmTokenRepository.findByUserId(operatorUid);
   const tokens = (record?.tokens as string[] | undefined) ?? [];
   if (tokens.length === 0) return {delivered: 0, skipped: true};
-  let delivered = 0;
-  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
-    const chunk = tokens.slice(i, i + SEND_CHUNK);
-    const response = await messaging.sendEach(
-      chunk.map((token) => ({
-        token,
-        notification: {
-          title: notice?.title ?? "Walk-in request",
-          body: notice?.body ?? "A rider arrived at your shop — tap to review",
-        },
-        data: {
-          ticketId: ticket.id,
-          ticketType: ticket.ticketType as string,
-          status: ticket.status as string,
-        },
-      })),
-    );
-    delivered += response.successCount ?? 0;
-    const dead: string[] = [];
-    response.responses.forEach((r, idx) => {
-      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
-        const token = chunk[idx];
-        if (token !== undefined) dead.push(token);
-      }
-    });
-    if (dead.length > 0) {
-      await fcmTokenRepository.removeTokens(operatorUid, dead);
-    }
-  }
+  const addressed: AddressedMessage[] = tokens.map((token) => ({
+    userId: operatorUid,
+    token,
+    message: {
+      token,
+      notification: {
+        title: notice?.title ?? "Walk-in request",
+        body: notice?.body ?? "A rider arrived at your shop — tap to review",
+      },
+      android: androidFor(urgent, ticket.id),
+      data: {
+        ticketId: ticket.id,
+        ticketType: ticket.ticketType as string,
+        status: ticket.status as string,
+        ...(urgent ? {urgent: "true"} : {}),
+      },
+    } as Message,
+  }));
+  const delivered = await sendChunked(addressed);
   return {delivered, skipped: false};
 };
 
 
 export const deliverOperatorPush = async (
   ticket: Record<string, unknown> & {id: string},
-  notice?: {title: string; body: string},
+  notice?: Notice,
+  urgent = false,
 ): Promise<{delivered: number; skipped: boolean}> => {
   const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
     (v): v is string => typeof v === "string" && v !== "",
@@ -137,36 +172,26 @@ export const deliverOperatorPush = async (
   const record = await fcmTokenRepository.findByUserId(operatorUid);
   const tokens = (record?.tokens as string[] | undefined) ?? [];
   if (tokens.length === 0) return {delivered: 0, skipped: true};
-  let delivered = 0;
-  for (let i = 0; i < tokens.length; i += SEND_CHUNK) {
-    const chunk = tokens.slice(i, i + SEND_CHUNK);
-    const response = await messaging.sendEach(
-      chunk.map((token) => ({
-        token,
-        notification: {
-          title: notice?.title ?? "Ticket update",
-          body: notice?.body ??
-            "A ticket at your shop changed — tap to view",
-        },
-        data: {
-          ticketId: ticket.id,
-          ticketType: ticket.ticketType as string,
-          status: ticket.status as string,
-        },
-      })),
-    );
-    delivered += response.successCount ?? 0;
-    const dead: string[] = [];
-    response.responses.forEach((r, idx) => {
-      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
-        const token = chunk[idx];
-        if (token !== undefined) dead.push(token);
-      }
-    });
-    if (dead.length > 0) {
-      await fcmTokenRepository.removeTokens(operatorUid, dead);
-    }
-  }
+  const addressed: AddressedMessage[] = tokens.map((token) => ({
+    userId: operatorUid,
+    token,
+    message: {
+      token,
+      notification: {
+        title: notice?.title ?? "Ticket update",
+        body: notice?.body ??
+          "A ticket at your shop changed — tap to view",
+      },
+      android: androidFor(urgent, ticket.id),
+      data: {
+        ticketId: ticket.id,
+        ticketType: ticket.ticketType as string,
+        status: ticket.status as string,
+        ...(urgent ? {urgent: "true"} : {}),
+      },
+    } as Message,
+  }));
+  const delivered = await sendChunked(addressed);
   return {delivered, skipped: false};
 };
 
@@ -177,48 +202,36 @@ export const fanOutToCandidates = async (
   title: string,
   body: string,
 ): Promise<{delivered: number; skipped: boolean}> => {
-  const targets: Array<{userId: string; token: string}> = [];
+  const addressed: AddressedMessage[] = [];
   const records = await fcmTokenRepository.findByUserIds(candidates);
   for (const userId of candidates) {
     const tokens = (records.get(userId)?.tokens as string[] | undefined) ??
       [];
     for (const token of tokens) {
-      targets.push({userId, token});
-    }
-  }
-  let delivered = 0;
-  for (let i = 0; i < targets.length; i += SEND_CHUNK) {
-    const chunk = targets.slice(i, i + SEND_CHUNK);
-    const response = await messaging.sendEach(
-      chunk.map(({token}) => ({
+      addressed.push({
+        userId,
         token,
-        notification: {title, body},
-        data: {
-          ticketId: ticket.id,
-          ticketType: ticket.ticketType as string,
-          lat: String(ticket.lat),
-          lng: String(ticket.lng),
-        },
-      })),
-    );
-    delivered += response.successCount ?? 0;
-    const dead = new Map<string, string[]>();
-    response.responses.forEach((r, idx) => {
-      if (!r.success && r.error && DEAD_TOKEN_CODES.has(r.error.code)) {
-        const {userId, token} = chunk[idx];
-        dead.set(userId, [...(dead.get(userId) ?? []), token]);
-      }
-    });
-    for (const [userId, tokens] of dead) {
-      await fcmTokenRepository.removeTokens(userId, tokens);
+        message: {
+          token,
+          notification: {title, body},
+          android: androidFor(false, ticket.id),
+          data: {
+            ticketId: ticket.id,
+            ticketType: ticket.ticketType as string,
+            lat: String(ticket.lat),
+            lng: String(ticket.lng),
+          },
+        } as Message,
+      });
     }
   }
+  const delivered = await sendChunked(addressed);
   return {delivered, skipped: false};
 };
 
 export const deliverTowWithdrawn = async (
   ticketId: string,
-  notice?: {title: string; body: string},
+  notice?: Notice,
 ): Promise<{delivered: number; skipped: boolean}> => {
   if (!fcmEnabled()) return {delivered: 0, skipped: true};
   const ticket = await dispatchRepository.findById(ticketId);
@@ -243,17 +256,42 @@ export const deliverTowWithdrawn = async (
 export const deliverDispatchPush = async (
   ticketId: string,
   audience?: string,
-  notice?: {title: string; body: string},
+  notice?: Notice,
   shopId?: string,
+  urgent = false,
+): Promise<{delivered: number; skipped: boolean}> => {
+  const result = await deliverDispatchPushInner(
+    ticketId,
+    audience,
+    notice,
+    shopId,
+    urgent,
+  );
+  logInfo("push", "dispatch delivered", {
+    ticketId,
+    audience: audience ?? "status-blind",
+    urgent,
+    delivered: result.delivered,
+    skipped: result.skipped,
+  });
+  return result;
+};
+
+const deliverDispatchPushInner = async (
+  ticketId: string,
+  audience?: string,
+  notice?: Notice,
+  shopId?: string,
+  urgent = false,
 ): Promise<{delivered: number; skipped: boolean}> => {
   if (!fcmEnabled()) return {delivered: 0, skipped: true};
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) return {delivered: 0, skipped: true};
   if (audience === "operator") {
-    return deliverOperatorPush(ticket, notice);
+    return deliverOperatorPush(ticket, notice, urgent);
   }
   if (audience === "rider") {
-    return deliverStatusPush(ticket, notice);
+    return deliverStatusPush(ticket, notice, urgent);
   }
   if (audience === "tower-candidates") {
     return deliverTowWithdrawn(ticketId, notice);
@@ -265,7 +303,7 @@ export const deliverDispatchPush = async (
         ticket.destinationShopId :
         "";
     if (target === "") return {delivered: 0, skipped: true};
-    return deliverShopPush(ticket, target, notice);
+    return deliverShopPush(ticket, target, notice, urgent);
   }
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
     return deliverStatusPush(ticket, notice);

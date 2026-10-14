@@ -38,6 +38,17 @@ interface DispatchTicket {
     actual: boolean;
     at: string;
   }>;
+  towFare?: {
+    estimate: number;
+    ceiling: number;
+    final?: number | null;
+    partial?: boolean;
+    deadheadKm: number;
+    loadedKm: number;
+    night: boolean;
+    vehicleClass?: string | null;
+  } | null;
+  cancelledBy?: string | null;
   towDistanceMeters?: number | null;
   etaPickupAt?: string | null;
   etaDropoffAt?: string | null;
@@ -296,6 +307,26 @@ const findActiveForShop = async (
   return results;
 };
 
+const findActiveForDestination = async (
+  shopId: string,
+): Promise<DispatchTicket[]> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("destinationShopId", "==", shopId)
+    .get();
+  const results: DispatchTicket[] = [];
+  snap.forEach((doc) => {
+    const ticket = {id: doc.id, ...doc.data()} as DispatchTicket;
+    if (
+      ticket.status === STATUS_DISPATCH.PENDING ||
+      ACTIVE_TICKET_STATUSES.has(ticket.status)
+    ) {
+      results.push(ticket);
+    }
+  });
+  return results;
+};
+
 const findStaleWalkIns = async (
   nowIso: string,
 ): Promise<DispatchTicket[]> => {
@@ -397,6 +428,7 @@ const countFulfilled = async (shopId: string): Promise<number> => {
 
 export {create, findById, updateStatus, update, claimForAssignment,
   findByStatus, findByStatusForTypes, findByUserId, findActiveForUid,
-  findByAssignee, findActiveForShop, findPendingForShop, findRecentForShop,
+  findByAssignee, findActiveForShop, findActiveForDestination,
+  findPendingForShop, findRecentForShop,
   findStaleWalkIns, countFulfilled,
   findBusyUids, ACTIVE_TICKET_STATUSES};

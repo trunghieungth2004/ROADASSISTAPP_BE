@@ -13,10 +13,20 @@ import {
   WALK_IN_TTL_MS,
 } from "./constants";
 import {
+  freezeTowLeg,
   resolveAccessWidth,
   resolveDestination,
 } from "./helpers";
-import {findCandidates} from "./candidates";
+import {
+  actualDeadheadKm,
+  isNightFare,
+  partialTowFare,
+  quoteTowFareForRoute,
+  settleTowFare,
+  stampTowFare,
+  type TowFareQuote,
+} from "./fare";
+import {findCandidates, findTowOperators} from "./candidates";
 import {stampTowEta} from "./accept";
 import {
   PROVIDER_KIND,
@@ -86,7 +96,8 @@ export const createDispatch = async ({
       throw new ValidationError("Walk-in tickets need a repair shop");
     }
     if (shop.status !== PROVIDER_STATUS.ACTIVE ||
-      (shop as {suspended?: boolean}).suspended === true) {
+      (shop as {suspended?: boolean}).suspended === true ||
+      shop.accepting === false) {
       throw new ValidationError("Walk-in shop is not available");
     }
     if (!servesVehicleClass(shop, vehicleClassOf(vehicleType))) {
@@ -168,6 +179,13 @@ export const createDispatch = async ({
     await enqueueDispatchPush(ticket.id);
   }
   if (ticketType === "TOW") {
+    const candidates = await findTowOperators({lat, lng, vehicleType});
+    if (candidates.length > 0) {
+      await dispatchRepository.update(ticket.id, {
+        candidates,
+        candidateTs: new Date().toISOString(),
+      });
+    }
     await enqueueDispatchPush(ticket.id);
     if (typeof destinationShopId === "string" && destinationShopId !== "") {
       await enqueueDispatchPush(
@@ -181,6 +199,12 @@ export const createDispatch = async ({
         },
       );
     }
+    cacheManager.del(NS);
+    if (candidates.length > 0) {
+      const refreshed = await dispatchRepository.findById(ticket.id);
+      return refreshed ?? ticket;
+    }
+    return ticket;
   }
   cacheManager.del(NS);
   return ticket;
@@ -249,12 +273,14 @@ export const assertTransition = ({
   status,
   isRider,
   isOperator,
+  isAssignee,
   isAdmin,
 }: {
   ticket: {status: string; ticketType: string; shopQuotedAmount?: unknown};
   status: string;
   isRider: boolean;
   isOperator: boolean;
+  isAssignee: boolean;
   isAdmin: boolean;
 }): void => {
   if (isAdmin) return;
@@ -302,6 +328,10 @@ export const assertTransition = ({
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
     if (isRider && from !== STATUS_DISPATCH.IN_PROGRESS) return;
+    if ((isOperator || isAssignee) && ticket.ticketType === "TOW" &&
+      (from === STATUS_DISPATCH.MATCHED || from === STATUS_DISPATCH.ARRIVED)) {
+      return;
+    }
     throw new ForbiddenError(
       "Cannot cancel once work is underway",
     );
@@ -359,6 +389,7 @@ export const updateDispatchStatus = async ({
     status,
     isRider,
     isOperator,
+    isAssignee,
     isAdmin,
   });
   await dispatchRepository.updateStatus(id, status, userId);
@@ -395,6 +426,7 @@ export const updateDispatchStatus = async ({
       const arrived = status === STATUS_DISPATCH.ARRIVED;
       await enqueueDispatchPush(id, `-status-${status}-operator`, {
         audience: "operator",
+        urgent: "true",
         title: arrived ? "Arrival confirmed" : "Ticket resolved",
         body: arrived ?
           "The rider confirmed arrival — tap to view" :
@@ -403,7 +435,60 @@ export const updateDispatchStatus = async ({
     }
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
-    await enqueueDispatchPush(id, "-cancelled-rider", {
+    const engagedTow = ticket.ticketType === "TOW" &&
+      typeof ticket.assignedShopId === "string" &&
+      ticket.assignedShopId !== "" &&
+      (ticket.status === STATUS_DISPATCH.MATCHED ||
+        ticket.status === STATUS_DISPATCH.ARRIVED);
+    const towerCancel = isOperator && !isRider && engagedTow;
+    let partialKm = 0;
+    if (engagedTow) {
+      const destId = typeof ticket.destinationShopId === "string" &&
+        ticket.destinationShopId !== "" ?
+        ticket.destinationShopId as string :
+        null;
+      await freezeTowLeg(id, {
+        towLegs: ticket.towLegs,
+        towDistanceMeters: ticket.towDistanceMeters,
+        assignedShopId: ticket.assignedShopId,
+        lat: ticket.lat,
+        lng: ticket.lng,
+      }, destId);
+      const fresh = await dispatchRepository.findById(id);
+      partialKm = actualDeadheadKm(fresh?.towLegs);
+      const partial = partialTowFare({
+        ...(typeof ticket.vehicleType === "string" ?
+          {vehicleClass: vehicleClassOf(ticket.vehicleType)} :
+          {}),
+        night: isNightFare(),
+        deadheadKm: partialKm,
+      });
+      const prior = fresh?.towFare as TowFareQuote | null | undefined;
+      await dispatchRepository.update(id, {
+        towFare: {
+          estimate: typeof prior?.estimate === "number" ? prior.estimate : 0,
+          ceiling: typeof prior?.ceiling === "number" ? prior.ceiling : 0,
+          final: partial,
+          partial: true,
+          deadheadKm: partialKm,
+          loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
+          night: isNightFare(),
+          vehicleClass: typeof prior?.vehicleClass === "string" ?
+            prior.vehicleClass :
+            vehicleClassOf(ticket.vehicleType),
+        },
+      });
+    }
+    await dispatchRepository.update(id, {cancelledBy: userId});
+    const towerKm = Math.round(partialKm * 10) / 10;
+    await enqueueDispatchPush(id, "-cancelled-rider", towerCancel ? {
+      audience: "rider",
+      urgent: "true",
+      title: "Tow cancelled by tower",
+      body: partialKm > 0 ?
+        `The tower cancelled the tow — ${towerKm} km traveled on record` :
+        "The tower cancelled the tow",
+    } : {
       title: "Request cancelled",
       body: "Your request was cancelled",
     });
@@ -422,7 +507,9 @@ export const updateDispatchStatus = async ({
       await enqueueDispatchPush(id, `-status-${status}-operator`, {
         audience: "operator",
         title: "Request cancelled",
-        body: "The rider cancelled this ticket — tap to view",
+        body: towerCancel ?
+          "The tower cancelled this ticket — tap to view" :
+          "The rider cancelled this ticket — tap to view",
       });
     }
     if (ticket.ticketType === "TOW" &&
@@ -432,8 +519,11 @@ export const updateDispatchStatus = async ({
       await enqueueDispatchPush(id, "-cancelled-destination", {
         audience: "destination-shop",
         shopId: destId,
+        urgent: "true",
         title: "Tow cancelled",
-        body: "The rider cancelled the tow to your shop",
+        body: towerCancel ?
+          "The tower cancelled the tow to your shop" :
+          "The rider cancelled the tow to your shop",
       });
     }
   }
@@ -450,6 +540,15 @@ export const updateDispatchStatus = async ({
       await providerRepository.update(shop.id, {accepting: true});
       cacheManager.del("shop");
       cacheManager.del("provider");
+    }
+  }
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW") {
+    const quote = ticket.towFare as TowFareQuote | null | undefined;
+    if (quote && typeof quote.estimate === "number") {
+      await dispatchRepository.update(id, {
+        towFare: {...quote, final: settleTowFare(quote)},
+      });
     }
   }
   if (status === STATUS_DISPATCH.RESOLVED &&
@@ -567,6 +666,14 @@ export const updateDispatchDestination = async ({userId,
       destinationShopId: destinationShopId ?? null,
       destinationPoint: destinationPoint ?? null,
     }, ticket.assignedShopId as string);
+    await stampTowFare(ticketId, {
+      lat: ticket.lat,
+      lng: ticket.lng,
+      vehicleType: ticket.vehicleType,
+      destinationShopId: destinationShopId ?? null,
+      destinationPoint: destinationPoint ?? null,
+      towFare: ticket.towFare ?? null,
+    }, ticket.assignedShopId as string);
   }
   if (typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== "") {
@@ -598,6 +705,7 @@ export const updateDispatchDestination = async ({userId,
     await enqueueDispatchPush(ticketId, `-dropped-${prevShopId}`, {
       audience: "destination-shop",
       shopId: prevShopId,
+      urgent: "true",
       title: "Drop-off changed",
       body: "Your shop is no longer the drop-off for this tow",
     });
@@ -605,6 +713,67 @@ export const updateDispatchDestination = async ({userId,
   return dispatchRepository.findById(ticketId);
 };
 
+
+export const estimateTowFarePreview = async ({
+  userId,
+  ticketId,
+  lat,
+  lng,
+  now,
+}: {
+  userId: string;
+  ticketId: string;
+  lat: number;
+  lng: number;
+  now?: Date;
+}) => {
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "TOW" ||
+    ticket.status !== STATUS_DISPATCH.PENDING) {
+    throw new ValidationError("Fare preview needs a pending tow");
+  }
+  let destLat: number | undefined;
+  let destLng: number | undefined;
+  if (typeof ticket.destinationShopId === "string" &&
+    ticket.destinationShopId !== "") {
+    const dest = await providerRepository.findById(
+      ticket.destinationShopId as string,
+    );
+    if (dest && typeof dest.lat === "number" &&
+      typeof dest.lng === "number") {
+      destLat = dest.lat;
+      destLng = dest.lng;
+    }
+  } else if (ticket.destinationPoint &&
+    typeof ticket.destinationPoint === "object") {
+    const point = ticket.destinationPoint as {
+      lat?: unknown;
+      lng?: unknown;
+    };
+    if (typeof point.lat === "number" && typeof point.lng === "number") {
+      destLat = point.lat;
+      destLng = point.lng;
+    }
+  }
+  const quote = await quoteTowFareForRoute({
+    ...(typeof ticket.vehicleType === "string" ?
+      {vehicleType: ticket.vehicleType} :
+      {}),
+    towerLat: lat,
+    towerLng: lng,
+    ticketLat: ticket.lat,
+    ticketLng: ticket.lng,
+    ...(destLat !== undefined && destLng !== undefined ?
+      {destLat, destLng} :
+      {}),
+    ...(now ? {now} : {}),
+  });
+  if (!quote) throw new ValidationError("Route unavailable for estimate");
+  return quote;
+};
 
 export const refreshTowEta = async ({
   userId,

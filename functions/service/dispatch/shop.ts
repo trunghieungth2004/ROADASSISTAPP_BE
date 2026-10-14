@@ -16,7 +16,7 @@ import {
   STATUS_DISPATCH,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
-import {haversineMeters} from "../../utils/geo";
+import {freezeTowLeg} from "./helpers";
 import {isOpenNow} from "../providerService";
 import {reporterHandle} from "../../utils/points";
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -260,6 +260,8 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
     } else {
       const riderId = strOf(row.userId);
       if (riderId !== "") riderIds.add(riderId);
+      const destShopId = strOf(row.destinationShopId);
+      if (destShopId !== "") shopIds.add(destShopId);
     }
   }
   const [shops, riders] = await Promise.all([
@@ -370,6 +372,8 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
       const count = rider?.ratingCount;
       if (typeof count === "number") party.ratingCount = count;
       row.otherParty = party;
+      const dest = destinationPartyOf(row, shopDetails);
+      if (dest) row.destinationParty = dest;
     }
   }
 };
@@ -637,41 +641,22 @@ export const declineDestination = async ({
     throw new ForbiddenError("Only the destination shop declines");
   }
   const destShopId = ticket.destinationShopId as string;
-  const legs = Array.isArray(ticket.towLegs) ? [...ticket.towLegs] : [];
-  let legKm = 0;
-  let actual = false;
-  const hasTower = typeof ticket.assignedShopId === "string" &&
-    ticket.assignedShopId !== "";
-  if (hasTower) {
-    const fixes = await providerLocationRepository.findByIds(
-      [ticket.assignedShopId as string],
-    );
-    const fix = fixes.get(ticket.assignedShopId as string);
-    if (fix && typeof fix.lat === "number" && typeof fix.lng === "number") {
-      legKm = Math.round(
-        haversineMeters(fix.lat, fix.lng, ticket.lat, ticket.lng),
-      );
-      actual = Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
-    }
-    legs.push({
-      toShopId: destShopId,
-      km: legKm,
-      actual,
-      at: new Date().toISOString(),
-    });
-  }
-  const total = (typeof ticket.towDistanceMeters === "number" ?
-    ticket.towDistanceMeters :
-    0) + legKm;
+  const legKm = await freezeTowLeg(ticketId, {
+    towLegs: ticket.towLegs,
+    towDistanceMeters: ticket.towDistanceMeters,
+    assignedShopId: ticket.assignedShopId,
+    lat: ticket.lat,
+    lng: ticket.lng,
+  }, destShopId);
   await dispatchRepository.update(ticketId, {
     destinationShopId: null,
     destinationSnapshot: null,
     destinationPoint: null,
-    ...(hasTower ? {towLegs: legs, towDistanceMeters: total} : {}),
   });
   cacheManager.del(NS);
   await enqueueDispatchPush(ticketId, "-destination-declined", {
     audience: "rider",
+    urgent: "true",
     title: "Destination declined",
     body: "The shop can't take your vehicle — pick another drop-off",
   });

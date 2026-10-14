@@ -644,6 +644,20 @@ describe("phase 2 provider schemas", () => {
       table.searchProviders.validate(base).error,
     ).toBeDefined();
   });
+  test("searchProviders accepts an optional kind", () => {
+    expect(
+      table.searchProviders.validate({...base, query: "fix", kind: "SHOP"})
+        .error,
+    ).toBeUndefined();
+    expect(
+      table.searchProviders.validate({...base, query: "fix", kind: "TOW"})
+        .error,
+    ).toBeUndefined();
+    expect(
+      table.searchProviders.validate({...base, query: "fix", kind: "RIDER"})
+        .error,
+    ).toBeDefined();
+  });
   test("INFO_INACCURATE is a valid report reason", () => {
     expect(
       table.reportProvider.validate({

@@ -152,7 +152,10 @@ destination edit (+ destination-shop on retarget, dropped-shop on move-away, ETA
 │  carried shop operator        │  (or the ticket destination; creation,
 │                               │  retargets, move-aways, cancels, expiries)
 │  other status → rider         │  per-type title + status body (explicit
-│                               │  title/body override for notices)
+│                               │  title/body override for notices — the
+│                               │  override always wins, including at
+│                               │  MATCHED, so a decline notice is never
+│                               │  replaced by the accept copy)
 │  dead tokens pruned per chunk │
 └───────────────────────────────┘
 ```
@@ -191,18 +194,20 @@ the name (a repeated suffix silently swallows the later push):
 | Event | Suffix | Audience | Copy | Gate |
 |---|---|---|---|---|
 | SOS filed | (none) | candidate volunteers | "SOS request near you" | candidates exist |
-| Walk-in filed | (none) | named shop operator | "Walk-in request" | always (spawned walk-ins included) |
-| TOW filed | (none) | nearby towers | "Tow request near you" | always |
+| Walk-in filed | (none) | named shop operator | "Walk-in request" | always, unless the shop switched duty off (filing rejected, push skipped) |
+| TOW filed | (none) | nearby towers | "Tow request near you" | always; freezes `candidates` + `candidateTs` like SOS |
 | TOW filed with shop drop-off | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | destinationShopId set |
 | Destination retargeted to shop | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | new destinationShopId set |
 | Destination moved away from shop | `-dropped-<shopId>` | previous shop (carried) | "Drop-off changed" | previous ≠ new, both set |
-| Accept (shop/tower/volunteer) | `-status-2` | rider | per-type matched body | always on accept |
+| Accept (shop/tower/volunteer) | `-status-2-rider` | rider (explicit) | per-type matched body | always on accept |
 | Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | listed statuses only |
-| Arrived/resolved + engaged shop | `-status-3/4-operator` | operator | "Arrival confirmed" / "Ticket resolved" | assigned/addressed |
+| Arrived/resolved + engaged shop | `-status-3/4-operator` | operator (urgent) | "Arrival confirmed" / "Ticket resolved" | assigned/addressed |
 | Quote approved | `-status-6-operator` | operator | "Quote approved" | always on approve |
 | Quote sent (either endpoint) | `-status-9` | rider | "Your shop sent a quote" | always on send |
 | Work saved without quote | — | none | — | silent by design |
 | Manual cancel | `-cancelled-rider` | rider | "Request cancelled" | always |
+| Tower mid-trip cancel | `-cancelled-rider` | rider (explicit) + leg freeze | "Tow cancelled by tower" (+ km on record) | engaged tower at `2`/`3`; writes `cancelledBy`, freezes the traveled leg through the shared helper, operator + destination copies name the tower |
+| Tow fare estimate | — | viewer (ephemeral) | `POST /dispatch/fare/estimate` | pending TOW only; deadhead from the given position, loaded from the destination; display-only, never stored |
 | Pending-TOW cancel | `-cancelled-towers` | tower-candidates (recomputed) | "Tow request withdrawn" | was pending TOW |
 | Cancel + engaged shop | `-status-5-operator` | operator | "Request cancelled" (rider did it) | assigned/addressed |
 | Tow cancel + shop drop-off | `-cancelled-destination` | destination shop (carried) | "Tow cancelled" | TOW + destinationShopId |
@@ -214,7 +219,63 @@ the name (a repeated suffix silently swallows the later push):
 | Destination declined | `-destination-declined-operator` | operator | "Drop-off declined" | assigned tower |
 | Destination edited | `-destination-updated` | operator | "Drop-off updated" (+ shop name) | assigned tower |
 
+### Delivery priority
+
+Every dispatch send carries an explicit `android` block, because a bare
+`notification + data` message is delivered at FCM default priority and can
+land minutes late under Doze. Two tiers:
+
+| Tier | `priority` | `channelId` | Data flag | Who |
+|---|---|---|---|---|
+| Urgent | `high` | `dispatch-urgent` | `urgent: "true"` | rider on `2` MATCHED / `3` ARRIVED / `5` CANCELLED; destination-shop decline, drop-off-changed, tow-cancelled |
+| Normal | `normal` | `dispatch` | — | tower fan-out ("request near you"), withdrawn, incoming-tow info, routine operator updates (quotes, edits, declines) |
+
+Rider urgency is derived from ticket status in `deliverStatusPush`, so an
+accept or a cancel needs no flag at the enqueue site. The three destination
+audiences set `urgent: "true"` explicitly because their ticket status is not
+itself a rider-urgency signal — a destination declined at PENDING would
+otherwise ride the normal tier, which is precisely the case the rider most
+needs to act on. The flag travels enqueue → `/dispatch/deliver` → sender.
+
+The client mirrors the split: `urgent` bypasses the navigation-time banner
+suppression (see the app's `PUSH.md`), so a MATCHED arriving mid-turn still
+alerts. Towers and routine traffic stay suppressed while navigating.
+
+Every send carries `tag: ticket.id` in the android notification, so a new
+status *replaces* the prior tray entry instead of stacking MATCHED →
+ARRIVED → RESOLVED into three. Urgent sends additionally carry `ttl:
+3600000` (one hour, Admin SDK milliseconds) — a cancel nobody received
+expires instead of arriving six hours late to a resolved ticket. Normal-tier
+sends carry no TTL cap: the fan-out must reach towers whenever they come
+online, and the ticket state it points at is re-read at tap time.
+
+All four senders (`deliverStatusPush`, `deliverShopPush`,
+`deliverOperatorPush`, `fanOutToCandidates`) go through one `sendChunked()`
+helper — chunking, success counting, and dead-token pruning live in exactly
+one place, so the tiers can't drift apart per sender again.
+
+Each delivery emits one structured log line (`ticketId`, `audience`,
+`urgent`, `delivered`, `skipped`) — the absence of this line is what made
+the last two "no/late push" episodes archaeology. Grep `scope: "push"`
+for the delivery history of any ticket.
+
+### Deliver endpoint identity
+
+`/dispatch/deliver` and `/push/deliver` accept **either** the shared
+`X-Push-Secret` **or** a Google-signed OIDC bearer token for
+`TASK_INVOKER_EMAIL` (the Cloud Tasks invoker — the token is already
+attached to every task, we just verify it now). The audience set is both
+deliver URLs, because the two paths have different hosts and
+single-audience verification would break one of them. The middleware fails
+closed on every unset input: no token, no invoker email, no
+audience URLs — all 403. There is no shared-secret fallback: the canonical
+secret lives in git-crypt as break-glass for reverts, not as a code path.
+
 ## Configuration (dispatch)
+
+### Tow fare (platform rates, record-only)
+
+Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))` with bike 150k/10k/3km, car 500k/25k/10km, night 1.5× (22–06 ICT), class 1×/2.5×. The loaded leg is frozen at accept (tower eats detours); deadhead bills only on cancel partials from `actual` legs. Accept stamps `{estimate, ceiling}` (ceiling = estimate × 1.1, binding later restamps); resolve writes `final`; cancel writes a deadhead partial. `POST /dispatch/fare/estimate` previews pending tows from a viewer position (display-only, never stored). No charge is computed or collected — the ticket carries the record for cash settlement roadside.
 
 | Var | Default | Purpose |
 |---|---|---|

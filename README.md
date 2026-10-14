@@ -62,6 +62,19 @@ Clients can fetch the mapping at runtime via `POST /roles/all`, or resolve the c
 
 `functions/config/serviceAccountKey.json` and `functions/config/firebaseConfig.json` are git-crypt protected. Cloning requires `git-crypt unlock` with the repo key — otherwise those files check out as ciphertext.
 
+Push delivery (`/push/deliver`, `/dispatch/deliver`) authenticates via
+`PUSH_DELIVER_SECRET`, whose canonical copy is the git-crypt protected
+`functions/config/pushDeliverSecret.json`. New machine setup after unlock:
+
+```bash
+cp functions/.env.example functions/.env   # first time only
+npm run setup:secrets --prefix functions    # syncs the secret into functions/.env
+```
+
+`functions/.env` is gitignored and is what `firebase deploy` reads, so the
+value never enters the repo. `npm run setup:secrets` refuses to run if
+`.env` ever stops being ignored.
+
 ## Error Format
 
 ```json

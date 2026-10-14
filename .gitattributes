@@ -1,2 +1,3 @@
 functions/config/serviceAccountKey.json filter=git-crypt diff=git-crypt
 functions/config/firebaseConfig.json filter=git-crypt diff=git-crypt
+functions/config/pushDeliverSecret.json filter=git-crypt diff=git-crypt

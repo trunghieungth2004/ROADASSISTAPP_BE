@@ -54,3 +54,22 @@ export const DECLINE_REASON_LABEL: Record<string, string> = {
   PARTS_DELAY: "Parts delayed",
   OTHER: "",
 };
+
+export const TOW_FARE = {
+  SOLO_BIKE: {base: 150000, perKm: 10000, includedKm: 3},
+  CAR: {base: 500000, perKm: 25000, includedKm: 10},
+};
+
+export const TOW_FARE_NIGHT_MULT = 1.5;
+export const TOW_FARE_CEILING = 1.1;
+export const NIGHT_START_MINUTES = 22 * 60;
+export const NIGHT_END_MINUTES = 6 * 60;
+
+export const DISPATCH_CHANNEL = "dispatch";
+export const URGENT_DISPATCH_CHANNEL = "dispatch-urgent";
+
+export const URGENT_DISPATCH_STATUSES: Set<string> = new Set([
+  STATUS_DISPATCH.MATCHED,
+  STATUS_DISPATCH.ARRIVED,
+  STATUS_DISPATCH.CANCELLED,
+]);

@@ -7,7 +7,8 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "lint": "eslint --ext .js,.ts .",
-    "env:check": "bash ../scripts/check-env.sh",
+    "env:check": "bash ../scripts/lib/check-env.sh",
+    "setup:secrets": "bash ../scripts/lib/setup-secrets.sh",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "test": "JEST_JUNIT_OUTPUT_DIR=test-report JEST_JUNIT_OUTPUT_NAME=junit.xml npx jest",
@@ -49,6 +50,7 @@
     "express-rate-limit": "^8.5.2",
     "firebase-admin": "^13.6.0",
     "firebase-functions": "^7.0.0",
+    "google-auth-library": "^10.9.1",
     "joi": "^18.2.3",
     "lru-cache": "^11.5.2",
     "morgan": "^1.11.0"

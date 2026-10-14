@@ -316,6 +316,7 @@ const schemas = {
   }),
   searchProviders: locationBody().append({
     query: Joi.string().trim().min(1).max(120).required(),
+    kind: Joi.string().valid("SHOP", "TOW").optional(),
     vehicleClass: Joi.string()
       .valid(...Object.values(VEHICLE_CLASS))
       .optional(),
@@ -441,6 +442,9 @@ const schemas = {
     ticketId: strReq(),
   }),
   refreshTowEta: Joi.object({
+    ticketId: strReq(),
+  }),
+  estimateTowFare: locationBody().append({
     ticketId: strReq(),
   }),
   feedTickets: Joi.object({

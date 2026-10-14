@@ -250,6 +250,22 @@ const refreshTowEta = async (req: Request, res: Response) => {
   }
 };
 
+const estimateTowFare = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, lat, lng} = req.body;
+    const result = await dispatchService.estimateTowFarePreview({
+      userId,
+      ticketId,
+      lat,
+      lng,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const shopRequests = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -289,7 +305,7 @@ const feedTickets = async (req: Request, res: Response) => {
 
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
-    const {ticketId, audience, title, body, shopId} = req.body;
+    const {ticketId, audience, title, body, shopId, urgent} = req.body;
     const result = await dispatchService.deliverDispatchPush(
       ticketId,
       audience,
@@ -297,6 +313,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
         {title, body} :
         undefined,
       typeof shopId === "string" && shopId !== "" ? shopId : undefined,
+      urgent === true || urgent === "true",
     );
     sendSuccess(res, result);
   } catch (error) {
@@ -307,7 +324,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
-  sendQuote, approveQuote, declineDestination, refreshTowEta,
+  sendQuote, approveQuote, declineDestination, refreshTowEta, estimateTowFare,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../functions" && pwd)/.env"
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../functions" && pwd)/.env"
 REQUIRED="VALHALLA_URL FCM_ENABLED CLOUD_TASKS_ENABLED PUSH_DELIVER_URL DISPATCH_DELIVER_URL TASK_INVOKER_EMAIL TASK_QUEUE_LOCATION"
 missing=0
 if [ ! -f "$ENV_FILE" ]; then

@@ -288,6 +288,31 @@ const updateProvider = async ({
   if (operator !== userId && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator updates this provider");
   }
+  if (fields.accepting === true && provider.kind === PROVIDER_KIND.TOW) {
+    const live = await dispatchRepository.findActiveForShop(providerId);
+    if (live.length > 0) {
+      throw new ValidationError(
+        "Finish the active job before switching tow duty back on",
+      );
+    }
+  }
+  if (fields.accepting === false && provider.kind === PROVIDER_KIND.SHOP) {
+    const [assigned, pending, named] = await Promise.all([
+      dispatchRepository.findActiveForShop(providerId),
+      dispatchRepository.findPendingForShop(providerId),
+      dispatchRepository.findActiveForDestination(providerId),
+    ]);
+    if (assigned.length > 0 || pending.length > 0) {
+      throw new ValidationError(
+        "Decline or resolve open tickets before closing the shop",
+      );
+    }
+    if (named.length > 0) {
+      throw new ValidationError(
+        "Decline the tow destination before closing the shop",
+      );
+    }
+  }
   if (fields.vehicleClasses !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP) {
     throw new ValidationError("Vehicle classes are shop-only");
@@ -490,6 +515,7 @@ const searchProvidersInner = async ({
   lat,
   lng,
   query,
+  kind,
   vehicleClass,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
@@ -498,6 +524,7 @@ const searchProvidersInner = async ({
   lat: number;
   lng: number;
   query: string;
+  kind?: string;
   vehicleClass?: string;
   radiusMeters?: number;
   limit?: number;
@@ -509,7 +536,8 @@ const searchProvidersInner = async ({
   const at = now ?? new Date();
   const scored = found
     .filter((s) => s.status === PROVIDER_STATUS.ACTIVE &&
-      (s as {suspended?: boolean}).suspended !== true)
+      (s as {suspended?: boolean}).suspended !== true &&
+      (kind === undefined || s.kind === kind))
     .map((s) => {
       const distance = haversineMeters(
         lat,
@@ -551,6 +579,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     lat,
     lng,
     query,
+    kind,
     vehicleClass,
     radiusMeters,
     limit = NEAR_SHOPS_MAX,
@@ -559,6 +588,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     lat: number;
     lng: number;
     query: string;
+    kind?: string;
     vehicleClass?: string;
     radiusMeters?: number;
     limit?: number;
@@ -567,7 +597,8 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     const at = now ?? new Date();
     const minute = Math.floor(at.getTime() / 60000);
     return `${lat.toFixed(3)},${lng.toFixed(3)},` +
-      `${query.trim().toLowerCase()},${vehicleClass ?? "-"},` +
+      `${query.trim().toLowerCase()},${kind ?? "-"},` +
+      `${vehicleClass ?? "-"},` +
       `${radiusMeters ?? "-"},${limit},${minute}`;
   },
 });
@@ -576,6 +607,7 @@ const searchProviders = async ({
   lat,
   lng,
   query,
+  kind,
   vehicleClass,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
@@ -584,6 +616,7 @@ const searchProviders = async ({
   lat: number;
   lng: number;
   query: string;
+  kind?: string;
   vehicleClass?: string;
   radiusMeters?: number;
   limit?: number;
@@ -593,6 +626,7 @@ const searchProviders = async ({
     lat,
     lng,
     query,
+    kind,
     vehicleClass,
     radiusMeters,
     limit,
