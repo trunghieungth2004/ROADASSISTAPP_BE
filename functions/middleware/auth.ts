@@ -90,9 +90,10 @@ export const requireAuth = async (
     const authed = req as AuthedRequest;
     authed.uid = uid;
     authed.userRole = userData.role;
-    authed.userServices = Array.isArray(userData.services) ?
+    authed.userServices = Array.isArray(userData.services) &&
+      userData.services.length > 0 ?
       userData.services :
-      [];
+      [SERVICE_ROLE.RIDER];
     next();
   } catch (error) {
     logError("auth", "middleware error", {}, error);

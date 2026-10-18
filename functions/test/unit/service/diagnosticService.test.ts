@@ -27,7 +27,7 @@ describe("diagnosticService.createDiagnostic", () => {
     expect(diagnosticRepository.create).toHaveBeenCalledWith({
       userId: "u1",
       category: "FLAT_TIRE",
-      imagePath: "a.jpg",
+      imagePath: "diagnostics/u1/a.jpg",
     });
   });
 });
@@ -35,16 +35,26 @@ describe("diagnosticService.createDiagnostic", () => {
 describe("diagnosticService.getDiagnostic", () => {
   it("throws 404 for an unknown diagnostic", async () => {
     jest.mocked(diagnosticRepository.findById).mockResolvedValue(null);
-    await expect(getDiagnostic("ghost")).rejects.toMatchObject({
+    await expect(getDiagnostic("ghost", "u1")).rejects.toMatchObject({
       statusCode: 404,
     });
   });
 
   it("returns the diagnostic", async () => {
-    const diagnostic = {id: "d1"};
+    const diagnostic = {id: "d1", userId: "u1"};
     jest.mocked(diagnosticRepository.findById).mockResolvedValue(
       diagnostic as never,
     );
-    await expect(getDiagnostic("d1")).resolves.toBe(diagnostic);
+    await expect(getDiagnostic("d1", "u1")).resolves.toBe(diagnostic);
+  });
+
+  it("rejects access to another user's diagnostic", async () => {
+    const diagnostic = {id: "d1", userId: "u2"};
+    jest.mocked(diagnosticRepository.findById).mockResolvedValue(
+      diagnostic as never,
+    );
+    await expect(getDiagnostic("d1", "u1")).rejects.toMatchObject({
+      statusCode: 403,
+    });
   });
 });

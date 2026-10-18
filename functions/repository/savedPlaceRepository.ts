@@ -31,16 +31,20 @@ const create = async (data: {
   return doc;
 };
 
+const quantizeCoord = (v: number): number => Number(v.toFixed(5));
+
 const findByCoords = async (
   userId: string,
   lat: number,
   lng: number,
 ): Promise<SavedPlace | null> => {
+  const qLat = quantizeCoord(lat);
+  const qLng = quantizeCoord(lng);
   const snapshot = await db
     .collection(COLLECTION)
     .where("userId", "==", userId)
-    .where("lat", "==", lat)
-    .where("lng", "==", lng)
+    .where("lat", "==", qLat)
+    .where("lng", "==", qLng)
     .limit(1)
     .get();
   if (snapshot.empty) return null;

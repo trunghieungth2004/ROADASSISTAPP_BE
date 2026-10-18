@@ -13,6 +13,7 @@ import {
 } from "../../constants/status";
 import {isCarVehicle, postRoute} from "../../utils/valhalla";
 import {vehicleClassOf} from "../providerService";
+import {logError} from "../../utils/logger";
 import * as dispatchRepository from
   "../../repository/dispatchRepository";
 import * as providerLocationRepository from
@@ -139,7 +140,8 @@ export const quoteTowFareForRoute = async ({
       deadheadKm: (deadhead.distanceMeters ?? 0) / 1000,
       loadedKm,
     });
-  } catch {
+  } catch (err) {
+    logError("dispatch", "tow-fare-quote-failed", {}, err);
     return null;
   }
 };
@@ -227,7 +229,8 @@ export const stampTowFare = async (
         final: null,
       },
     });
-  } catch {
+  } catch (err) {
+    logError("dispatch", "tow-fare-stamp-failed", {ticketId}, err);
     return;
   }
 };

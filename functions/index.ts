@@ -22,12 +22,16 @@ import savedPlaceRoutes from "./routes/savedPlaceRoutes";
 import routingRoutes from "./routes/routingRoutes";
 import providerRoutes from "./routes/providerRoutes";
 import diagnosticRoutes from "./routes/diagnosticRoutes";
-import dispatchRoutes from "./routes/dispatchRoutes";
+import dispatchRoutes, {mountDispatchDeliver} from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
+import paymentRoutes, {mountPaymentIpn} from "./routes/paymentRoutes";
+import adminRoutes from "./routes/adminRoutes";
+import disputeRoutes from "./routes/disputeRoutes";
 import * as flagService from "./service/flagService";
 import * as userService from "./service/userService";
 import * as routingService from "./service/routingService";
+import * as routingCacheRepository from "./repository/routingCacheRepository";
 import * as dispatchService from "./service/dispatchService";
 
 const app = express();
@@ -41,6 +45,8 @@ const routeDeps = {
 };
 
 mountPushDeliver(app, routeDeps);
+mountDispatchDeliver(app, routeDeps);
+mountPaymentIpn(app);
 
 const limiter = rateLimiter({
   windowMs: 1 * 60 * 1000,
@@ -72,7 +78,9 @@ const writeLimiter = rateLimiter({
   },
 });
 app.use(
-  ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places"],
+  ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places",
+    "/alleys", "/landmarks", "/diagnostics", "/vehicleProfiles",
+    "/payments", "/admin"],
   writeLimiter,
 );
 
@@ -87,7 +95,10 @@ app.use(
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
-      if (!origin || ALLOWED_ORIGINS.length === 0) return callback(null, true);
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.length === 0) {
+        return callback(new Error("CORS not configured"));
+      }
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
       return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
@@ -134,6 +145,9 @@ diagnosticRoutes(app, routeDeps);
 dispatchRoutes(app, routeDeps);
 ratingRoutes(app, routeDeps);
 pushRoutes(app, routeDeps);
+paymentRoutes(app, routeDeps);
+adminRoutes(app, routeDeps);
+disputeRoutes(app, routeDeps);
 
 app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);
@@ -174,6 +188,7 @@ export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
   },
   async () => {
     await routingService.sweepActiveRoutes();
+    await routingCacheRepository.deleteExpired();
     await dispatchService.sweepStaleWalkIns();
     await dispatchService.sweepLateTows();
   },

@@ -14,6 +14,7 @@ jest.mock("../../../repository/userRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(savedRouteRepository.listByUserId).mockResolvedValue([]);
 });
 
 const geometry = {type: "LineString", coordinates: [[106.6, 10.7]]};

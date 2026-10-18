@@ -62,6 +62,7 @@ Notable behaviors:
 - Hit returns the full payload `{cached: true, routes: [...]}` without touching Valhalla.
 - Miss calls Valhalla (`motor_scooter`, or `auto` for car-class `vehicleType`; no width params — the engine is width-agnostic), persists `{originLat/Lng, destLat/Lng, widthBucket, costing, routes, cachedAt, expiresAt}`, and returns `{cached: false, routes: [...]}`. Stop-less misses store up to 3 base routes; pre-alternatives single-route entries are still readable (legacy read). The bucket only scopes the width gate that runs after the solve, so different buckets may share the same base geometry.
 - Geometry is stored JSON-stringified: GeoJSON coordinates are nested arrays, which Firestore flattens — the service reparses on read.
+- Degenerate entries are ignored on read: a stored route whose geometry has fewer than two coordinates (a same-point trip written before this guard existed) never serves a hit, so the miss path re-solves and overwrites the doc — a poisoned key self-heals instead of replaying a one-point `LineString`.
 - TTL: `expiresAt = cachedAt + ROUTING_CACHE_TTL_SECONDS` (default 30 days, env-overridable). `findExisting` treats expired entries as misses; the miss path overwrites the same doc, so growth is bounded by the key space with no sweeper. Docs written before `expiresAt` existed (legacy) are treated as valid; corrupt `expiresAt` values are treated as expired so they self-heal on next read.
 
 ### Hazard feedback loop

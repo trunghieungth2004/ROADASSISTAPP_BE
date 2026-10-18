@@ -127,10 +127,10 @@ describe("schemas reject invalid input", () => {
     ).toBeUndefined();
     expect(
       table.setOnboarded.validate({service: "TOW"}).error,
-    ).toBeDefined();
+    ).toBeUndefined();
     expect(
       table.setOnboarded.validate({service: "SHOP"}).error,
-    ).toBeDefined();
+    ).toBeUndefined();
     expect(table.setOnboarded.validate({}).error).toBeDefined();
     expect(
       table.setOnboarded.validate({service: "PILOT"}).error,

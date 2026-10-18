@@ -2,6 +2,13 @@ import {db} from "../config/firebase";
 import {encodeGeohash} from "../utils/geo";
 import {PROVIDER_STATUS} from "../constants/status";
 
+interface ProviderService {
+  code: string;
+  name: string;
+  displayPrice: number;
+  quoteRequired: boolean;
+}
+
 interface Provider {
   id: string;
   kind: string;
@@ -13,6 +20,7 @@ interface Provider {
   label?: string | null;
   openHours?: string | null;
   vehicleClasses?: string[] | null;
+  services?: ProviderService[] | null;
   serviceFee?: number | null;
   accepting?: boolean;
   plate?: string | null;
@@ -48,6 +56,7 @@ const createShop = async (data: {
   label?: string;
   openHours?: string;
   vehicleClasses?: string[];
+  services?: ProviderService[];
   serviceFee?: number;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc();
@@ -62,6 +71,7 @@ const createShop = async (data: {
     label: data.label ?? null,
     openHours: data.openHours ?? null,
     vehicleClasses: data.vehicleClasses ?? null,
+    services: data.services ?? [],
     serviceFee: data.serviceFee ?? null,
     accepting: true,
     plate: null,
@@ -256,6 +266,7 @@ const findByNamePrefix = async (
 
 export {
   Provider,
+  ProviderService,
   createShop,
   createTow,
   findById,

@@ -40,7 +40,7 @@ const touch = async (
 ): Promise<void> => {
   await db
     .collection("active_routes")
-    .doc(routeKey)
+    .doc(`${userId}:${routeKey}`)
     .set({
       routeKey,
       userId,
@@ -69,9 +69,13 @@ const findNearFlag = async (
     snapshot.forEach((doc) => {
       if (seen.has(doc.id)) return;
       seen.add(doc.id);
+      const stored = doc.data() as Record<string, unknown>;
       const route = {
-        routeKey: doc.id,
-        ...doc.data(),
+        ...stored,
+        routeKey: typeof stored.routeKey === "string" &&
+          stored.routeKey !== "" ?
+          stored.routeKey :
+          doc.id,
       } as ActiveRoute;
       if (route.expiresAt !== undefined) {
         const ts = Date.parse(route.expiresAt);

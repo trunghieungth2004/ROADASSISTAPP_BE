@@ -38,6 +38,7 @@ Unknown fields are **stripped** before the request reaches the handler.
 | `email` | string (email) | req |
 | `password` | string (min 6) | req |
 | `displayName` | string (allows `""`/`null`) | opt |
+| `phone` | string (7–20 chars, `+?[0-9\s\-()]+`) | req |
 
 ### `POST /users/one` — `getOneUser`
 No body schema (returns the authenticated caller's own document).
@@ -261,7 +262,7 @@ Responds `{cached, routes}` — up to 5 options stop-less (`routes[0]` primary),
 ## Providers
 
 Provider records in the top-level `providers` collection. Kinds: `SHOP` (fixed premises,
-`ACTIVE` on create) and `TOW` (comes to you, `PENDING` on create, admin approves). `TOW`
+`PENDING` on create, admin approves) and `TOW` (comes to you, `PENDING` on create, admin approves). `TOW`
 doc id is the normalized plate (uppercased, non-alphanumerics stripped); plates are
 immutable. Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
 Live tow positions live in `provider_locations` (doc id = provider id; 15-minute freshness).
@@ -299,12 +300,15 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 |-------|------|---|
 | `lat` | lat | req |
 | `lng` | lng | req |
-| `radiusMeters` | number | opt (200–10000, default 2000) |
+| `radiusMeters` | number | opt (200–20000, default 2000) |
 | `kind` | enum: SHOP, TOW | opt |
 | `acceptingOnly` | boolean | opt |
 | `openOnly` | boolean | opt |
 | `vehicleClass` | enum: `SOLO_BIKE`, `CAR` | opt (undeclared shops match all) |
 | `limit` | number | opt (1–20) |
+| `minRating` | number (0–5) | opt (drops shops below the average) |
+| `sortBy` | enum: `distance`, `rating` | opt (default `distance`) |
+| `ticketId` | string | opt (marks rows with `declined: true` for shops that already declined the ticket) |
 
 ### `POST /providers/search` — `searchProviders`
 | Field | Type | |
@@ -313,8 +317,15 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `lng` | lng | req |
 | `query` | string (1–120) | req |
 | `vehicleClass` | enum: `SOLO_BIKE`, `CAR` | opt |
-| `radiusMeters` | number | opt (200–10000, default 10000) |
+| `radiusMeters` | number | opt (≥200, default 10000) |
 | `limit` | number | opt (1–20) |
+| `minRating` | number (0–5) | opt (drops shops below the average) |
+| `sortBy` | enum: `distance`, `rating` | opt (default `distance`) |
+| `ticketId` | string | opt (marks rows with `declined: true` for shops that already declined the ticket) |
+
+Provider `services` (display price list, `{name, price}` integer VND) ship
+on `near`/`search` rows. Shops the ticket declined carry `declined: true` on
+the row so the picker can mark them.
 
 ### `POST /providers/mine` — `myProviders`
 No fields. Returns the caller's own records with statuses, denial notes, and suspension state.
@@ -368,6 +379,15 @@ No fields. Open reports oldest-first with provider context.
 | `lat` | lat | req |
 | `lng` | lng | req |
 
+Stored provider fields that are not client-writable (ship on `near`/`search`
+rows automatically because rows spread the stored doc):
+
+| Field | Shape | Written by |
+|-------|-------|------------|
+| `services` | array of `{name: string, price: integer VND}` — display price list | `POST /providers` (create, `SHOP`) and `PUT /providers` (update) |
+| `ratingAvg` / `ratingCount` | denormalized rating aggregate | rating writes |
+| `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy` | suspension state | `POST /providers/suspend` / `/restore` (admin) |
+
 ---
 
 ## Diagnostics (XeAssist stub)
@@ -395,7 +415,17 @@ No fields. Open reports oldest-first with provider context.
 | `lng` | lng | req |
 | `diagnosticId` | string (allows `""`/`null`) | opt |
 | `providerId` | string | req for `WALK_IN` |
+| `destinationShopId` | string (allows `""`/`null`) | opt (TOW drop-off) |
+| `destinationPoint` | `{lat, lng, label?}` | opt (free-form drop-off) |
+| `vehicleType` | enum: `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` | opt |
+| `vehicleWidth` | number (0.3–3 m) | opt |
 | `vehicleLabel` | string (allows `""`/`null`) | opt |
+| `note` | string (max 280) | opt |
+| `description` | string (max 1000) | opt (richer job description) |
+| `photoUrls` | string[] Storage paths (0–5) | opt (evidence photos) |
+| `alleySegmentId` | string | opt |
+| `accessWidthMeters` | number (0–20 m) | opt |
+| `force` | boolean | opt (file despite a live duplicate) |
 
 ### `POST /dispatch/decline` — `declineDispatch`
 | Field | Type | |
@@ -410,9 +440,69 @@ No fields. Open reports oldest-first with provider context.
 |-------|------|---|
 | `ticketId` | string | req |
 | `workType` | string (allows `""`/`null`) | opt |
-| `quotedAmount` | integer ≥ 0 (VND) | opt |
-| `finalAmount` | integer ≥ 0 (VND) | opt |
+| `quotedAmount` | integer ≥ 0 (VND) | opt (one-shot; refused once `shopQuotedAmount` is on file) |
+| `finalAmount` | integer ≥ 0 (VND) | opt (one-shot; refused once `finalAmount` is on file) |
 | `invoiceRef` | string (allows `""`/`null`) | opt |
+
+### `POST /dispatch/quote` — `sendQuote`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `quotedAmount` | integer ≥ 0 (VND) | opt (one of the two required) |
+| `finalAmount` | integer ≥ 0 (VND) | opt (binding final when an estimate is on file) |
+| `workType` | string (max 280) | opt |
+| `faultPhotos` | string[] Storage paths (0–5) | opt |
+
+### `POST /dispatch/quote/approve` — `approveQuote`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+### `POST /dispatch/estimate` — `sendEstimate`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `estimateAmount` | integer ≥ 0 (VND) | req (stage-1 estimate) |
+| `estimateNote` | string (max 500, allows `""`/`null`) | opt |
+| `eta` | integer seconds (0–86400) | opt |
+| `faultPhotos` | string[] Storage paths (0–5) | opt |
+
+### `POST /dispatch/estimate/approve` — `approveEstimate`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+### `POST /dispatch/estimate/decline` — `declineEstimate`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `shopId` | string | opt (defaults to the declined `suggestedShopId`/`destinationShopId`) |
+
+### `POST /dispatch/unfixable` — `markUnfixable`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `reason` | string (1–500) | req |
+| `photoUrls` | string[] Storage paths (1–5) | req (evidence) |
+
+### `POST /dispatch/destination/decline` — `declineDestination`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `reasonCode` | enum: `SHOP_FULL`, `SHOP_CLOSED`, `SHOP_PARTS_DELAY`, `SHOP_OTHER` | req |
+
+### `POST /dispatch/tower/cancel` — `cancelTowerSearch`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `lat` / `lng` | lat/lng | opt (defaults to the ticket pin) |
+| `reasonCode` | string (1–64) | req |
+| `note` | string (max 280, allows `""`/`null`) | opt |
+
+### `POST /dispatch/waiting` — `waitingStatus`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
 
 ### `POST /dispatch/one` — `getDispatch`
 | Field | Type | |
@@ -423,13 +513,198 @@ No fields. Open reports oldest-first with provider context.
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
-| `status` | enum: `"1"` Pending, `"2"` Matched, `"3"` Arrived, `"4"` Resolved, `"5"` Cancelled, `"6"` In progress, `"7"` Ready, `"8"` Declined | req |
+| `status` | enum: `"1"`–`"15"` (see `STATUS.md`) | req (the transition matrix rejects sent-only codes `9`, `11`, `12`, `13`, `14`, `15`, and `2`) |
+| `lat` / `lng` | number | opt (re-match position on the legacy tower-cancel path) |
+| `reasonCode` | string (max 64) | opt |
 
 ### `POST /dispatch/shop/requests`, `POST /dispatch/shop/records` — `shopTickets`
 | Field | Type | |
 |-------|------|---|
 | `shopId` | string | req |
 | `limit` | number | opt for records (1–50) |
+
+### Stored dispatch-ticket fields (not request bodies)
+
+`dispatch_tickets` docs carry these fields beyond what the create schema
+accepts (see `functions/repository/dispatchRepository.ts` — the interface is
+the source of truth). None are client-writable except through the listed
+flows:
+
+| Field | Shape | Written by |
+|-------|-------|------------|
+| `description` | string / `null` — free-text job description | ticket filing |
+| `photoUrls` | string[] — evidence photo Storage paths | ticket filing; deleted on stale walk-in sweep |
+| `quoteRequests` / `quotes` | reserved shapes for a future multi-shop broadcast — no writer yet | — |
+| `suggestedShopId` | string / `null` — the rider's shop pick | `POST /dispatch/select`; cleared when that shop is declined via estimate decline |
+| `declinedShopIds` | string[] — shops that declined and stay declined for the life of the ticket | estimate decline / destination decline |
+| `pickupHistory` | array of `{lat, lng, at, reason}` — pickup-point corrections (`created`, `tower-cancel`, `REMATCH`) | ticket filing, legacy tower cancel, re-match |
+| `needsNewDestination` | boolean — the rider must pick a new drop-off | destination decline sets `true`; retarget clears it |
+| `towerSearch` | `"ACTIVE"` / `"PAUSED"` — tow broadcasting state | re-match / retarget |
+| `waiting` | `{active, startedAt, endedAt, fee, withinRadius, accruedAt}` — accrual window + fee (integer VND) | waiting clock (`startWaiting`/`accrue`/`stopWaiting`) |
+| `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, vehicleClass?, waitingFee?}` — stamped at accept, partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve | accept / re-match / waiting / resolve |
+| `towActual` | `{quotedKm, actualKm, cappedKm}` — quoted vs GPS-measured vs ceiling-capped haul | re-match / resolve settle |
+| `towLegs` | array of `{toShopId, km, actual, at}` — traveled legs; `actual` only when the tower fix was fresh | destination decline / re-match freeze |
+| `unfixable` | `{reason, photoUrls, by, at}` — on-site verdict; ticket closes `"15"`, full refund, no `final` | `POST /dispatch/unfixable` |
+| `shopQuotedAmount` / `finalAmount` / `workType` / `faultPhotos` / `invoiceRef` / `quotedBy` / `quotedAt` | one-shot quote + work-order fields (fault photos are Storage paths) | `sendQuote` / work orders |
+| `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | stage-1 estimate + 15-minute TTL | `sendEstimate` / `approveEstimate` |
+| `paymentArmed` / `quoteApprovedAt` | work-start gate stamp | `approveQuote` |
+| `paymentId` / `paymentMethod` / `paymentStatus` / `checkoutUrl` | latest charge link, stamped on every payment transition | `POST /payments/*` |
+
+## Payments
+
+Full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md). Charges are created
+`PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to
+`CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. Commission splits
+come from `platform_config/global`.
+
+### `POST /payments/create` — `createPayment` (rider)
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `method` | enum: `CASH`, `SEPAY` | req |
+
+Creates a `PENDING` charge for the ticket's payable amount (`finalAmount`,
+else `shopQuotedAmount`, else `towFare.final`, else `towFare.estimate` —
+`400` when none), stamped with the commission split
+(`commissionRate`/`commissionAmount`/`payoutAmount`). Refused when the ticket
+already has an active charge (`409` "Ticket already has an active payment")
+or the method is disabled in `platform_config.paymentMethodsEnabled`. `SEPAY`
+returns a signed `checkout` payload (`action`, `method: "POST"`, `fields`,
+`qrUrl`).
+
+### `POST /payments/ipn` — `ipn` (SePay only)
+Public callback, mounted before the rate limiters. The
+`Authorization: Apikey {SEPAY_SECRET_KEY}` header is verified (`403`
+otherwise) and the callback is idempotent per `qrRef`. Moves the charge
+`PENDING` → `HELD` with the gateway `ipnRef`; an amount mismatch is `400`.
+
+### `POST /payments/confirm-cash` — `confirmCash` (operator/admin)
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+Confirms the ticket's pending cash charge (`CASH` + `PENDING`), moving it
+`PENDING` → `CONFIRMED` with `confirmedBy`/`confirmedAt`. The rider's
+operator/assignee or an admin; anyone else gets `403`.
+
+### `POST /payments/one` — `getOne` (participant)
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+Charges for a ticket, visible to the rider, the ticket's operator/assignee,
+and admins (`403` otherwise).
+
+### `POST /payments/all` — `listAll` (admin)
+| Field | Type | |
+|-------|------|---|
+| `status` | enum from `PAYMENT_STATUS` | opt |
+| `limit` | number (1–100) | opt (default 50) |
+
+### Stored `payments` collection
+
+| Field | Shape |
+|-------|-------|
+| `ticketId` / `riderUid` / `payeeId` | charge owner, payer, operator receiver |
+| `method` | `CASH` or `SEPAY` |
+| `status` | `PENDING` → `HELD` → `CONFIRMED`, or `REFUNDED` / `PARTIAL` |
+| `amount` / `currency` | integer VND gross; `VND` |
+| `qrRef` / `ipnRef` | SePay order reference + gateway reference (idempotency keys) |
+| `commissionRate` / `commissionAmount` / `payoutAmount` | platform cut snapshot |
+| `confirmedBy` / `confirmedAt` | cash confirmation actor + time |
+| `receiptUrl` | reserved |
+| `refundAmount` / `refundedAt` / `refundedBy` | refund record |
+| `payoutRef` / `payoutAt` / `payoutBy` | operator payout record |
+
+## Disputes
+
+Model in [`DISPUTES.md`](./DISPUTES.md). Auto-filed on mid-tow tower cancels
+and destination declines; resolution is admin-only.
+
+### `POST /disputes` — `fileDispute` (participant)
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `accusedKind` | enum: `TOWER`, `SHOP`, `RIDER` | opt (defaults to `SHOP`; canonical codes) |
+| `accusedId` | string | opt |
+| `type` | enum: `TOWER_CANCEL_MID`, `SHOP_DECLINE_DROPOFF`, `RIDER_NO_SHOW`, `UNFIXABLE` | opt |
+| `reasonCode` | enum: `TOWER_CANCEL_BREAKDOWN`, `TOWER_CANCEL_SAFETY`, `TOWER_CANCEL_UNREACHABLE`, `TOWER_CANCEL_OTHER`, `SHOP_FULL`, `SHOP_PART_DELAY`, `SHOP_CLOSED`, `SHOP_CAPACITY`, `SHOP_OTHER`, `RIDER_NO_RESPONSE`, `RIDER_UNREACHABLE`, `RIDER_OTHER` | opt |
+| `reason` | alias: `LATE`, `OVERCHARGE`, `NO_SHOW`, `RUDE`, `WRONG_ROUTE`, `OTHER` | opt (`reasonCode` or `reason` required) |
+| `note` | string (max 500) | opt |
+| `photoUrls` | string[] Storage paths (0–5) | opt |
+| `photoUrl` | string (single path, legacy alias) | opt |
+
+Canonical codes are validated; the simplified `reason` alias maps to them
+(`LATE` → `SHOP_PART_DELAY`, `OVERCHARGE`/`RUDE`/`OTHER` → `SHOP_OTHER`,
+`NO_SHOW` → `TOWER_CANCEL_UNREACHABLE`, `WRONG_ROUTE` →
+`TOWER_CANCEL_OTHER`). Only ticket participants (rider, operator/assignee) or
+admins file (`403` otherwise).
+
+### `POST /disputes/one` — `one` (participant)
+| Field | Type | |
+|-------|------|---|
+| `disputeId` | string | req |
+
+Visible to the filer, the accused party, and admins.
+
+### `POST /disputes/all` — `list` (admin)
+| Field | Type | |
+|-------|------|---|
+| `status` | enum: `OPEN`, `RESOLVED`, `DISMISSED` | opt |
+| `limit` | number (1–100) | opt (default 50) |
+
+### `POST /disputes/resolve` — `resolve` (admin)
+| Field | Type | |
+|-------|------|---|
+| `disputeId` | string | req |
+| `resolution` | string (1–120) | req |
+| `refundAdjust` | integer ≥ 0 (VND) | opt |
+| `payoutAdjust` | integer ≥ 0 (VND) | opt |
+
+### Stored `disputes` collection
+
+| Field | Shape |
+|-------|-------|
+| `ticketId` / `filedBy` | origin ticket + filer |
+| `accusedKind` / `accusedId` / `type` / `reasonCode` / `note` / `photoUrls` | canonical accusation + evidence (Storage paths) |
+| `status` | `OPEN` → `RESOLVED` / `DISMISSED` |
+| `resolution` / `resolvedBy` / `resolvedAt` | admin decision |
+| `refundAdjust` / `payoutAdjust` | optional money adjustments |
+
+## Platform config
+
+`platform_config` collection (admin read/patch, BE-only until the FE admin UI
+lands). Single doc id `global` holds the whole card — reads/writes address
+`platform_config/global`:
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `commissionRate` | map: `MECHANIC`, `TOW`, `SOS`, `WALK_IN` → percent | 10 / 15 / 10 / 10 | platform cut at charge creation |
+| `towBaseFee` | integer VND | 0 | tow rate card |
+| `towPerKmFee` | integer VND | 0 | tow rate card |
+| `carMultiplier` | number | 2.5 | car class factor |
+| `nightMultiplier` | number | 1.3 | night rate factor |
+| `nightWindow` | `{start, end}` (hours) | 22–5 | night window |
+| `minimumTowFee` | integer VND | 0 | tow floor |
+| `waitingRatePer15Min` | integer VND | 0 | waiting fee per 15-minute block |
+| `waitingGraceMin` | integer | 10 | free minutes before waiting accrues |
+| `waitingCapMin` | integer | 60 | accrual ceiling |
+| `detourTolerancePct` | number | 15 | GPS-vs-quoted detour allowance |
+| `deadheadPayable` | boolean | true | pay empty approach distance |
+| `paymentMethodsEnabled` | array of `CASH`, `SEPAY` | both | enabled rails |
+| `refundPolicy` | `FULL`, `PARTIAL`, `NONE` | `FULL` | refund stance |
+
+### `POST /admin/config` — `getConfig` / `PUT /admin/config` — `updateConfig` (Admin, BE-only)
+Read/patch `platform_config/global`; updates write only provided fields and
+stamp `updatedBy`.
+
+### `POST /admin/payouts` — `markPayout` (Admin, BE-only)
+| Field | Type | |
+|-------|------|---|
+| `paymentId` | string | req |
+
+Mark a `HELD`/`CONFIRMED`/`PARTIAL` charge as paid out, stamping `payoutRef`,
+`payoutAt`, and `payoutBy`.
 
 ## Ratings
 

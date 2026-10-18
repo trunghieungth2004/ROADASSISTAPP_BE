@@ -8,13 +8,26 @@ import {
 describe("status definitions", () => {
   it("defines every dispatch code including quoted", () => {
     expect(Object.keys(DISPATCH_STATUSES).sort()).toEqual([
-      "1", "2", "3", "4", "5", "6", "7", "8", "9",
+      "1", "10", "11", "12", "13", "14",
+      "15", "2", "3", "4", "5", "6", "7", "8", "9",
     ]);
     expect(DISPATCH_STATUSES[STATUS_DISPATCH.QUOTED]).toMatchObject({
       domain: "dispatch",
       code: "9",
       name: "Quoted",
       order: 9,
+    });
+    expect(DISPATCH_STATUSES[STATUS_DISPATCH.ESTIMATED]).toMatchObject({
+      domain: "dispatch",
+      code: "13",
+      name: "Estimated",
+      order: 13,
+    });
+    expect(DISPATCH_STATUSES[STATUS_DISPATCH.UNFIXABLE]).toMatchObject({
+      domain: "dispatch",
+      code: "15",
+      name: "Unfixable",
+      order: 15,
     });
   });
 

@@ -1,0 +1,123 @@
+const SEPAY_ENV_NAME = {
+  SANDBOX: "sandbox",
+  PRODUCTION: "production",
+} as const;
+
+const SEPAY_ENV = {
+  sandbox: {
+    checkout: "https://pay-sandbox.sepay.vn/v1/checkout/init",
+    api: "https://pgapi-sandbox.sepay.vn",
+  },
+  production: {
+    checkout: "https://pay.sepay.vn/v1/checkout/init",
+    api: "https://pgapi.sepay.vn",
+  },
+} as const;
+
+const SEPAY_ENV_VAR = "SEPAY_ENV";
+const SEPAY_MERCHANT_ID_VAR = "SEPAY_MERCHANT_ID";
+const SEPAY_SECRET_KEY_VAR = "SEPAY_SECRET_KEY";
+const SEPAY_SUCCESS_URL_VAR = "SEPAY_SUCCESS_URL";
+const SEPAY_ERROR_URL_VAR = "SEPAY_ERROR_URL";
+const SEPAY_CANCEL_URL_VAR = "SEPAY_CANCEL_URL";
+
+const SEPAY_AUTHORIZATION_HEADER = "authorization";
+const SEPAY_AUTH_PREFIX = "Apikey";
+const SEPAY_CHECKOUT_METHOD = "POST";
+const SEPAY_ORDER_DESCRIPTION_PREFIX = "RoadAssist";
+
+const SEPAY_STATUS = {
+  INITIATED: "INITIATED",
+  PENDING: "PENDING",
+  SUCCESS: "SUCCESS",
+  PAID: "PAID",
+  FAILED: "FAILED",
+  CANCELLED: "CANCELLED",
+  REFUNDED: "REFUNDED",
+} as const;
+
+const SEPAY_IPN_CODE = {
+  SUCCESS: "SUCCESS",
+  DUPLICATE: "DUPLICATE",
+  INVALID: "INVALID",
+} as const;
+
+const SEPAY_FIELD = {
+  MERCHANT_ID: "merchant_id",
+  ORDER_INVOICE_NUMBER: "order_invoice_number",
+  ORDER_AMOUNT: "order_amount",
+  CURRENCY: "currency",
+  ORDER_DESCRIPTION: "order_description",
+  SUCCESS_URL: "success_url",
+  ERROR_URL: "error_url",
+  CANCEL_URL: "cancel_url",
+  SIGNATURE: "signature",
+} as const;
+
+const SEPAY_IPN_FIELD = {
+  QR_REF: "qrRef",
+  ORDER_INVOICE_NUMBER: SEPAY_FIELD.ORDER_INVOICE_NUMBER,
+  ORDER_CODE: "orderCode",
+  ORDER_CODE_SNAKE: "order_code",
+  REFERENCE_CODE: "reference_code",
+  REFERENCE_CODE_CAMEL: "referenceCode",
+  CONTENT: "content",
+  AMOUNT: "amount",
+  TRANSFER_AMOUNT: "transfer_amount",
+  TRANSFER_AMOUNT_CAMEL: "transferAmount",
+  TRANSACTION_ID: "transaction_id",
+  TRANSACTION_ID_CAMEL: "transactionId",
+  ID: "id",
+} as const;
+
+const SEPAY_QR_REF_KEYS: string[] = [
+  SEPAY_IPN_FIELD.QR_REF,
+  SEPAY_IPN_FIELD.ORDER_INVOICE_NUMBER,
+  SEPAY_IPN_FIELD.ORDER_CODE,
+  SEPAY_IPN_FIELD.ORDER_CODE_SNAKE,
+  SEPAY_IPN_FIELD.REFERENCE_CODE,
+  SEPAY_IPN_FIELD.REFERENCE_CODE_CAMEL,
+  SEPAY_IPN_FIELD.CONTENT,
+];
+
+const SEPAY_IPN_REF_KEYS: string[] = [
+  SEPAY_IPN_FIELD.REFERENCE_CODE,
+  SEPAY_IPN_FIELD.REFERENCE_CODE_CAMEL,
+  SEPAY_IPN_FIELD.TRANSACTION_ID,
+  SEPAY_IPN_FIELD.TRANSACTION_ID_CAMEL,
+  SEPAY_IPN_FIELD.ID,
+];
+
+const SEPAY_AMOUNT_KEYS: string[] = [
+  SEPAY_IPN_FIELD.AMOUNT,
+  SEPAY_IPN_FIELD.TRANSFER_AMOUNT,
+  SEPAY_IPN_FIELD.TRANSFER_AMOUNT_CAMEL,
+];
+
+const sepayEnv = (): keyof typeof SEPAY_ENV =>
+  process.env[SEPAY_ENV_VAR] === SEPAY_ENV_NAME.PRODUCTION ?
+    SEPAY_ENV_NAME.PRODUCTION :
+    SEPAY_ENV_NAME.SANDBOX;
+
+export {
+  SEPAY_ENV_NAME,
+  SEPAY_ENV,
+  SEPAY_ENV_VAR,
+  SEPAY_MERCHANT_ID_VAR,
+  SEPAY_SECRET_KEY_VAR,
+  SEPAY_SUCCESS_URL_VAR,
+  SEPAY_ERROR_URL_VAR,
+  SEPAY_CANCEL_URL_VAR,
+  SEPAY_AUTHORIZATION_HEADER,
+  SEPAY_AUTH_PREFIX,
+  SEPAY_CHECKOUT_METHOD,
+  SEPAY_ORDER_DESCRIPTION_PREFIX,
+  SEPAY_STATUS,
+  SEPAY_IPN_CODE,
+  SEPAY_FIELD,
+  SEPAY_IPN_FIELD,
+  SEPAY_QR_REF_KEYS,
+  SEPAY_IPN_REF_KEYS,
+  SEPAY_AMOUNT_KEYS,
+  sepayEnv,
+};

@@ -12,6 +12,46 @@ interface DispatchTicket {
   alleySegmentId?: string | null;
   accessWidthMeters?: number | null;
   note?: string | null;
+  description?: string | null;
+  photoUrls?: string[];
+  quoteRequests?: Array<{
+    shopId: string;
+    status: string;
+    expiresAt: string;
+  }>;
+  quotes?: Array<{
+    shopId: string;
+    amount: number;
+    eta?: number | null;
+    note?: string | null;
+    expiresAt: string;
+    kind: string;
+    at: string;
+  }>;
+  declinedShopIds?: string[];
+  pickupHistory?: Array<{
+    lat: number;
+    lng: number;
+    at: string;
+    reason: string;
+  }>;
+  needsNewDestination?: boolean;
+  towerSearch?: string;
+  waiting?: {
+    active: boolean;
+    startedAt: string | null;
+    endedAt: string | null;
+    fee: number | null;
+  } | null;
+  paymentId?: string | null;
+  paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  checkoutUrl?: string | null;
+  towActual?: {
+    quotedKm: number | null;
+    actualKm: number | null;
+    cappedKm: number | null;
+  } | null;
   providerId?: string | null;
   providerSnapshot?: Record<string, unknown> | null;
   destinationShopId?: string | null;
@@ -28,6 +68,22 @@ interface DispatchTicket {
   quotedBy?: string | null;
   quotedAt?: string | null;
   finalAmount?: number | null;
+  faultPhotos?: string[];
+  estimateAmount?: number | null;
+  estimateNote?: string | null;
+  estimateEta?: number | null;
+  estimateExpiresAt?: string | null;
+  estimateBy?: string | null;
+  estimatedAt?: string | null;
+  estimateApprovedAt?: string | null;
+  paymentArmed?: boolean | null;
+  quoteApprovedAt?: string | null;
+  unfixable?: {
+    reason: string;
+    photoUrls: string[];
+    by: string;
+    at: string;
+  } | null;
   invoiceRef?: string | null;
   fulfilledByShopId?: string | null;
   declineReason?: string | null;
@@ -46,6 +102,7 @@ interface DispatchTicket {
     deadheadKm: number;
     loadedKm: number;
     night: boolean;
+    waitingFee?: number | null;
     vehicleClass?: string | null;
   } | null;
   cancelledBy?: string | null;
@@ -75,6 +132,29 @@ const create = async (data: {
   alleySegmentId?: string;
   accessWidthMeters?: number;
   note?: string;
+  description?: string;
+  photoUrls?: string[];
+  declinedShopIds?: string[];
+  pickupHistory?: Array<{lat: number; lng: number; at: string; reason: string}>;
+  towerSearch?: string;
+  needsNewDestination?: boolean;
+  waiting?: {
+    active: boolean;
+    startedAt: string | null;
+    endedAt: string | null;
+    fee: number | null;
+  } | null;
+  towActual?: {
+    quotedKm: number | null;
+    actualKm: number | null;
+    cappedKm: number | null;
+  } | null;
+  unfixable?: {
+    reason: string;
+    photoUrls: string[];
+    by: string;
+    at: string;
+  } | null;
   providerId?: string;
   providerSnapshot?: Record<string, unknown>;
   destinationShopId?: string;
@@ -97,6 +177,25 @@ const create = async (data: {
     alleySegmentId: data.alleySegmentId ?? null,
     accessWidthMeters: data.accessWidthMeters ?? null,
     note: data.note ?? null,
+    description: data.description ?? null,
+    photoUrls: data.photoUrls ?? [],
+    declinedShopIds: data.declinedShopIds ?? [],
+    pickupHistory: data.pickupHistory ?? [],
+    towerSearch: data.towerSearch ?? "ACTIVE",
+    needsNewDestination: data.needsNewDestination ?? false,
+    waiting: data.waiting ?? null,
+    towActual: data.towActual ?? null,
+    unfixable: data.unfixable ?? null,
+    estimateAmount: null,
+    estimateNote: null,
+    estimateEta: null,
+    estimateExpiresAt: null,
+    estimateBy: null,
+    estimatedAt: null,
+    estimateApprovedAt: null,
+    paymentArmed: null,
+    quoteApprovedAt: null,
+    faultPhotos: [],
     providerId: data.providerId ?? null,
     providerSnapshot: data.providerSnapshot ?? null,
     destinationShopId: data.destinationShopId ?? null,
@@ -219,6 +318,10 @@ const ACTIVE_TICKET_STATUSES: Set<string> = new Set([
   STATUS_DISPATCH.IN_PROGRESS,
   STATUS_DISPATCH.READY,
   STATUS_DISPATCH.QUOTED,
+  STATUS_DISPATCH.IN_SHOP,
+  STATUS_DISPATCH.FINAL_QUOTED,
+  STATUS_DISPATCH.ESTIMATED,
+  STATUS_DISPATCH.EST_APPROVED,
 ]);
 
 const findByStatusForTypes = async (
@@ -253,9 +356,11 @@ const findByUserId = async (
   snap.forEach((doc) =>
     results.push({id: doc.id, ...doc.data()} as DispatchTicket),
   );
-  results.sort((a, b) =>
-    String(b.createdAt ?? "") < String(a.createdAt ?? "") ? -1 : 1,
-  );
+  results.sort((a, b) => {
+    const av = String(a.createdAt ?? "");
+    const bv = String(b.createdAt ?? "");
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
   return results.slice(0, limit);
 };
 
@@ -286,9 +391,11 @@ const findByAssignee = async (
   snap.forEach((doc) =>
     results.push({id: doc.id, ...doc.data()} as DispatchTicket),
   );
-  results.sort((a, b) =>
-    String(b.createdAt ?? "") < String(a.createdAt ?? "") ? -1 : 1,
-  );
+  results.sort((a, b) => {
+    const av = String(a.createdAt ?? "");
+    const bv = String(b.createdAt ?? "");
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
   return results.slice(0, limit);
 };
 
@@ -358,9 +465,11 @@ const findPendingForShop = async (
     const ticket = {id: doc.id, ...doc.data()} as DispatchTicket;
     if (ticket.status === STATUS_DISPATCH.PENDING) results.push(ticket);
   });
-  results.sort((a, b) =>
-    String(a.createdAt ?? "") < String(b.createdAt ?? "") ? 1 : -1,
-  );
+  results.sort((a, b) => {
+    const av = String(a.createdAt ?? "");
+    const bv = String(b.createdAt ?? "");
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
   return results;
 };
 
@@ -385,9 +494,11 @@ const findRecentForShop = async (
       results.push({id: doc.id, ...doc.data()} as DispatchTicket);
     });
   }
-  results.sort((a, b) =>
-    String(a.createdAt ?? "") < String(b.createdAt ?? "") ? 1 : -1,
-  );
+  results.sort((a, b) => {
+    const av = String(a.createdAt ?? "");
+    const bv = String(b.createdAt ?? "");
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
   return results.slice(0, limit);
 };
 
@@ -431,4 +542,4 @@ export {create, findById, updateStatus, update, claimForAssignment,
   findByAssignee, findActiveForShop, findActiveForDestination,
   findPendingForShop, findRecentForShop,
   findStaleWalkIns, countFulfilled,
-  findBusyUids, ACTIVE_TICKET_STATUSES};
+  findBusyUids, ACTIVE_TICKET_STATUSES, DispatchTicket};

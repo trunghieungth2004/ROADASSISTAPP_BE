@@ -6,7 +6,7 @@ import {AuthedRequest} from "../middleware/auth";
 const createFlag = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {type, lat, lng, note, radiusMeters} = req.body;
+    const {type, lat, lng, note, radiusMeters, photoUrls} = req.body;
     const result = await flagService.createFlag({
       userId,
       type,
@@ -14,6 +14,7 @@ const createFlag = async (req: Request, res: Response) => {
       lng,
       note,
       radiusMeters,
+      photoUrls,
     });
     sendSuccess(res, result, {message: "Flag submitted", statusCode: 201});
   } catch (error) {

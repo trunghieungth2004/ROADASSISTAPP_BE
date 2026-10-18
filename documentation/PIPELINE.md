@@ -161,12 +161,16 @@ destination edit (+ destination-shop on retarget, dropped-shop on move-away, ETA
 ```
 
 Enqueue triggers: SOS creation (when candidates exist), walk-in creation,
-accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, quote send (`9`), quote
-approval and rider cancel (operator audience, the latter only with shop
-context; tows with a shop drop-off additionally notify that shop),
-rider-cancel confirmation to the rider (explicit copy, so the sweep
+accept, status moves to `2`/`3`/`4`/`6`/`7`/`8`, estimate send (`13`, rider),
+estimate approve (`14`, operator), estimate decline (operator), quote send
+(`9` first quote / `11` binding final, rider), quote approval, unfixable
+close (`15`, rider, urgent), and rider cancel (operator audience, the latter
+only with shop context; tows with a shop drop-off additionally notify that
+shop), rider-cancel confirmation to the rider (explicit copy, so the sweep
 expiry body stays expiry-only), withdrawn fan-out to nearby towers on
-pending-TOW cancel, tow creation and shop retargets to the destination shop
+pending-TOW cancel, mid-tow tower cancel re-match (`-rematch-rider` urgent +
+`-rematch-towers`) and the legacy status-path requeue (`-requeue-towers`),
+tow creation and shop retargets to the destination shop
 (`destination-shop` audience with the target carried in the task body, since
 delivery re-reads the mutated ticket; informational only — the shop still
 cannot accept), move-away notices to the previous shop, destination-decline
@@ -203,10 +207,16 @@ the name (a repeated suffix silently swallows the later push):
 | Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | listed statuses only |
 | Arrived/resolved + engaged shop | `-status-3/4-operator` | operator (urgent) | "Arrival confirmed" / "Ticket resolved" | assigned/addressed |
 | Quote approved | `-status-6-operator` | operator | "Quote approved" | always on approve |
-| Quote sent (either endpoint) | `-status-9` | rider | "Your shop sent a quote" | always on send |
+| Estimate sent | `-status-13` | rider | per-status body (`ESTIMATED`) | always on send |
+| Estimate approved | `-status-14-operator` | operator | "Estimate approved" | always on approve |
+| Estimate declined | `-estimate-declined-operator` | operator | "Estimate declined" | always on decline |
+| Quote sent (first stage) | `-status-9` | rider | "Your shop sent a quote" | always on send |
+| Binding final sent | `-status-11` | rider | per-status body (`FINAL_QUOTED`) | always on final |
+| Unfixable close | `-status-15` | rider (urgent) | "Marked unfixable" | always on mark |
 | Work saved without quote | — | none | — | silent by design |
 | Manual cancel | `-cancelled-rider` | rider | "Request cancelled" | always |
-| Tower mid-trip cancel | `-cancelled-rider` | rider (explicit) + leg freeze | "Tow cancelled by tower" (+ km on record) | engaged tower at `2`/`3`; writes `cancelledBy`, freezes the traveled leg through the shared helper, operator + destination copies name the tower |
+| Tower mid-trip re-match | `-rematch-rider` / `-rematch-towers` | rider (urgent) + tower-candidates | "Finding another tower" (+ km on record) / "Tow request available" | engaged tower at `2`/`3` via `POST /dispatch/tower/cancel`; freezes the leg + partial, requeues to `1` with `towerSearch: "ACTIVE"`, auto-files a dispute |
+| Legacy status-path tower cancel | `-cancelled-rider` / `-requeue-towers` | rider (explicit) + towers (recomputed), leg freeze | "Tow cancelled by tower" (+ km on record) | engaged tower at `2`/`3` via `PUT /dispatch/status`; writes `cancelledBy`, freezes the traveled leg, requeues, operator + destination copies name the tower |
 | Tow fare estimate | — | viewer (ephemeral) | `POST /dispatch/fare/estimate` | pending TOW only; deadhead from the given position, loaded from the destination; display-only, never stored |
 | Pending-TOW cancel | `-cancelled-towers` | tower-candidates (recomputed) | "Tow request withdrawn" | was pending TOW |
 | Cancel + engaged shop | `-status-5-operator` | operator | "Request cancelled" (rider did it) | assigned/addressed |
@@ -227,7 +237,7 @@ land minutes late under Doze. Two tiers:
 
 | Tier | `priority` | `channelId` | Data flag | Who |
 |---|---|---|---|---|
-| Urgent | `high` | `dispatch-urgent` | `urgent: "true"` | rider on `2` MATCHED / `3` ARRIVED / `5` CANCELLED; destination-shop decline, drop-off-changed, tow-cancelled |
+| Urgent | `high` | `dispatch-urgent` | `urgent: "true"` | rider on `2` MATCHED / `3` ARRIVED / `5` CANCELLED; explicit flag on unfixable close, tower re-match, destination decline, drop-off-changed, tow-cancelled |
 | Normal | `normal` | `dispatch` | — | tower fan-out ("request near you"), withdrawn, incoming-tow info, routine operator updates (quotes, edits, declines) |
 
 Rider urgency is derived from ticket status in `deliverStatusPush`, so an
@@ -275,7 +285,7 @@ secret lives in git-crypt as break-glass for reverts, not as a code path.
 
 ### Tow fare (platform rates, record-only)
 
-Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))` with bike 150k/10k/3km, car 500k/25k/10km, night 1.5× (22–06 ICT), class 1×/2.5×. The loaded leg is frozen at accept (tower eats detours); deadhead bills only on cancel partials from `actual` legs. Accept stamps `{estimate, ceiling}` (ceiling = estimate × 1.1, binding later restamps); resolve writes `final`; cancel writes a deadhead partial. `POST /dispatch/fare/estimate` previews pending tows from a viewer position (display-only, never stored). No charge is computed or collected — the ticket carries the record for cash settlement roadside.
+Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))` with bike 150k/10k/3km, car 500k/25k/10km, night 1.5× (22–06 ICT), class 1×/2.5×. The loaded leg is frozen at accept (tower eats detours); deadhead bills only on cancel partials from `actual` legs. Accept stamps `{estimate, ceiling}` (ceiling = estimate × 1.1, binding later restamps); resolve writes `final`; cancel writes a deadhead partial. `POST /dispatch/fare/estimate` previews pending tows from a viewer position (display-only, never stored). Charges collect through the payment rails (`PAYMENTS.md`): `CASH` confirmed by the operator (`PENDING → CONFIRMED`), `SEPAY` held on the IPN (`PENDING → HELD`), with the commission split snapshotted at charge creation from `platform_config/global`. Full rules in `PRICING.md`.
 
 | Var | Default | Purpose |
 |---|---|---|
@@ -286,6 +296,53 @@ Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × cl
 creates both queues. `env:check` rejects a `DISPATCH_DELIVER_URL` that does
 not end with `/dispatch/deliver`, and predeploy fails the revision rather
 than shipping push-dead.
+
+## SePay payment pipeline
+
+Online money moves on its own track — no Cloud Tasks queue; the IPN handler
+writes the charge directly and the rider-visible legs ride the dispatch push
+pipeline. Sequence per ticket:
+
+```
+rider approves the quote (a funded charge gates work start)
+        │
+        │ POST /payments/create {ticketId, method: "SEPAY"} → PENDING charge
+        │   returns a signed checkout {action: "POST", method, fields, qrUrl}
+        ▼
+rider opens the VietQR checkout (link-out from the app)
+        │
+        ▼
+SePay → POST /payments/ipn (gateway only, mounted before the rate limiters)
+        │  Authorization: Apikey {SEPAY_SECRET_KEY} verified first
+        │  (403, nothing changes); no qrRef → 400
+        │  known ref → idempotent: HELD/CONFIRMED return the stored payment
+        │  amount mismatch → 400; otherwise PENDING → HELD with ipnRef
+        ▼
+charge HELD (reserved, not payable to the operator)
+        │
+        ├── resolve → operator settlement, admin marks payout
+        │   (POST /admin/payouts → payoutRef/payoutAt/payoutBy)
+        └── UNFIXABLE → REFUNDED in full (HELD charges only)
+```
+
+Cash runs beside it: `POST /payments/create` (`CASH`) → `PENDING`, the
+operator or an admin confirms (`POST /payments/confirm-cash`) →
+`CONFIRMED`.
+
+Idempotency: each charge gets a `qrRef` (`RA` prefix + ticket fragment at
+creation); the IPN resolves it through a fixed key list (camel and snake
+casing) and replays return the stored outcome without moving money. Refunds
+are `REFUNDED` or `PARTIAL` depending on the amount and stamp the ticket
+through `stampTicketPayment`. Charge reads (`POST /payments/one` for
+participants, `POST /payments/all` for admins) are poll-safe.
+
+Sandbox vs prod: `SEPAY_ENV` selects the host pair in
+`functions/constants/sepay.ts` (`sandbox` is the default), and the
+credentials come from env vars — `SEPAY_MERCHANT_ID`, `SEPAY_SECRET_KEY`,
+plus the success/error/cancel return URLs — never hardcoded (`.env.example`
+lists them). The IPN verifies the `Apikey` header against
+`SEPAY_SECRET_KEY`. Rider-visible pushes for payment legs reuse the
+dispatch-push queue; the mobile copy lives in the app's `PUSH.md`.
 
 ## Testing
 

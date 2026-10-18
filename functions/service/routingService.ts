@@ -117,6 +117,11 @@ const stepsOf = (stored: unknown): RouteOption["steps"] => {
   return out;
 };
 
+const hasLineCoords = (geometry: unknown): boolean => {
+  const coords = (geometry as {coordinates?: unknown} | null)?.coordinates;
+  return Array.isArray(coords) && coords.length >= 2;
+};
+
 const readCachedRoutes = (entry: {
   routes?: unknown;
   geometry?: unknown;
@@ -132,12 +137,14 @@ const readCachedRoutes = (entry: {
       }>
     | null;
   if (Array.isArray(stored)) {
-    return stored.map((r) => ({
-      geometry: parseGeometry(r.geometry),
-      distanceMeters: r.distanceMeters,
-      durationSeconds: r.durationSeconds,
-      steps: stepsOf(r.steps),
-    }));
+    return stored
+      .map((r) => ({
+        geometry: parseGeometry(r.geometry),
+        distanceMeters: r.distanceMeters,
+        durationSeconds: r.durationSeconds,
+        steps: stepsOf(r.steps),
+      }))
+      .filter((r) => hasLineCoords(r.geometry));
   }
   return [];
 };
@@ -148,8 +155,10 @@ const legacyCachedRoute = (entry: {
   durationSeconds?: number;
 }): BaseRoute | null => {
   if (entry.geometry === undefined) return null;
+  const geometry = parseGeometry(entry.geometry);
+  if (!hasLineCoords(geometry)) return null;
   return {
-    geometry: parseGeometry(entry.geometry),
+    geometry,
     distanceMeters: entry.distanceMeters,
     durationSeconds: entry.durationSeconds,
   };
@@ -335,7 +344,7 @@ const getRoute = async ({
   const stopList = stops ?? [];
   const foot = mode === "foot";
   const effectiveWidth = foot ? undefined : width;
-  const widthBucket = widthToBucket(effectiveWidth);
+  const widthBucket = foot ? "FOOT" : widthToBucket(effectiveWidth);
   const costing = costingForMode(mode, vehicleType);
   const key = buildKey(
     originLat,

@@ -22,10 +22,20 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-const setupTx = (snapshot: unknown) => {
-  const txGet = jest.fn(async (...args: Array<unknown>) => {
-    void args;
-    return snapshot as never;
+type StealDoc = {
+  id: string;
+  data: () => Record<string, unknown>;
+  ref: {id: string};
+};
+
+const setupTx = (
+  snapshot: {exists: boolean; data: () => Record<string, unknown>},
+  stealDocs: StealDoc[] = [],
+) => {
+  let calls = 0;
+  const txGet = jest.fn(async () => {
+    calls += 1;
+    return (calls === 1 ? {docs: stealDocs} : snapshot) as never;
   });
   const txSet = jest.fn((...args: Array<unknown>) => {
     void args;
@@ -33,16 +43,7 @@ const setupTx = (snapshot: unknown) => {
   const fakeTx = {get: txGet, set: txSet};
   const ref = {id: "u1"};
   const docMock = jest.fn(() => ref);
-  const whereGet = jest.fn(async () => ({
-    forEach: () => undefined,
-  }));
-  const whereMock = jest.fn(() => ({get: whereGet}));
-  const batchSet = jest.fn();
-  const batchCommit = jest.fn(async () => undefined);
-  jest.mocked(db.batch).mockReturnValue({
-    set: batchSet,
-    commit: batchCommit,
-  } as never);
+  const whereMock = jest.fn(() => ({kind: "query"}));
   jest.mocked(db.collection).mockReturnValue({
     doc: docMock,
     where: whereMock,
@@ -53,8 +54,7 @@ const setupTx = (snapshot: unknown) => {
         fakeTx,
       )) as never,
   );
-  return {txGet, txSet, docMock, ref, whereGet, whereMock, batchSet,
-    batchCommit};
+  return {txGet, txSet, docMock, ref, whereMock};
 };
 
 describe("fcmTokenRepository.registerToken", () => {
@@ -113,7 +113,7 @@ describe("fcmTokenRepository.registerToken", () => {
       "fcm_tokens",
     );
     expect(docMock).toHaveBeenCalledWith("u1");
-    expect(txGet).toHaveBeenCalledTimes(1);
+    expect(txGet).toHaveBeenCalledTimes(2);
     expect(txSet).toHaveBeenCalledTimes(1);
     expect(jest.mocked(db.runTransaction)).toHaveBeenCalledTimes(
       1,
@@ -121,47 +121,40 @@ describe("fcmTokenRepository.registerToken", () => {
   });
 
   test("steals the token from previous owners", async () => {
-    const {batchSet, batchCommit} = setupTx({
-      exists: false,
-      data: () => ({}),
-    });
-    const other = {
+    const other: StealDoc = {
       id: "u2",
       data: () => ({tokens: ["shared", "other"]}),
       ref: {id: "u2"},
     };
-    const self = {
+    const self: StealDoc = {
       id: "u1",
       data: () => ({tokens: ["shared"]}),
       ref: {id: "u1"},
     };
-    jest.mocked(db.collection).mockReturnValue({
-      doc: jest.fn(() => ({id: "u1"})),
-      where: jest.fn(() => ({
-        get: jest.fn(async () => ({
-          forEach: (fn: (d: unknown) => void) => {
-            fn(other);
-            fn(self);
-          },
-        })),
-      })),
-    } as never);
+    const {txSet} = setupTx(
+      {exists: false, data: () => ({})},
+      [other, self],
+    );
     await registerToken("u1", "shared");
-    expect(batchSet).toHaveBeenCalledTimes(1);
-    expect(batchSet.mock.calls[0][1]).toMatchObject({
+    expect(txSet).toHaveBeenCalledTimes(2);
+    expect(txSet.mock.calls[0][0]).toEqual({id: "u2"});
+    expect(txSet.mock.calls[0][1]).toMatchObject({
       userId: "u2",
       tokens: ["other"],
     });
-    expect(batchCommit).toHaveBeenCalledTimes(1);
+    expect(txSet.mock.calls[1][1]).toMatchObject({
+      userId: "u1",
+      tokens: ["shared"],
+    });
   });
 
-  test("skips the steal commit with no previous owners", async () => {
-    const {batchSet, batchCommit} = setupTx({
+  test("skips previous owners when none hold the token", async () => {
+    const {txSet, ref} = setupTx({
       exists: false,
       data: () => ({}),
     });
     await registerToken("u1", "t1");
-    expect(batchSet).not.toHaveBeenCalled();
-    expect(batchCommit).not.toHaveBeenCalled();
+    expect(txSet).toHaveBeenCalledTimes(1);
+    expect(txSet.mock.calls[0][0]).toBe(ref);
   });
 });

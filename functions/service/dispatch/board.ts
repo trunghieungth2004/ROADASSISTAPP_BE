@@ -77,23 +77,10 @@ export const nearDispatchInner = async ({
     .filter((t) => (t.distance as number) <= radiusMeters)
     .sort((a, b) => (a.distance as number) - (b.distance as number))
     .slice(0, limit);
-  const riderIds = [...new Set(
-    nearby
-      .map((t) => t.userId as unknown)
-      .filter((id): id is string => typeof id === "string" && id !== ""),
-  )];
-  const riders = riderIds.length > 0 ?
-    await userRepository.findByIds(riderIds) :
-    new Map();
   return nearby.map((t) => {
-    const rider = riders.get(t.userId as string) as
-      | {displayName?: unknown}
-      | undefined;
-    const name = typeof rider?.displayName === "string" &&
-      rider.displayName !== "" ?
-      rider.displayName :
-      null;
-    return {...t, riderName: name};
+    const row: Record<string, unknown> = {...t};
+    delete row.photoUrls;
+    return row;
   });
 };
 
@@ -143,6 +130,9 @@ export const dispatchOffers = async ({
   kind,
   limit = NEAR_SHOPS_MAX,
   accessWidthMeters,
+  ticketId,
+  minRating,
+  sortBy,
 }: {
   lat: number;
   lng: number;
@@ -150,6 +140,9 @@ export const dispatchOffers = async ({
   kind?: string;
   limit?: number;
   accessWidthMeters?: number;
+  ticketId?: string;
+  minRating?: number;
+  sortBy?: string;
 }) => {
   const shops = await nearProviders({
     lat,
@@ -159,6 +152,9 @@ export const dispatchOffers = async ({
     acceptingOnly: true,
     openOnly: false,
     limit,
+    ticketId,
+    minRating,
+    sortBy,
   });
   const liveById = shops.length > 0 ?
     await providerLocationRepository.findByIds(shops.map((s) => s.id)) :

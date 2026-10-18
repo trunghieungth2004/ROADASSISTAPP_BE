@@ -3,7 +3,7 @@ import * as savedRouteRepository from
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
 
-import {ForbiddenError, NotFoundError} from "../utils/errors";
+import {ForbiddenError, NotFoundError, ValidationError} from "../utils/errors";
 
 interface SaveRouteInput {
   userId: string;
@@ -68,9 +68,35 @@ const toSummary = (
   updatedAt: record.updatedAt,
 });
 
+const sameStops = (
+  a: Array<{lat: number; lng: number}> | undefined,
+  b: Array<{lat: number; lng: number}>,
+): boolean => {
+  const left = a ?? [];
+  if (left.length !== b.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i].lat !== b[i].lat || left[i].lng !== b[i].lng) return false;
+  }
+  return true;
+};
+
 const saveRoute = async (input: SaveRouteInput) => {
   const user = await userRepository.findById(input.userId);
   if (!user) throw new NotFoundError("User not found");
+  const geometryJson = JSON.stringify(input.geometry ?? null);
+  if (geometryJson.length > 500000) {
+    throw new ValidationError("Route geometry is too large");
+  }
+  const existing = await savedRouteRepository.listByUserId(input.userId);
+  const dupe = existing.find((r) =>
+    r.originLat === input.originLat &&
+    r.originLng === input.originLng &&
+    r.destLat === input.destLat &&
+    r.destLng === input.destLng &&
+    sameStops(input.stops, r.stops ?? []));
+  if (dupe) {
+    return {...dupe, geometry: parseGeometry(dupe.geometry)};
+  }
   const fallback = input.name && input.name.trim().length > 0 ?
     input.name.trim() :
     FALLBACK_NAME;
@@ -169,4 +195,5 @@ export {
   deleteRoute,
   NotFoundError,
   ForbiddenError,
+  ValidationError,
 };

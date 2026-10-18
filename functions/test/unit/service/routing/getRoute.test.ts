@@ -75,7 +75,13 @@ describe("routingService.getRoute", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
-    const geometry = {type: "LineString", coordinates: []};
+    const geometry = {
+      type: "LineString",
+      coordinates: [
+        [106.66, 10.76],
+        [106.7, 10.78],
+      ],
+    };
     jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
       geometry: JSON.stringify(geometry),
       distanceMeters: 2450,
@@ -98,6 +104,70 @@ describe("routingService.getRoute", () => {
       ],
     });
     expect(mockPostRoutes).not.toHaveBeenCalled();
+  });
+
+  it("ignores a cached line with a single point", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
+      routes: JSON.stringify([
+        {
+          geometry: {type: "LineString", coordinates: [[1, 2]]},
+          distanceMeters: 0,
+          durationSeconds: 0,
+        },
+      ]),
+    } as never);
+    const geometry: Line = {
+      type: "LineString",
+      coordinates: [
+        [1, 2],
+        [3, 4],
+      ],
+    };
+    mockPostRoutes.mockResolvedValue([
+      {geometry, distanceMeters: 100, durationSeconds: 50},
+    ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [],
+      warnings: [],
+    });
+    await expect(getRoute(base)).resolves.toMatchObject({
+      cached: false,
+      routes: [{source: "valhalla"}],
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a legacy cached line with a single point", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
+      geometry: JSON.stringify({type: "LineString", coordinates: [[1, 2]]}),
+    } as never);
+    const geometry: Line = {
+      type: "LineString",
+      coordinates: [
+        [1, 2],
+        [3, 4],
+      ],
+    };
+    mockPostRoutes.mockResolvedValue([
+      {geometry, distanceMeters: 100, durationSeconds: 50},
+    ]);
+    jest.mocked(routingCacheRepository.save).mockResolvedValue(undefined);
+    jest.mocked(closureService.analyzeRoute).mockResolvedValue({
+      blocking: [],
+      warnings: [],
+    });
+    await expect(getRoute(base)).resolves.toMatchObject({
+      cached: false,
+      routes: [{source: "valhalla"}],
+    });
+    expect(mockPostRoutes).toHaveBeenCalledTimes(1);
   });
 
   it("collapses identical geometries stored in the cache", async () => {
@@ -225,7 +295,13 @@ describe("routingService.getRoute", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
     } as never);
-    const geometry: Line = {type: "LineString", coordinates: [[1, 2]]};
+    const geometry: Line = {
+      type: "LineString",
+      coordinates: [
+        [1, 2],
+        [3, 4],
+      ],
+    };
     jest.mocked(routingCacheRepository.findExisting).mockResolvedValue({
       geometry: JSON.stringify(geometry),
     } as never);

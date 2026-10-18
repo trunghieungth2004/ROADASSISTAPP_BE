@@ -67,7 +67,14 @@ an explicit flag beats `VALHALLA_MODE`. Full mode matrix:
 | `valhalla-vietnam` (Artifact Registry) | `asia-southeast1` | docker repo `valhalla/` | built by `setup.sh` |
 | `hazard-push`, `dispatch-push` (Cloud Tasks) | `asia-southeast1` | queues, OIDC invoke | `npm run push:setup` |
 | Scheduled functions | `asia-southeast1` | `sweepFlagsAndPresence` (hourly: flag expiry + stale volunteer/tow presence), `sweepRoutesAndWalkIns` (every 30 min: expired active routes + stale walk-ins) | `functions/index.ts` (see CACHE.md "Scheduled functions") |
-| Firestore / Auth / Storage | `asia-southeast1` | database, seed via `db:init` | `functions/` + console |
+| Firestore / Auth | `asia-southeast1` | database + auth, seed via `db:init` | `functions/` + console |
+| Firebase Storage | `US-WEST1` | default bucket `<project>.firebasestorage.app` (photos) | console + `scripts/lib/setup-storage.sh` |
+
+Photos live in the Firebase Storage default bucket
+(`roadassistapp-c2e37.firebasestorage.app`); access is governed by
+`rules/storage.rules` (per-user `flags`/`diagnostics`, signed-in
+`dispatch`/`payments`, ≤800 KB image-only writes) and deployed by the
+`storage` step of `scripts/deploy.sh` (`firebase deploy --only storage`).
 
 ## Env wiring
 

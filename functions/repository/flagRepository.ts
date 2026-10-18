@@ -19,6 +19,7 @@ interface FlagRecord {
   ttlExpiresAt: Date;
   reporterUid: string;
   pointsAwarded?: number;
+  photoUrls?: string[];
   [key: string]: unknown;
 }
 
@@ -83,6 +84,7 @@ const create = async (data: {
   trustScore: number;
   radiusMeters?: number;
   note?: string;
+  photoUrls?: string[];
 }): Promise<FlagRecord> => {
   const ref = db.collection("flags").doc();
   const geoHash = encodeGeohash(data.lat, data.lng, 7);
@@ -99,6 +101,7 @@ const create = async (data: {
     radiusMeters: data.radiusMeters ?? null,
     reporterUid: data.reporterUid,
     note: data.note ?? null,
+    photoUrls: data.photoUrls ?? [],
     createdAt: new Date().toISOString(),
     ttlExpiresAt: Timestamp.fromDate(ttlExpiresAt),
     reporterTrust: data.trustScore,

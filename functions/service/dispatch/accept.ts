@@ -24,6 +24,7 @@ import {
 import {ROLE_ADMIN} from "../../constants/roles";
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
+import {logError} from "../../utils/logger";
 import * as cacheManager from "../../utils/cacheManager";
 
 export const acceptAsShop = async (
@@ -65,6 +66,7 @@ export const acceptAsShop = async (
       HELPER_KIND.TOW :
       HELPER_KIND.SHOP,
     status: STATUS_DISPATCH.MATCHED,
+    cancelledBy: null,
     ...(ticket.ticketType === "WALK_IN" &&
     typeof shop.serviceFee === "number" ?
       {priceEstimate: shop.serviceFee, priceCurrency: "VND"} :
@@ -161,7 +163,8 @@ export const stampTowEta = async (
         new Date(now + eta.dropoffSeconds * 1000).toISOString(),
       etaNotifiedAt: null,
     });
-  } catch {
+  } catch (err) {
+    logError("dispatch", "tow-eta-stamp-failed", {ticketId}, err);
     return;
   }
 };
@@ -181,6 +184,9 @@ export const acceptAsVolunteer = async (userId: string, ticketId: string) => {
   }
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "SOS") {
+    throw new ForbiddenError("Only SOS tickets accept volunteers");
+  }
   if (
     !volunteerFitsTicket(
       me.capability,

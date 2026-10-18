@@ -10,6 +10,7 @@ import {
   postRoutes,
   ServiceError,
 } from "../../../utils/valhalla";
+import {encodePolyline} from "../../utils/valhalla";
 
 const SHAPE_A = "ou{oSou_mjEomMote@oiJwwi@";
 const COORDS_A: Array<[number, number]> = [
@@ -174,6 +175,41 @@ describe("postRoute", () => {
       .mockResolvedValue(okResponse({trip: {legs: []}}));
     await expect(
       postRoute([{lat: 10.7626, lng: 106.6602}]),
+    ).rejects.toMatchObject({statusCode: 404});
+  });
+
+  it("throws 404 when the shape collapses to a single point", async () => {
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(
+        okResponse(tripBody([encodePolyline([[106.66, 10.76]])])),
+      );
+    await expect(
+      postRoute([
+        {lat: 10.76, lng: 106.66},
+        {lat: 10.76, lng: 106.66},
+      ]),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: "No route found",
+    });
+  });
+
+  it("throws 404 when the shape repeats the same point", async () => {
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue(
+        okResponse(
+          tripBody([
+            encodePolyline([
+              [106.66, 10.76],
+              [106.66, 10.76],
+            ]),
+          ]),
+        ),
+      );
+    await expect(
+      postRoute([{lat: 10.76, lng: 106.66}]),
     ).rejects.toMatchObject({statusCode: 404});
   });
 

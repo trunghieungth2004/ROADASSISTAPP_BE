@@ -11,13 +11,16 @@ npm run deploy:all   # from functions/
 
 Runs, in order: routing engine (`setup.sh -cl`: local docker build, push,
 Cloud Run deploy, smoke test) → push queues + IAM (`push:setup`, both
-queues; warn-and-continue) → `firebase deploy --only functions,
-firestore:indexes` → `db:init` (role/status seeds). The push step also
+queues; warn-and-continue) → storage bucket + rules
+(`scripts/lib/setup-storage.sh`: enable APIs, verify/create the default
+bucket, `firebase deploy --only storage`; warn-and-continue) →
+`firebase deploy --only functions, firestore:indexes` → `db:init`
+(role/status seeds). The push step also
 writes `PUSH_DELIVER_URL` / `DISPATCH_DELIVER_URL` into `functions/.env`
 when absent (never overwrites). `npm run valhalla:remove` remains the only
 manual op (engine teardown). Every script that shells out to
 `gcloud` (`deploy.sh`, `infra/valhalla/setup.sh`, `infra/valhalla/remove.sh`,
-`push:setup`) first proves the credential works via
+`push:setup`, `setup-storage.sh`) first proves the credential works via
 `gcloud auth print-access-token` (shared `scripts/lib/gcloud-auth.sh` /
 `functions/scripts/gcloudAuth.ts`) — re-run `gcloud auth login` on failure.
 Full engine teardown (local
@@ -54,6 +57,10 @@ engine:deploy` first when the Dockerfile changed. The legacy
 - `firebase` CLI authed, Node 22, `functions/` dependencies installed.
 - `docker` with 6G+ free disk (the `-cl` engine build runs locally).
 - Firestore database created in `asia-southeast1` (console, one time).
+- Firebase Storage default bucket: the `storage` deploy step enables
+  `firebasestorage.googleapis.com` / `storage.googleapis.com`, verifies (or
+  creates) `roadassistapp-c2e37.firebasestorage.app`, and deploys
+  `rules/storage.rules` — no manual console step required.
 
 ## Deploy
 
@@ -147,6 +154,7 @@ skip flag — removal only runs when invoked explicitly, never as part of
 firebase deploy --only firestore:indexes   # composite indexes
   # (flags expiry + reporter history, saved routes/places incl. coord
   # dedupe, rating aggregates + dedupe, provider report queue + dedupe)
+firebase deploy --only storage             # storage rules (default bucket)
 cd functions
 npm run db:init                            # seed roles + statuses
 GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup   # both push queues + IAM

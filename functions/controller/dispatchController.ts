@@ -1,6 +1,7 @@
 import {Request, Response} from "express";
 import * as dispatchService from "../service/dispatchService";
-import {sendSuccess, handleServiceError} from "../utils/response";
+import {DISPATCH_QUEUE_NAME} from "../service/taskQueueService";
+import {sendError, sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
 
 const createDispatch = async (req: Request, res: Response) => {
@@ -14,6 +15,8 @@ const createDispatch = async (req: Request, res: Response) => {
       alleySegmentId,
       accessWidthMeters,
       note,
+      description,
+      photoUrls,
       providerId,
       destinationShopId,
       destinationPoint,
@@ -31,6 +34,8 @@ const createDispatch = async (req: Request, res: Response) => {
       alleySegmentId,
       accessWidthMeters,
       note,
+      description,
+      photoUrls,
       providerId,
       destinationShopId,
       destinationPoint,
@@ -69,11 +74,16 @@ const getDispatch = async (req: Request, res: Response) => {
 const updateDispatchStatus = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, status} = req.body;
+    const {ticketId, status, lat, lng, reasonCode} = req.body;
     const result = await dispatchService.updateDispatchStatus({
       id: ticketId,
       status,
       userId,
+      ...(typeof lat === "number" ? {lat} : {}),
+      ...(typeof lng === "number" ? {lng} : {}),
+      ...(typeof reasonCode === "string" && reasonCode !== "" ?
+        {reasonCode} :
+        {}),
     });
     sendSuccess(res, result, {message: "Dispatch updated"});
   } catch (error) {
@@ -100,8 +110,8 @@ const nearDispatch = async (req: Request, res: Response) => {
 
 const dispatchOffers = async (req: Request, res: Response) => {
   try {
-    const {lat, lng, radiusMeters, kind, limit, accessWidthMeters} =
-      req.body;
+    const {lat, lng, radiusMeters, kind, limit, accessWidthMeters,
+      ticketId, minRating, sortBy} = req.body;
     const result = await dispatchService.dispatchOffers({
       lat,
       lng,
@@ -109,6 +119,9 @@ const dispatchOffers = async (req: Request, res: Response) => {
       kind,
       limit,
       accessWidthMeters,
+      ticketId,
+      minRating,
+      sortBy,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -201,12 +214,74 @@ const updateWorkOrder = async (req: Request, res: Response) => {
 const sendQuote = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, quotedAmount, workType} = req.body;
+    const {ticketId, quotedAmount, finalAmount, workType, faultPhotos} =
+      req.body;
     const result = await dispatchService.sendQuote({
       userId,
       ticketId,
       quotedAmount,
+      finalAmount,
       workType,
+      faultPhotos,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const sendEstimate = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, estimateAmount, estimateNote, eta} = req.body;
+    const result = await dispatchService.sendEstimate({
+      userId,
+      ticketId,
+      estimateAmount,
+      estimateNote,
+      eta,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const approveEstimate = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.approveEstimate({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const declineEstimate = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, shopId} = req.body;
+    const result = await dispatchService.declineEstimate({
+      userId,
+      ticketId,
+      shopId,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const markUnfixable = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason, photoUrls} = req.body;
+    const result = await dispatchService.markUnfixable({
+      userId,
+      ticketId,
+      reason,
+      photoUrls,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -228,11 +303,41 @@ const approveQuote = async (req: Request, res: Response) => {
 const declineDestination = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId} = req.body;
+    const {ticketId, reasonCode} = req.body;
     const result = await dispatchService.declineDestination({
       userId,
       ticketId,
+      reasonCode,
     });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const cancelTowerSearch = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, lat, lng, reasonCode, note} = req.body;
+    const result = await dispatchService.cancelTowerSearch({
+      userId,
+      ticketId,
+      ...(typeof lat === "number" ? {lat} : {}),
+      ...(typeof lng === "number" ? {lng} : {}),
+      reasonCode,
+      ...(typeof note === "string" && note !== "" ? {note} : {}),
+    });
+    sendSuccess(res, result, {message: "Tower search restarted"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const waitingStatus = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.waitingSummary({userId, ticketId});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -305,6 +410,15 @@ const feedTickets = async (req: Request, res: Response) => {
 
 const deliverDispatch = async (req: Request, res: Response) => {
   try {
+    if (req.header("X-CloudTasks-QueueName") !== DISPATCH_QUEUE_NAME) {
+      sendError(
+        res,
+        {statusCode: 403, message: "Forbidden"} as Error & {
+          statusCode: number;
+        },
+      );
+      return;
+    }
     const {ticketId, audience, title, body, shopId, urgent} = req.body;
     const result = await dispatchService.deliverDispatchPush(
       ticketId,
@@ -324,7 +438,9 @@ const deliverDispatch = async (req: Request, res: Response) => {
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
-  sendQuote, approveQuote, declineDestination, refreshTowEta, estimateTowFare,
+  sendQuote, sendEstimate, approveEstimate, declineEstimate, markUnfixable,
+  approveQuote, declineDestination, cancelTowerSearch, waitingStatus,
+  refreshTowEta, estimateTowFare,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

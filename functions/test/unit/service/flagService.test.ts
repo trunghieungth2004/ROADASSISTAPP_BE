@@ -225,12 +225,16 @@ describe("flagService.confirmFlag", () => {
     expect(flagRepository.updateStatus).toHaveBeenCalledWith("f1", "2");
   });
 
-  it("weights trusted reporters at 1.5", async () => {
+  it("weights trusted voters at 1.5", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValueOnce({
+      id: "u2",
+      trustScore: 60,
+    } as never);
     jest.mocked(flagRepository.findById).mockResolvedValue({
       id: "f1",
       status: "1",
       voteCount: 1,
-      reporterTrust: 60,
+      reporterTrust: 10,
       reporterUid: "u1",
     } as never);
     jest.mocked(flagRepository.castSignedVote).mockResolvedValue({
@@ -422,12 +426,16 @@ describe("flagService.denyFlag", () => {
     expect(taskQueueService.enqueueHazardPush).not.toHaveBeenCalled();
   });
 
-  it("weights trusted reporters at -1.5", async () => {
+  it("weights trusted voters at -1.5", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValueOnce({
+      id: "u2",
+      trustScore: 60,
+    } as never);
     jest.mocked(flagRepository.findById).mockResolvedValue({
       id: "f1",
       status: "1",
       voteCount: 0,
-      reporterTrust: 60,
+      reporterTrust: 10,
       reporterUid: "u1",
     } as never);
     jest.mocked(flagRepository.castSignedVote).mockResolvedValue({

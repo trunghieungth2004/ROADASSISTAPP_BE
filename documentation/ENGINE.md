@@ -160,6 +160,10 @@ Sources: `infra/valhalla/Dockerfile`, `infra/valhalla/setup.sh`,
   requests only; extras arrive as top-level `alternates[].trip`
   (shape-less entries skipped, identical geometries dropped by
   `dedupeRoutes`: 32 sampled vertices rounded to 5 decimals).
+- A trip whose merged shape has fewer than two coordinates (origin and
+  destination collapsing to the same spot) is rejected as `404`
+  `"No route found"` before any route is returned or cached — clients
+  never receive a one-point `LineString`.
 - `exclude_polygons` is sent as **raw rings** — an array of
   `[lng, lat]` point lists (`circleToRing`, `RING_STEPS` = 32 plus the
   closing vertex). This engine rejects the wrapped

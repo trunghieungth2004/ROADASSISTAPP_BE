@@ -2,7 +2,7 @@ import * as landmarkRepository from "../repository/landmarkRepository";
 import * as userRepository from "../repository/userRepository";
 import {
   boundsForRadiusMeters,
-  encodeGeohash,
+  cellsCoveringBounds,
   haversineMeters,
 } from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
@@ -22,18 +22,7 @@ const nearLandmarks = cacheManager.wrap(
     radiusMeters?: number;
   }) => {
     const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
-    const prefixes = Array.from({length: 9}, (_, i) => {
-      const r = (i % 3) - 1;
-      const c = Math.floor(i / 3) - 1;
-      const dLat = (bounds.maxLat - bounds.minLat) / 3;
-      const dLng = (bounds.maxLng - bounds.minLng) / 3;
-      return encodeGeohash(
-        bounds.minLat + (r + 0.5) * dLat,
-        bounds.minLng + (c + 0.5) * dLng,
-        6,
-      ).slice(0, 6);
-    });
-    const unique = Array.from(new Set(prefixes));
+    const unique = cellsCoveringBounds(bounds, 6);
     const found = await landmarkRepository.findByGeohashPrefixes(unique);
     return found
       .filter(

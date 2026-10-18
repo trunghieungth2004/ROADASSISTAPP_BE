@@ -75,6 +75,16 @@ write_deliver_url() {
   echo "[deploy] $key=$url"
 }
 
+do_storage() {
+  echo "[deploy] storage bucket + rules"
+  if bash "$ROOT/scripts/lib/setup-storage.sh"; then
+    echo "[deploy] storage ready"
+  else
+    echo "[deploy] WARNING: storage setup failed; run manually when needed:" >&2
+    echo "  bash scripts/lib/setup-storage.sh    # from the repo root" >&2
+  fi
+}
+
 do_functions() {
   echo "[deploy] functions + indexes"
   firebase deploy --only functions,firestore:indexes --project="$PROJECT"
@@ -85,8 +95,8 @@ do_seeds() {
   npm --prefix "$ROOT/functions" run db:init
 }
 
-STEPS=("engine" "push" "functions" "seeds")
-LABELS=("Engine (local build, cloud deploy)" "Push queues + IAM" "Functions + indexes" "Role/status seeds")
+STEPS=("engine" "push" "storage" "functions" "seeds")
+LABELS=("Engine (local build, cloud deploy)" "Push queues + IAM" "Storage bucket + rules" "Functions + indexes" "Role/status seeds")
 
 WANT=""
 while [ "$#" -gt 0 ]; do
@@ -94,21 +104,21 @@ while [ "$#" -gt 0 ]; do
     --only)
       shift
       case "${1:-}" in
-        engine|push|functions|seeds) WANT="$WANT $1" ;;
+        engine|push|storage|functions|seeds) WANT="$WANT $1" ;;
         *)
-          echo "usage: deploy.sh [--only engine|push|functions|seeds]..." >&2
+          echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
           exit 1
           ;;
       esac
       ;;
     -h|--help)
-      echo "usage: deploy.sh [--only engine|push|functions|seeds]..." >&2
+      echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
       echo "  no flags + terminal: numbered menu" >&2
       echo "  no flags + no terminal: full flow" >&2
       exit 0
       ;;
     *)
-      echo "usage: deploy.sh [--only engine|push|functions|seeds]..." >&2
+      echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
       exit 1
       ;;
   esac
@@ -125,14 +135,14 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
   printf 'Select [default: all]: '
   read -r choice || choice=""
   if [ -z "$choice" ] || [ "$choice" = "all" ] || [ "$choice" = "a" ]; then
-    WANT=" engine push functions seeds"
+    WANT=" engine push storage functions seeds"
   else
     WANT=""
     # shellcheck disable=SC2206
     toks=(${choice//,/ })
     for tok in "${toks[@]}"; do
       case "$tok" in
-        [1-4]-[1-4])
+        [1-5]-[1-5])
           lo="${tok%-*}"
           hi="${tok#*-}"
           if [ "$lo" -gt "$hi" ]; then
@@ -144,7 +154,7 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
             n=$((n + 1))
           done
           ;;
-        [1-4]) WANT="$WANT ${STEPS[$((tok - 1))]}" ;;
+        [1-5]) WANT="$WANT ${STEPS[$((tok - 1))]}" ;;
         *)
           echo "[deploy] invalid selection: $tok" >&2
           exit 1
@@ -159,7 +169,7 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
 fi
 
 if [ -z "$WANT" ]; then
-  WANT=" engine push functions seeds"
+  WANT=" engine push storage functions seeds"
 fi
 
 case "$WANT" in
@@ -171,7 +181,7 @@ case "$WANT" in
 esac
 
 ORDERED=""
-for step in engine push functions seeds; do
+for step in engine push storage functions seeds; do
   case "$WANT" in
     *" $step"*) ORDERED="$ORDERED $step" ;;
   esac

@@ -24,12 +24,23 @@ const STATUS_DISPATCH = {
   READY: "7",
   DECLINED: "8",
   QUOTED: "9",
+  IN_SHOP: "10",
+  FINAL_QUOTED: "11",
+  RESOLVED_UNFIXABLE: "12",
+  ESTIMATED: "13",
+  EST_APPROVED: "14",
+  UNFIXABLE: "15",
 } as const;
 
 const HELPER_KIND = {
   VOLUNTEER: "VOLUNTEER",
   SHOP: "SHOP",
   TOW: "TOW",
+} as const;
+
+const TICKET_SEARCH = {
+  ACTIVE: "ACTIVE",
+  PAUSED: "PAUSED",
 } as const;
 
 const RATING_TARGET = {
@@ -52,6 +63,10 @@ const WALK_RADIUS_MIN = 500;
 const WALK_RADIUS_MAX = 2000;
 const SHOP_SEARCH_MAX_RADIUS = 20000;
 const NEAR_SHOPS_MAX = 10;
+const PROVIDER_SERVICES_MAX = 20;
+const PROVIDER_SERVICE_PRICE_MAX = 999999999;
+const PROVIDER_SERVICE_CODE_MAX = 64;
+const PROVIDER_SERVICE_NAME_MAX = 120;
 
 const VEHICLE_TYPE = {
   SCOOTER: "SCOOTER",
@@ -261,6 +276,48 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
     "Shop quote sent, awaiting rider approval",
     9,
   ),
+  [STATUS_DISPATCH.IN_SHOP]: definition(
+    "dispatch",
+    STATUS_DISPATCH.IN_SHOP,
+    "In shop",
+    "Vehicle received at the shop, work pending",
+    10,
+  ),
+  [STATUS_DISPATCH.FINAL_QUOTED]: definition(
+    "dispatch",
+    STATUS_DISPATCH.FINAL_QUOTED,
+    "Final quoted",
+    "Final amount posted, awaiting rider approval",
+    11,
+  ),
+  [STATUS_DISPATCH.RESOLVED_UNFIXABLE]: definition(
+    "dispatch",
+    STATUS_DISPATCH.RESOLVED_UNFIXABLE,
+    "Resolved unfixable",
+    "Closed as unfixable with evidence on file",
+    12,
+  ),
+  [STATUS_DISPATCH.ESTIMATED]: definition(
+    "dispatch",
+    STATUS_DISPATCH.ESTIMATED,
+    "Estimated",
+    "Estimate sent, awaiting rider approval",
+    13,
+  ),
+  [STATUS_DISPATCH.EST_APPROVED]: definition(
+    "dispatch",
+    STATUS_DISPATCH.EST_APPROVED,
+    "Estimate approved",
+    "Estimate approved, tow and drop-off authorized",
+    14,
+  ),
+  [STATUS_DISPATCH.UNFIXABLE]: definition(
+    "dispatch",
+    STATUS_DISPATCH.UNFIXABLE,
+    "Unfixable",
+    "Closed as unfixable with evidence on file",
+    15,
+  ),
 };
 
 const PROVIDER_STATUSES: Record<string, StatusDefinition> = {
@@ -299,6 +356,7 @@ export {
   STATUS_FLAGS,
   STATUS_DISPATCH,
   HELPER_KIND,
+  TICKET_SEARCH,
   RATING_TARGET,
   RATING_MIN,
   RATING_MAX,
@@ -311,6 +369,10 @@ export {
   WALK_RADIUS_MAX,
   SHOP_SEARCH_MAX_RADIUS,
   NEAR_SHOPS_MAX,
+  PROVIDER_SERVICES_MAX,
+  PROVIDER_SERVICE_PRICE_MAX,
+  PROVIDER_SERVICE_CODE_MAX,
+  PROVIDER_SERVICE_NAME_MAX,
   VEHICLE_TYPE,
   VEHICLE_DEFAULT_WIDTH,
   TOW_VEHICLE_TYPE,
@@ -330,3 +392,5 @@ export {
   PROVIDER_STATUSES,
   StatusDefinition,
 };
+
+export * from "./payments";

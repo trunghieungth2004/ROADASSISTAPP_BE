@@ -68,6 +68,9 @@ const updateRole = async ({
 }) => {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("Target user not found");
+  if (role !== ROLE_ADMIN && role !== ROLE_USER) {
+    throw new ValidationError("Unknown role");
+  }
   if (actorId === targetUserId) {
     throw new ValidationError("Cannot change own role");
   }
@@ -86,6 +89,9 @@ const updateTrustScore = async ({
 }) => {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("Target user not found");
+  if (!Number.isInteger(trustScore) || trustScore < 0 || trustScore > 100) {
+    throw new ValidationError("Trust score must be an integer from 0 to 100");
+  }
   await userRepository.updateTrustScore(targetUserId, trustScore);
   cacheManager.del(USER_NS, targetUserId);
   return {updated: 1};

@@ -25,9 +25,11 @@ const DETOUR_MAX_ZONES = 8;
 
 const maxExtraDistanceFor = (costing: string): number => {
   if (costing === COSTING_AUTO) {
-    return Number(process.env.DETOUR_BUDGET_AUTO_METERS ?? 15000);
+    const v = Number(process.env.DETOUR_BUDGET_AUTO_METERS ?? 15000);
+    return Number.isFinite(v) && v > 0 ? v : 15000;
   }
-  return Number(process.env.DETOUR_BUDGET_SCOOTER_METERS ?? 8000);
+  const v = Number(process.env.DETOUR_BUDGET_SCOOTER_METERS ?? 8000);
+  return Number.isFinite(v) && v > 0 ? v : 8000;
 };
 
 const hasCoords = (zone: closureService.BlockingZone): boolean =>

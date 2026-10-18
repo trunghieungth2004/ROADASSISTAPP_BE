@@ -126,7 +126,8 @@ class ServiceError extends Error {
   }
 }
 
-const VALHALLA_URL = process.env.VALHALLA_URL || "http://localhost:8002";
+const valhallaUrl = (): string =>
+  process.env.VALHALLA_URL || "http://localhost:8002";
 const VALHALLA_TIMEOUT_MS = 15000;
 const COSTING_SCOOTER = "motor_scooter";
 const COSTING_AUTO = "auto";
@@ -244,7 +245,7 @@ const parseTrip = (trip: unknown): ValhallaRoute => {
     }
     for (const s of maneuversOf(leg, localToGlobal, coords)) steps.push(s);
   }
-  if (coords.length === 0) {
+  if (coords.length < 2) {
     throw new ServiceError("No route found", 404);
   }
   const summary = (trip as {summary?: unknown})?.summary ?? {};
@@ -343,7 +344,7 @@ const postRoutes = async (
   let response: Response | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      response = await fetch(`${VALHALLA_URL}/route`, {
+      response = await fetch(`${valhallaUrl()}/route`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(body),
@@ -403,7 +404,7 @@ export {
   isCarVehicle,
   costingForVehicle,
   costingForMode,
-  VALHALLA_URL,
+  valhallaUrl,
   VALHALLA_COSTING,
   COSTING_SCOOTER,
   COSTING_AUTO,

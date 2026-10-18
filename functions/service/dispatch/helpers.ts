@@ -17,6 +17,7 @@ import {
 } from "../../constants/status";
 import {vehicleClassOf, servesVehicleClass} from "../providerService";
 import {isCarVehicle, postRoute} from "../../utils/valhalla";
+import {logError} from "../../utils/logger";
 import {
   LOADED_FACTOR,
   SECURE_MINUTES_BIKE,
@@ -194,8 +195,8 @@ export const estimateTowEta = async ({
       Math.ceil(dropoffRaw) :
       Math.ceil(dropoffRaw / 5) * 5) * 60;
     return {pickupSeconds, dropoffSeconds};
-    return {pickupSeconds, dropoffSeconds};
-  } catch {
+  } catch (err) {
+    logError("dispatch", "tow-eta-failed", {}, err);
     return null;
   }
 };

@@ -26,11 +26,21 @@ export const requireDeliverIdentity = async (
   res: Response,
   next: NextFunction,
 ): Promise<void> => {
+  const secret = req.header("X-Push-Secret") ?? "";
+  const expectedSecret = process.env.PUSH_DELIVER_SECRET ?? "";
+  const secretOk = secret !== "" &&
+    expectedSecret !== "" &&
+    secret === expectedSecret;
   const header = req.header("Authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   const expectedEmail = process.env.TASK_INVOKER_EMAIL ?? "";
   const audiences = deliverAudiences();
   if (token === "" || expectedEmail === "" || audiences.length === 0) {
+    if (secretOk) {
+      logInfo("push", "deliver secret fallback accepted", {});
+      next();
+      return;
+    }
     deny(res);
     return;
   }
@@ -49,6 +59,11 @@ export const requireDeliverIdentity = async (
     logInfo("push", "deliver identity verified", {email});
     next();
   } catch (err) {
+    if (secretOk) {
+      logInfo("push", "deliver secret fallback accepted", {});
+      next();
+      return;
+    }
     logError("push", "deliver identity rejected", {}, err);
     deny(res);
   }

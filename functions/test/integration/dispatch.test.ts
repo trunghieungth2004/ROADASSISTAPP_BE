@@ -583,6 +583,11 @@ describe("dispatch walk-in flow", () => {
       .set("Authorization", bearer(USER))
       .send({ticketId: walkTicket});
     expect(quoted.body.data.status).toBe("9");
+    const pay = await request(app)
+      .post("/payments/create")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: walkTicket, method: "CASH"});
+    expect(pay.status).toBe(201);
     const approve = await request(app)
       .post("/dispatch/quote/approve")
       .set("Authorization", bearer(USER))
@@ -812,6 +817,11 @@ describe("dispatch walk-in flow", () => {
       .set("Authorization", bearer(WALKOP))
       .send({ticketId: quotedTicket, status: "6"});
     expect(blocked.status).toBe(403);
+    const payQuoted = await request(app)
+      .post("/payments/create")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: quotedTicket, method: "CASH"});
+    expect(payQuoted.status).toBe(201);
     const approve = await request(app)
       .post("/dispatch/quote/approve")
       .set("Authorization", bearer(USER))

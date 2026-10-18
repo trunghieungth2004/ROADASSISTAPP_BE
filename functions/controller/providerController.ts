@@ -8,7 +8,7 @@ const createProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {kind, name, lat, lng, label, openHours, vehicleClasses,
-      serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
+      services, serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
       towPerKmFee} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
@@ -31,6 +31,7 @@ const createProvider = async (req: Request, res: Response) => {
         label,
         openHours,
         vehicleClasses,
+        services,
         serviceFee,
       });
     sendSuccess(res, result, {message: "Provider created", statusCode: 201});
@@ -42,8 +43,8 @@ const createProvider = async (req: Request, res: Response) => {
 const updateProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {providerId, name, label, openHours, vehicleClasses, serviceFee,
-      towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
+    const {providerId, name, label, openHours, vehicleClasses, services,
+      serviceFee, towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
@@ -52,6 +53,7 @@ const updateProvider = async (req: Request, res: Response) => {
         label,
         openHours,
         vehicleClasses,
+        services,
         serviceFee,
         towBaseFee,
         towPerKmFee,
@@ -79,7 +81,7 @@ const myProviders = async (req: Request, res: Response) => {
 const nearProviders = async (req: Request, res: Response) => {
   try {
     const {lat, lng, kind, radiusMeters, acceptingOnly, openOnly,
-      vehicleClass, limit} = req.body;
+      vehicleClass, limit, minRating, sortBy, ticketId} = req.body;
     const result = await providerService.nearProviders({
       lat,
       lng,
@@ -89,6 +91,9 @@ const nearProviders = async (req: Request, res: Response) => {
       openOnly,
       vehicleClass,
       limit,
+      minRating,
+      sortBy,
+      ticketId,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -214,7 +219,8 @@ const updateProviderLocation = async (req: Request, res: Response) => {
 
 const searchProviders = async (req: Request, res: Response) => {
   try {
-    const {lat, lng, query, kind, vehicleClass, radiusMeters, limit} = req.body;
+    const {lat, lng, query, kind, vehicleClass, radiusMeters, limit,
+      minRating, sortBy, ticketId} = req.body;
     const result = await providerService.searchProviders({
       lat,
       lng,
@@ -223,6 +229,9 @@ const searchProviders = async (req: Request, res: Response) => {
       vehicleClass,
       radiusMeters,
       limit,
+      minRating,
+      sortBy,
+      ticketId,
     });
     sendSuccess(res, result);
   } catch (error) {

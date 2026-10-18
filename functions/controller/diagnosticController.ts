@@ -23,8 +23,9 @@ const createDiagnostic = async (req: Request, res: Response) => {
 
 const getDiagnostic = async (req: Request, res: Response) => {
   try {
+    const {uid: userId} = req as AuthedRequest;
     const {diagnosticId} = req.body;
-    const result = await diagnosticService.getDiagnostic(diagnosticId);
+    const result = await diagnosticService.getDiagnostic(diagnosticId, userId);
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);

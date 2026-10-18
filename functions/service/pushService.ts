@@ -4,10 +4,9 @@ import * as flagRepository from "../repository/flagRepository";
 import * as activeRouteRepository from "../repository/activeRouteRepository";
 import * as fcmTokenRepository from "../repository/fcmTokenRepository";
 import {
-  BLOCKING_RADIUS_METERS,
   BLOCKING_STATUSES,
   BLOCKING_TYPES,
-  DEFAULT_RADIUS_METERS,
+  effectiveRadiusMeters,
 } from "./closureService";
 import {lineStringHitsCircles} from "../utils/geo";
 
@@ -80,9 +79,7 @@ const radiusFor = (flag: {
   type: string;
   radiusMeters?: number | null;
 }): number =>
-  (flag.radiusMeters as number | null | undefined) ??
-  BLOCKING_RADIUS_METERS[flag.type] ??
-  DEFAULT_RADIUS_METERS;
+  effectiveRadiusMeters(flag.type, flag.radiusMeters);
 
 const deliverHazardPush = async (input: {
   flagId: string;
@@ -125,11 +122,8 @@ const deliverHazardPush = async (input: {
   ) {
     return {delivered: 0, skipped: true};
   }
-  const removedRadius = typeof input.radiusMeters === "number" ?
-    input.radiusMeters :
-    DEFAULT_RADIUS_METERS;
   const radius = removed ?
-    removedRadius :
+    effectiveRadiusMeters(type, input.radiusMeters) :
     radiusFor(flag as {type: string; radiusMeters?: number | null});
   const routes = await activeRouteRepository.findNearFlag(
     lat,

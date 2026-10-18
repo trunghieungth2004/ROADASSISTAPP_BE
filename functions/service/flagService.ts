@@ -10,6 +10,8 @@ import {
 } from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 import {reporterHandle} from "../utils/points";
+import {deleteObjects, validatePhotoPaths} from "../utils/media";
+import {FLAG_PHOTO_PREFIX} from "../constants/media";
 import {effectiveRadiusMeters} from "./closureService";
 import {enqueueHazardPush} from "./taskQueueService";
 
@@ -24,6 +26,7 @@ interface FlagRecord {
   reporterTrust?: number;
   voters?: string[];
   votes?: Record<string, number>;
+  photoUrls?: string[];
   alreadyVoted?: boolean;
   voteDirection?: "up" | "down" | null;
   [key: string]: unknown;
@@ -109,6 +112,7 @@ const createFlag = async ({
   lng,
   note,
   radiusMeters,
+  photoUrls,
 }: {
   userId: string;
   type: string;
@@ -116,12 +120,18 @@ const createFlag = async ({
   lng: number;
   note?: string;
   radiusMeters?: number;
+  photoUrls?: string[];
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   await assertNoCoveredDestination({userId, type, lat, lng, radiusMeters});
   const ttlMs = TTL_MS[type] ?? 3 * 60 * 60 * 1000;
   const trustScore = (user.trustScore as number) ?? 0;
+  const photoPaths = validatePhotoPaths({
+    paths: photoUrls,
+    ownerUid: userId,
+    prefix: FLAG_PHOTO_PREFIX,
+  });
   const flag = await flagRepository.create({
     type,
     lat,
@@ -131,14 +141,15 @@ const createFlag = async ({
     trustScore,
     radiusMeters,
     note,
+    photoUrls: photoPaths,
   });
   cacheManager.del(NS);
   await enqueueHazardPush(flag.id, flag.type, STATUS_FLAGS.SUGGESTED);
   return flag;
 };
 
-const voteWeightFor = (flag: FlagRecord): number =>
-  1 + ((flag.reporterTrust as number) >= 50 ? 0.5 : 0);
+const voteWeightFor = (_flag: FlagRecord, voterTrust?: number): number =>
+  1 + ((typeof voterTrust === "number" ? voterTrust : 0) >= 50 ? 0.5 : 0);
 
 const voteDirectionOf = (
   flag: FlagRecord,
@@ -165,13 +176,25 @@ const castSignedFlagVote = async (
     throw new ForbiddenError("You cannot vote on your own report");
   }
   if (flag.status === STATUS_FLAGS.LOCKED) {
+    const voter = await userRepository.findById(userId);
+    const voterTrust = typeof voter?.trustScore === "number" ?
+      voter.trustScore :
+      undefined;
     return {
       ...flag,
       alreadyVoted: false,
-      voteDirection: voteDirectionOf(flag, userId, voteWeightFor(flag)),
+      voteDirection: voteDirectionOf(
+        flag,
+        userId,
+        voteWeightFor(flag, voterTrust),
+      ),
     };
   }
-  const signedWeight = voteWeightFor(flag) * sign;
+  const voter = await userRepository.findById(userId);
+  const voterTrust = typeof voter?.trustScore === "number" ?
+    voter.trustScore :
+    undefined;
+  const signedWeight = voteWeightFor(flag, voterTrust) * sign;
   const cast = await flagRepository.castSignedVote(
     flagId,
     userId,
@@ -371,7 +394,9 @@ const moderateFlag = async ({
   const flag = await flagRepository.findById(flagId);
   if (!flag) throw new NotFoundError("Flag not found");
   await flagRepository.updateStatus(flagId, status);
+  await flagRepository.reconcileReporterAward(flagId);
   cacheManager.del(NS, flagId);
+  cacheManager.del(NS);
   if (status === STATUS_FLAGS.CONFIRMED || status === STATUS_FLAGS.LOCKED) {
     await enqueueHazardPush(flagId, flag.type, status);
   }
@@ -402,6 +427,7 @@ const unflagFlag = async ({
     throw new ForbiddenError("Only the reporter can unflag this report");
   }
   await flagRepository.deleteById(flagId);
+  await deleteObjects(flag.photoUrls ?? []);
   cacheManager.del(NS, flagId);
   cacheManager.del(NS);
   await enqueueHazardPush(flag.id, flag.type, "REMOVED", {
@@ -421,6 +447,7 @@ const expireFlags = async (): Promise<number> => {
   const expired = await flagRepository.findExpired();
   for (const flag of expired) {
     await flagRepository.updateStatus(flag.id, STATUS_FLAGS.EXPIRED);
+    await deleteObjects(flag.photoUrls ?? []);
     await flagRepository.reconcileReporterAward(flag.id);
     cacheManager.del(NS, flag.id);
   }

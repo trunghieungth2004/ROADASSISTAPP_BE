@@ -15,36 +15,15 @@ const findByUserId = async (userId: string): Promise<TokenRecord | null> => {
   return {userId: doc.id, ...doc.data()} as TokenRecord;
 };
 
-const stealToken = async (
-  userId: string,
-  token: string,
-): Promise<void> => {
-  const snap = await db.collection("fcm_tokens")
-    .where("tokens", "array-contains", token)
-    .get();
-  const batch = db.batch();
-  let stolen = 0;
-  snap.forEach((doc) => {
-    if (doc.id === userId) return;
-    const stored = ((doc.data() as Partial<TokenRecord>).tokens ?? [])
-      .filter((t) => t !== token);
-    batch.set(doc.ref, {
-      userId: doc.id,
-      tokens: stored,
-      updatedAt: new Date().toISOString(),
-    });
-    stolen += 1;
-  });
-  if (stolen > 0) await batch.commit();
-};
-
 const registerToken = async (
   userId: string,
   token: string,
 ): Promise<TokenRecord> => {
-  await stealToken(userId, token);
-  const ref = db.collection("fcm_tokens").doc(userId);
   return db.runTransaction(async (tx) => {
+    const stealSnap = await tx.get(
+      db.collection("fcm_tokens").where("tokens", "array-contains", token),
+    );
+    const ref = db.collection("fcm_tokens").doc(userId);
     const snap = await tx.get(ref);
     const stored = snap.exists ?
       ((snap.data() as Partial<TokenRecord>).tokens ?? []) :
@@ -58,6 +37,16 @@ const registerToken = async (
       tokens: tokens.slice(0, MAX_TOKENS),
       updatedAt: new Date().toISOString(),
     };
+    for (const doc of stealSnap.docs) {
+      if (doc.id === userId) continue;
+      const kept = ((doc.data() as Partial<TokenRecord>).tokens ?? [])
+        .filter((t) => t !== token);
+      tx.set(doc.ref, {
+        userId: doc.id,
+        tokens: kept,
+        updatedAt: new Date().toISOString(),
+      });
+    }
     tx.set(ref, record);
     return record;
   });

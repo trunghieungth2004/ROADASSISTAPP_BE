@@ -23,7 +23,9 @@ const savePlace = async ({
 }): Promise<SavedPlace> => {
   const name = label.trim();
   if (!name) throw new ValidationError("Place label is required");
-  const existing = await savedPlaceRepository.findByCoords(userId, lat, lng);
+  const qLat = Number(lat.toFixed(5));
+  const qLng = Number(lng.toFixed(5));
+  const existing = await savedPlaceRepository.findByCoords(userId, qLat, qLng);
   if (existing) {
     if (existing.label !== name) {
       await savedPlaceRepository.updateLabel(existing.id, name);
@@ -39,7 +41,7 @@ const savePlace = async ({
     );
   }
   const created = await savedPlaceRepository.create(
-    {userId, label: name, lat, lng});
+    {userId, label: name, lat: qLat, lng: qLng});
   cacheManager.del(NS, userId);
   return created;
 };

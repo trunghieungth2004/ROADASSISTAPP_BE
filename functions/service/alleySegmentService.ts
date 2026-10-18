@@ -1,6 +1,6 @@
 import * as alleySegmentRepository from "../repository/alleySegmentRepository";
 import * as userRepository from "../repository/userRepository";
-import {encodeGeohash, boundsForRadiusMeters} from "../utils/geo";
+import {boundsForRadiusMeters, cellsCoveringBounds} from "../utils/geo";
 import * as cacheManager from "../utils/cacheManager";
 
 import {NotFoundError, ValidationError} from "../utils/errors";
@@ -62,19 +62,7 @@ const searchNear = cacheManager.wrap(
     radiusMeters?: number;
   }) => {
     const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
-    const center = encodeGeohash(lat, lng, 4);
-    const prefixes = Array.from({length: 9}, (_, i) => {
-      const r = (i % 3) - 1;
-      const c = Math.floor(i / 3) - 1;
-      const dLat = (bounds.maxLat - bounds.minLat) / 3;
-      const dLng = (bounds.maxLng - bounds.minLng) / 3;
-      return encodeGeohash(
-        bounds.minLat + (r + 0.5) * dLat,
-        bounds.minLng + (c + 0.5) * dLng,
-        4,
-      ).slice(0, 4);
-    });
-    const unique = Array.from(new Set([center.slice(0, 4), ...prefixes]));
+    const unique = cellsCoveringBounds(bounds, 4);
     return alleySegmentRepository.findByGeohashPrefixes(unique);
   },
   {

@@ -26,6 +26,9 @@ import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
 import ratingRoutes from "../../routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "../../routes/pushRoutes";
+import paymentRoutes from "../../routes/paymentRoutes";
+import adminRoutes from "../../routes/adminRoutes";
+import disputeRoutes from "../../routes/disputeRoutes";
 
 const registerRoutes = (app: Express, deps: RouteDeps): void => {
   mountPushDeliver(app, deps);
@@ -44,6 +47,9 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   dispatchRoutes(app, deps);
   ratingRoutes(app, deps);
   pushRoutes(app, deps);
+  paymentRoutes(app, deps);
+  adminRoutes(app, deps);
+  disputeRoutes(app, deps);
 };
 
 const buildApp = (deps: RouteDeps): Express => {

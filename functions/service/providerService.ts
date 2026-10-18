@@ -6,6 +6,7 @@ import * as providerLocationRepository from
   "../repository/providerLocationRepository";
 import * as userRepository from "../repository/userRepository";
 import {normalizeTowPlate} from "../repository/providerRepository";
+import {accrue} from "./dispatch/waiting";
 import {
   boundsForRadiusMeters,
   cellsCoveringBounds,
@@ -17,6 +18,10 @@ import {
   PROVIDER_KIND,
   PROVIDER_REPORT_REASON,
   PROVIDER_REPORT_STATUS,
+  PROVIDER_SERVICE_CODE_MAX,
+  PROVIDER_SERVICE_NAME_MAX,
+  PROVIDER_SERVICE_PRICE_MAX,
+  PROVIDER_SERVICES_MAX,
   PROVIDER_STATUS,
   VEHICLE_CLASS,
 } from "../constants/status";
@@ -53,8 +58,19 @@ const parseSchedule = (
     openHours;
   const out: Array<{day: string; open: number; close: number}> = [];
   for (const entry of normalized.split(",")) {
+    const text = entry.trim();
+    const bare = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(text);
+    if (bare) {
+      const open = Number(bare[1]) * 60 + Number(bare[2]);
+      const close = Number(bare[3]) * 60 + Number(bare[4]);
+      if (Number(bare[1]) > 23 || Number(bare[2]) > 59) continue;
+      if (Number(bare[3]) > 23 || Number(bare[4]) > 59) continue;
+      if (open === close) continue;
+      for (const d of DOW_KEYS) out.push({day: d, open, close});
+      continue;
+    }
     const m = /^(MON|TUE|WED|THU|FRI|SAT|SUN) (\d{2}):(\d{2})-(\d{2}):(\d{2})$/
-      .exec(entry.trim());
+      .exec(text);
     if (!m) continue;
     const open = Number(m[2]) * 60 + Number(m[3]);
     const close = Number(m[4]) * 60 + Number(m[5]);
@@ -137,6 +153,48 @@ const servesVehicleClass = (
   return (classes as unknown[]).includes(vehicleClass);
 };
 
+type ShopService = {
+  code: string;
+  name: string;
+  displayPrice: number;
+  quoteRequired: boolean;
+};
+
+const normalizeShopServices = (services: unknown): ShopService[] => {
+  if (!Array.isArray(services)) {
+    throw new ValidationError("Services must be a list");
+  }
+  if (services.length > PROVIDER_SERVICES_MAX) {
+    throw new ValidationError("Too many services");
+  }
+  const out: ShopService[] = [];
+  for (const raw of services) {
+    const item = typeof raw === "object" && raw !== null ?
+      raw as Record<string, unknown> :
+      {};
+    const code = typeof item.code === "string" ? item.code.trim() : "";
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    const displayPrice = item.displayPrice;
+    const quoteRequired = item.quoteRequired;
+    if (code === "" || code.length > PROVIDER_SERVICE_CODE_MAX) {
+      throw new ValidationError("Service code is invalid");
+    }
+    if (name === "" || name.length > PROVIDER_SERVICE_NAME_MAX) {
+      throw new ValidationError("Service name is invalid");
+    }
+    if (typeof displayPrice !== "number" ||
+      !Number.isInteger(displayPrice) || displayPrice < 0 ||
+      displayPrice > PROVIDER_SERVICE_PRICE_MAX) {
+      throw new ValidationError("Service price is invalid");
+    }
+    if (typeof quoteRequired !== "boolean") {
+      throw new ValidationError("Service quote flag is invalid");
+    }
+    out.push({code, name, displayPrice, quoteRequired});
+  }
+  return out;
+};
+
 const createShopProvider = async ({
   userId,
   name,
@@ -145,6 +203,7 @@ const createShopProvider = async ({
   label,
   openHours,
   vehicleClasses,
+  services,
   serviceFee,
 }: {
   userId: string;
@@ -154,6 +213,7 @@ const createShopProvider = async ({
   label?: string;
   openHours?: string;
   vehicleClasses?: string[];
+  services?: unknown;
   serviceFee?: number;
 }) => {
   const user = await userRepository.findById(userId);
@@ -168,6 +228,9 @@ const createShopProvider = async ({
       throw new ValidationError("Unknown vehicle class");
     }
   }
+  const normalizedServices = services !== undefined ?
+    normalizeShopServices(services) :
+    undefined;
   const operated = await providerRepository.findByOperator(userId);
   if (operated.some((p) => p.kind === PROVIDER_KIND.SHOP &&
     p.status !== PROVIDER_STATUS.DENIED)) {
@@ -181,6 +244,9 @@ const createShopProvider = async ({
     label,
     openHours,
     vehicleClasses,
+    ...(normalizedServices !== undefined ?
+      {services: normalizedServices} :
+      {}),
     serviceFee,
   });
   cacheManager.del(PROVIDER_NS, userId);
@@ -272,6 +338,7 @@ const updateProvider = async ({
     label?: string | null;
     openHours?: string | null;
     vehicleClasses?: string[];
+    services?: unknown;
     serviceFee?: number;
     towBaseFee?: number;
     towPerKmFee?: number;
@@ -296,6 +363,14 @@ const updateProvider = async ({
       );
     }
   }
+  if (fields.accepting === false && provider.kind === PROVIDER_KIND.TOW) {
+    const live = await dispatchRepository.findActiveForShop(providerId);
+    if (live.length > 0) {
+      throw new ValidationError(
+        "Finish the active job before switching tow duty off",
+      );
+    }
+  }
   if (fields.accepting === false && provider.kind === PROVIDER_KIND.SHOP) {
     const [assigned, pending, named] = await Promise.all([
       dispatchRepository.findActiveForShop(providerId),
@@ -316,6 +391,10 @@ const updateProvider = async ({
   if (fields.vehicleClasses !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP) {
     throw new ValidationError("Vehicle classes are shop-only");
+  }
+  if (fields.services !== undefined &&
+    provider.kind !== PROVIDER_KIND.SHOP) {
+    throw new ValidationError("Services are shop-only");
   }
   if (fields.serviceFee !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP) {
@@ -343,6 +422,9 @@ const updateProvider = async ({
       throw new ValidationError("Unknown vehicle class");
     }
     patch.vehicleClasses = fields.vehicleClasses;
+  }
+  if (fields.services !== undefined) {
+    patch.services = normalizeShopServices(fields.services);
   }
   if (fields.serviceFee !== undefined) patch.serviceFee = fields.serviceFee;
   if (fields.towBaseFee !== undefined) patch.towBaseFee = fields.towBaseFee;
@@ -382,6 +464,39 @@ const myProvidersCached = cacheManager.wrap(myProvidersInner, {
 const myProviders = async ({userId}: {userId: string}) =>
   myProvidersCached({userId});
 
+const declinedSetForTicket = async (
+  ticketId?: string,
+): Promise<Set<string>> => {
+  if (!ticketId) return new Set();
+  try {
+    const ticket = await dispatchRepository.findById(ticketId);
+    const ids = ticket?.declinedShopIds;
+    if (Array.isArray(ids)) return new Set(ids as string[]);
+    return new Set();
+  } catch {
+    return new Set();
+  }
+};
+
+type SearchExtrasRow = {
+  distance?: unknown;
+  ratingAvg?: unknown;
+  id: string;
+};
+
+const withSearchExtras = <T extends SearchExtrasRow>(
+  rows: T[],
+  declined: Set<string>,
+) => {
+  return rows.map((s) => ({
+    ...s,
+    distanceMeters: typeof s.distance === "number" ? s.distance : null,
+    ratingAvg: typeof s.ratingAvg === "number" ? s.ratingAvg : 0,
+    ratingCount: (s as {ratingCount?: unknown}).ratingCount ?? 0,
+    declined: declined.has(s.id),
+  }));
+};
+
 const nearProvidersInner = async ({
   lat,
   lng,
@@ -391,6 +506,9 @@ const nearProvidersInner = async ({
   openOnly = false,
   vehicleClass,
   limit = NEAR_SHOPS_MAX,
+  minRating,
+  sortBy,
+  ticketId,
   now,
 }: {
   lat: number;
@@ -401,6 +519,9 @@ const nearProvidersInner = async ({
   openOnly?: boolean;
   vehicleClass?: string;
   limit?: number;
+  minRating?: number;
+  sortBy?: string;
+  ticketId?: string;
   now?: Date;
 }) => {
   const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
@@ -433,17 +554,34 @@ const nearProvidersInner = async ({
   if (vehicleClass) {
     filtered = filtered.filter((s) => servesVehicleClass(s, vehicleClass));
   }
-  filtered.sort((a, b) => {
-    const rank = (s: {openNow?: unknown}): number => {
-      if (s.openNow === true) return 0;
-      if (s.openNow === null || s.openNow === undefined) return 1;
-      return 2;
-    };
-    const byState = rank(a) - rank(b);
-    if (byState !== 0) return byState;
-    return (a.distance as number) - (b.distance as number);
-  });
-  return filtered.slice(0, limit);
+  if (typeof minRating === "number") {
+    filtered = filtered.filter((s) => {
+      const avg = typeof s.ratingAvg === "number" ? s.ratingAvg : 0;
+      return avg >= (minRating as number);
+    });
+  }
+  if (sortBy === "rating") {
+    filtered.sort((a, b) => {
+      const ar = typeof a.ratingAvg === "number" ? a.ratingAvg : 0;
+      const br = typeof b.ratingAvg === "number" ? b.ratingAvg : 0;
+      if (br !== ar) return br - ar;
+      return (a.distance as number) - (b.distance as number);
+    });
+  } else {
+    filtered.sort((a, b) => {
+      const rank = (s: {openNow?: unknown}): number => {
+        if (s.openNow === true) return 0;
+        if (s.openNow === null || s.openNow === undefined) return 1;
+        return 2;
+      };
+      const byState = rank(a) - rank(b);
+      if (byState !== 0) return byState;
+      return (a.distance as number) - (b.distance as number);
+    });
+  }
+  const sliced = filtered.slice(0, limit);
+  const declined = await declinedSetForTicket(ticketId);
+  return withSearchExtras(sliced, declined);
 };
 
 const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
@@ -457,6 +595,9 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     openOnly = false,
     vehicleClass,
     limit = NEAR_SHOPS_MAX,
+    minRating,
+    sortBy,
+    ticketId,
     now,
   }: {
     lat: number;
@@ -467,6 +608,9 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     openOnly?: boolean;
     vehicleClass?: string;
     limit?: number;
+    minRating?: number;
+    sortBy?: string;
+    ticketId?: string;
     now?: Date;
   }) => {
     const at = now ?? new Date();
@@ -474,7 +618,8 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     return `${lat.toFixed(3)},${lng.toFixed(3)},${kind ?? "-"},` +
       `${radiusMeters},${acceptingOnly ? "1" : "0"},` +
       `${openOnly ? "1" : "0"},${vehicleClass ?? "-"},` +
-      `${limit},${minute}`;
+      `${limit},${minute},${minRating ?? "-"},${sortBy ?? "-"},` +
+      `${ticketId ?? "-"}`;
   },
 });
 
@@ -487,6 +632,9 @@ const nearProviders = async ({
   openOnly = false,
   vehicleClass,
   limit = NEAR_SHOPS_MAX,
+  minRating,
+  sortBy,
+  ticketId,
   now,
 }: {
   lat: number;
@@ -497,6 +645,9 @@ const nearProviders = async ({
   openOnly?: boolean;
   vehicleClass?: string;
   limit?: number;
+  minRating?: number;
+  sortBy?: string;
+  ticketId?: string;
   now?: Date;
 }) =>
   nearProvidersCached({
@@ -508,6 +659,9 @@ const nearProviders = async ({
     openOnly,
     vehicleClass,
     limit,
+    minRating,
+    sortBy,
+    ticketId,
     now,
   });
 
@@ -519,6 +673,9 @@ const searchProvidersInner = async ({
   vehicleClass,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
+  minRating,
+  sortBy,
+  ticketId,
   now,
 }: {
   lat: number;
@@ -528,6 +685,9 @@ const searchProvidersInner = async ({
   vehicleClass?: string;
   radiusMeters?: number;
   limit?: number;
+  minRating?: number;
+  sortBy?: string;
+  ticketId?: string;
   now?: Date;
 }) => {
   const lowered = query.trim().toLowerCase();
@@ -553,24 +713,43 @@ const searchProvidersInner = async ({
     })
     .filter((s) => radiusMeters === undefined ||
       (s.distance as number) <= radiusMeters);
-  const wanted = vehicleClass ?
+  let wanted = vehicleClass ?
     scored.filter((s) => servesVehicleClass(s, vehicleClass)) :
     scored;
-  wanted.sort((a, b) => {
-    const exact = (s: {nameLower?: unknown}): number =>
-      s.nameLower === lowered ? 0 : 1;
-    const byName = exact(a) - exact(b);
-    if (byName !== 0) return byName;
-    const rank = (s: {openNow?: unknown}): number => {
-      if (s.openNow === true) return 0;
-      if (s.openNow === null || s.openNow === undefined) return 1;
-      return 2;
-    };
-    const byState = rank(a) - rank(b);
-    if (byState !== 0) return byState;
-    return (a.distance as number) - (b.distance as number);
-  });
-  return wanted.slice(0, limit);
+  if (typeof minRating === "number") {
+    wanted = wanted.filter((s) => {
+      const avg = typeof s.ratingAvg === "number" ? s.ratingAvg : 0;
+      return avg >= (minRating as number);
+    });
+  }
+  if (sortBy === "rating") {
+    wanted.sort((a, b) => {
+      const ar = typeof a.ratingAvg === "number" ? a.ratingAvg : 0;
+      const br = typeof b.ratingAvg === "number" ? b.ratingAvg : 0;
+      if (br !== ar) return br - ar;
+      return (a.distance as number) - (b.distance as number);
+    });
+  } else if (sortBy === "distance") {
+    wanted.sort((a, b) => (a.distance as number) - (b.distance as number));
+  } else {
+    wanted.sort((a, b) => {
+      const exact = (s: {nameLower?: unknown}): number =>
+        s.nameLower === lowered ? 0 : 1;
+      const byName = exact(a) - exact(b);
+      if (byName !== 0) return byName;
+      const rank = (s: {openNow?: unknown}): number => {
+        if (s.openNow === true) return 0;
+        if (s.openNow === null || s.openNow === undefined) return 1;
+        return 2;
+      };
+      const byState = rank(a) - rank(b);
+      if (byState !== 0) return byState;
+      return (a.distance as number) - (b.distance as number);
+    });
+  }
+  const sliced = wanted.slice(0, limit);
+  const declined = await declinedSetForTicket(ticketId);
+  return withSearchExtras(sliced, declined);
 };
 
 const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
@@ -583,6 +762,9 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     vehicleClass,
     radiusMeters,
     limit = NEAR_SHOPS_MAX,
+    minRating,
+    sortBy,
+    ticketId,
     now,
   }: {
     lat: number;
@@ -592,6 +774,9 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     vehicleClass?: string;
     radiusMeters?: number;
     limit?: number;
+    minRating?: number;
+    sortBy?: string;
+    ticketId?: string;
     now?: Date;
   }) => {
     const at = now ?? new Date();
@@ -599,7 +784,8 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     return `${lat.toFixed(3)},${lng.toFixed(3)},` +
       `${query.trim().toLowerCase()},${kind ?? "-"},` +
       `${vehicleClass ?? "-"},` +
-      `${radiusMeters ?? "-"},${limit},${minute}`;
+      `${radiusMeters ?? "-"},${limit},${minute},` +
+      `${minRating ?? "-"},${sortBy ?? "-"},${ticketId ?? "-"}`;
   },
 });
 
@@ -611,6 +797,9 @@ const searchProviders = async ({
   vehicleClass,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
+  minRating,
+  sortBy,
+  ticketId,
   now,
 }: {
   lat: number;
@@ -620,6 +809,9 @@ const searchProviders = async ({
   vehicleClass?: string;
   radiusMeters?: number;
   limit?: number;
+  minRating?: number;
+  sortBy?: string;
+  ticketId?: string;
   now?: Date;
 }) =>
   searchProvidersCached({
@@ -630,6 +822,9 @@ const searchProviders = async ({
     vehicleClass,
     radiusMeters,
     limit,
+    minRating,
+    sortBy,
+    ticketId,
     now,
   });
 
@@ -873,6 +1068,22 @@ const updateProviderLocation = async ({
     }
   }
   await providerLocationRepository.upsert(tow.id, lat, lng);
+  const active = await dispatchRepository.findActiveForShop(tow.id);
+  for (const ticket of active) {
+    const waiting = ticket.waiting as {active?: unknown} | null | undefined;
+    if (!waiting || waiting.active !== true) continue;
+    try {
+      await accrue({
+        ticketId: ticket.id,
+        towerLat: lat,
+        towerLng: lng,
+        riderLat: ticket.lat,
+        riderLng: ticket.lng,
+      });
+    } catch {
+      continue;
+    }
+  }
   return {updated: 1, providerId: tow.id};
 };
 

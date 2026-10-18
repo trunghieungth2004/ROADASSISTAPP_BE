@@ -4,6 +4,18 @@ import {SERVICE_ROLE} from "../constants/status";
 import * as dispatchController from "../controller/dispatchController";
 import {requireDeliverIdentity} from "../middleware/deliverAuth";
 
+const mountDispatchDeliver = (
+  app: Express,
+  {validate, schemas}: RouteDeps,
+) => {
+  app.post(
+    "/dispatch/deliver",
+    requireDeliverIdentity,
+    validate({body: schemas.deliverDispatch}),
+    dispatchController.deliverDispatch,
+  );
+};
+
 export default (
   app: Express,
   {requireAuth, requireService, validate, schemas}: RouteDeps,
@@ -85,10 +97,48 @@ export default (
     dispatchController.approveQuote,
   );
   app.post(
+    "/dispatch/estimate",
+    requireAuth,
+    validate({body: schemas.sendEstimate}),
+    dispatchController.sendEstimate,
+  );
+  app.post(
+    "/dispatch/estimate/approve",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.approveEstimate}),
+    dispatchController.approveEstimate,
+  );
+  app.post(
+    "/dispatch/estimate/decline",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.declineEstimate}),
+    dispatchController.declineEstimate,
+  );
+  app.post(
+    "/dispatch/unfixable",
+    requireAuth,
+    validate({body: schemas.markUnfixable}),
+    dispatchController.markUnfixable,
+  );
+  app.post(
     "/dispatch/destination/decline",
     requireAuth,
     validate({body: schemas.declineDestination}),
     dispatchController.declineDestination,
+  );
+  app.post(
+    "/dispatch/tower/cancel",
+    requireAuth,
+    validate({body: schemas.cancelTowerSearch}),
+    dispatchController.cancelTowerSearch,
+  );
+  app.post(
+    "/dispatch/waiting",
+    requireAuth,
+    validate({body: schemas.waitingStatus}),
+    dispatchController.waitingStatus,
   );
   app.post(
     "/dispatch/eta/refresh",
@@ -129,10 +179,6 @@ export default (
     validate({body: schemas.updateDispatchDestination}),
     dispatchController.updateDispatchDestination,
   );
-  app.post(
-    "/dispatch/deliver",
-    requireDeliverIdentity,
-    validate({body: schemas.deliverDispatch}),
-    dispatchController.deliverDispatch,
-  );
 };
+
+export {mountDispatchDeliver};
