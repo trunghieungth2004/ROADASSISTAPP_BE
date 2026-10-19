@@ -161,7 +161,10 @@ describe("push endpoints", () => {
         valhallaRoute(
           {
             type: "LineString",
-            coordinates: [[106.66, 10.76]],
+            coordinates: [
+              [106.66, 10.76],
+              [106.7, 10.78],
+            ],
           },
           2450,
           512,

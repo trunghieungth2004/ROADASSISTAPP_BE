@@ -18,7 +18,13 @@ const bearer = (uid: string) => `Bearer ${uid}`;
 const USER = `${PREFIX}-user-1`;
 const USER2 = `${PREFIX}-user-2`;
 
-const geometry = {type: "LineString", coordinates: [[106.66, 10.76]]};
+const geometry = {
+  type: "LineString",
+  coordinates: [
+    [106.66, 10.76],
+    [106.7, 10.78],
+  ],
+};
 
 beforeAll(async () => {
   await cleanAll();
