@@ -77,28 +77,32 @@ and harms nothing; old towers with fees set keep their behavior. The columns
 stay readable for the same reason. Do not extend it — all new work reads
 `towFare`.
 
-## Shop quotes: two-stage estimate → final
+## Shop quotes: one binding quote
 
-Quotes are two-stage. Stage 1 is the non-binding **estimate**: the shop posts
-`POST /dispatch/estimate` (`estimateAmount`, optional `estimateNote`/`eta`);
-the ticket flips to `"13"` (Estimated) with a 15-minute TTL and the rider
-approves (`POST /dispatch/estimate/approve`, `"14"`) or declines
-(`POST /dispatch/estimate/decline`, back to `"1"`, remembering the shop in
-`declinedShopIds`). Stage 2 is the binding **final**: once an estimate is on
-file the shop posts `finalAmount` via `POST /dispatch/quote` and the ticket
-moves to `"11"` (Final quoted) for rider approval
-(`POST /dispatch/quote/approve`, `11→6` — gated on a funded payment: a
-`PENDING` `CASH` charge or a `HELD` `SEPAY` charge). On the legacy one-shot
-flow (no estimate), `POST /dispatch/quote` or `POST /dispatch/work` with
-`quotedAmount` writes `shopQuotedAmount`, ticket `"9"` (Quoted), approval the
-same way. Amounts are one-shot: re-sending a recorded amount is refused
-(`400`).
+A walk-in or mechanic shop posts a single binding quote:
+`POST /dispatch/quote` with `quotedAmount` (optional `workType` and fault
+photo Storage paths) from `MATCHED`/`ARRIVED`/`IN_SHOP` — legacy
+`ESTIMATED`/`EST_APPROVED` tickets can still be quoted once. The ticket
+records `shopQuotedAmount`, moves to `"9"` (Quoted), and the rider approves
+(`POST /dispatch/quote/approve`, `9→6` — gated on a funded payment: a
+`PENDING` `CASH` charge or a `HELD` `SEPAY` charge). There is no estimate
+stage and no final quote: the quoted amount is the price. Amounts are
+one-shot; re-sending is refused (`400`). Work-done (`POST /dispatch/work`)
+records `workType`/`invoiceRef` only and refuses amounts.
 
-`UNFIXABLE`: when the shop finds the vehicle unfixable on site it closes via
+Tow tickets never carry a shop quote. The drop-off shop may send the
+optional, non-binding tow estimate (`POST /dispatch/estimate`, statuses
+`"1"`–`"3"`, 24-hour TTL) to help the rider decide; the repair price itself
+is quoted on the walk-in ticket spawned at drop-off. Sending an estimate on
+a walk-in is refused (`400`).
+
+`UNFIXABLE`: when the shop finds the vehicle unfixable it closes via
 `POST /dispatch/unfixable` (`"15"` Unfixable) with a reason and evidence
-photo Storage paths instead of a `final`. Every `HELD` SePay charge refunds
-in full programmatically; the ticket resolves with no `final` and the shop's
-`completedJobs` does not increment.
+photo Storage paths instead of a final — allowed from
+`MATCHED`/`ARRIVED`/`IN_PROGRESS`/`IN_SHOP`/`QUOTED`/`FINAL_QUOTED`.
+Pending charges are cancelled (their QR stops being payable) and every
+`HELD` SePay charge refunds in full programmatically; the ticket resolves
+with no `final` and the shop's `completedJobs` does not increment.
 
 ## Waiting-time billing
 
@@ -130,7 +134,7 @@ and `payoutAmount = amount − commissionAmount`.
 | Ticket type | Commission |
 |---|---|
 | `TOW` | rate on `towFare.final` (+ `waitingFee`) |
-| `MECHANIC` / `WALK_IN` | rate on shop `finalAmount` / `shopQuotedAmount` |
+| `MECHANIC` / `WALK_IN` | rate on shop `shopQuotedAmount` (legacy `finalAmount`) |
 | `SOS` (volunteer) | none — no payable amount, charges are refused |
 
 Cash settles as a receivable recorded on the charge — the operator marks it
@@ -154,13 +158,14 @@ only if the tow is later re-matched. Completed jobs never bill deadhead.
 ## Full-refund rule
 
 `UNFIXABLE` (status `"15"`, `POST /dispatch/unfixable`) refunds every `HELD`
-SePay charge **in full** — no partial, no fee retained, no commission
-collected. Cash is not auto-refunded (a `PENDING` cash charge is abandoned; a
-confirmed one is settled by an admin out of band). Outside the unfixable flow
-refunds are admin-initiated only (`paymentService.refundPayment`); a rider
-cancel does not auto-refund a held charge. The ticket resolves with no
-`final` and the shop's `completedJobs` does not increment. See `PAYMENTS.md`
-for the charge lifecycle.
+SePay charge **in full** and cancels every `PENDING` charge (the QR stops
+being payable) — no partial, no fee retained, no commission collected.
+Cash is not auto-refunded (a `PENDING` cash charge is cancelled; a confirmed
+one is settled by an admin out of band). Outside the unfixable flow refunds
+are admin-initiated only (`paymentService.refundPayment`); a rider cancel
+does not auto-refund a held charge. The ticket resolves with no `final` and
+the shop's `completedJobs` does not increment. See `PAYMENTS.md` for the
+charge lifecycle.
 
 ## Parked
 

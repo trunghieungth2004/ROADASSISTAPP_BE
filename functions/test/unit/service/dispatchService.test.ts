@@ -25,6 +25,7 @@ import {
   sendEstimate,
   approveEstimate,
   declineEstimate,
+  markUnfixable,
   approveQuote,
   declineDestination,
   updateWorkOrder,
@@ -3569,7 +3570,7 @@ describe("dispatchService declineDispatch", () => {
 });
 
 describe("dispatchService updateWorkOrder", () => {
-  it("lets the operator record work on a matched ticket", async () => {
+  it("lets the operator record work details on a matched ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       status: "2",
@@ -3589,16 +3590,36 @@ describe("dispatchService updateWorkOrder", () => {
         userId: "op1",
         ticketId: "t1",
         workType: "Tire change",
-        quotedAmount: 400000,
+        invoiceRef: "INV-1",
       }),
     ).resolves.toEqual({updated: 1});
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
-      expect.objectContaining({
-        workType: "Tire change",
-        shopQuotedAmount: 400000,
-      }),
+      {workType: "Tire change", invoiceRef: "INV-1"},
     );
+  });
+  it("rejects price edits on work orders", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "2",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      updateWorkOrder({
+        userId: "op1",
+        ticketId: "t1",
+        quotedAmount: 400000,
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
   });
   it("rejects work orders from strangers", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
@@ -3657,6 +3678,60 @@ describe("dispatchService updateWorkOrder", () => {
     await expect(
       updateWorkOrder({userId: "op1", ticketId: "t1"}),
     ).rejects.toMatchObject({statusCode: 400});
+  });
+});
+
+describe("dispatchService markUnfixable", () => {
+  it("voids pending payments on an in-progress ticket", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "6",
+      ticketType: "WALK_IN",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    const payment = {
+      id: "p1",
+      ticketId: "t1",
+      method: "SEPAY",
+      status: "PENDING",
+      amount: 100000,
+    };
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      payment,
+    ] as never);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue({
+      ...payment,
+      status: "CANCELLED",
+    } as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toEqual({unfixable: true});
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t1",
+      "15",
+      "op1",
+    );
+    expect(paymentRepository.updateStatus).toHaveBeenCalledWith(
+      "p1",
+      "CANCELLED",
+    );
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({checkoutUrl: null}),
+    );
   });
 });
 
@@ -5342,11 +5417,11 @@ describe("dispatchService hardening", () => {
       expect.not.objectContaining({priceEstimate: expect.anything()}),
     );
   });
-  it("routes fresh quotes through rider approval", async () => {
+  it("rejects quotes on tow tickets", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       status: "2",
-      ticketType: "WALK_IN",
+      ticketType: "TOW",
       providerId: "shop9",
       assignedShopId: "shop9",
     } as never);
@@ -5359,22 +5434,16 @@ describe("dispatchService hardening", () => {
       kind: "SHOP",
       operatorUid: "op1",
     } as never);
-    await updateWorkOrder({
-      userId: "op1",
-      ticketId: "t1",
-      quotedAmount: 150000,
-    });
-    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
-      "t1",
-      "9",
-      "op1",
-    );
+    await expect(
+      sendQuote({userId: "op1", ticketId: "t1", quotedAmount: 150000}),
+    ).rejects.toMatchObject({statusCode: 400});
   });
 
-  it("stamps quote authorship on work orders", async () => {
+  it("stamps quote authorship on binding quotes", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
-      status: "6",
+      status: "3",
+      ticketType: "WALK_IN",
       assignedShopId: "shop9",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
@@ -5386,7 +5455,7 @@ describe("dispatchService hardening", () => {
       kind: "SHOP",
       operatorUid: "op1",
     } as never);
-    await updateWorkOrder({
+    await sendQuote({
       userId: "op1",
       ticketId: "t1",
       quotedAmount: 400000,
@@ -5585,7 +5654,7 @@ describe("dispatchService.towEstimates", () => {
     ).rejects.toMatchObject({statusCode: 400});
   });
 
-  it("keeps the walk-in estimate handshake on the status flow", async () => {
+  it("rejects estimates on walk-in tickets", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       userId: "rider1",
@@ -5605,13 +5674,7 @@ describe("dispatchService.towEstimates", () => {
     } as never);
     await expect(
       sendEstimate({userId: "op1", ticketId: "t1", estimateAmount: 50000}),
-    ).resolves.toEqual({estimated: true});
-    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
-      "t1",
-      "13",
-      "op1",
-    );
-    expect(enqueueDispatchPush).toHaveBeenCalledWith("t1", "-status-13");
+    ).rejects.toMatchObject({statusCode: 400});
   });
 
   it("approves a tow estimate without moving status", async () => {

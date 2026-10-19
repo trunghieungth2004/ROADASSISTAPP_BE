@@ -5,6 +5,7 @@ import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
 import {ROLE_ADMIN} from "../constants/roles";
+import {STATUS_DISPATCH} from "../constants/status";
 import {
   COMMISSION_RATE_PERCENT,
   PAYMENT_ACTIVE_STATUSES,
@@ -168,6 +169,15 @@ const createPaymentForTicket = async ({
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   if (ticket.userId !== userId) {
     throw new ForbiddenError("Only the rider pays for a ticket");
+  }
+  const blocked: Set<string> = new Set([
+    STATUS_DISPATCH.CANCELLED,
+    STATUS_DISPATCH.DECLINED,
+    STATUS_DISPATCH.RESOLVED_UNFIXABLE,
+    STATUS_DISPATCH.UNFIXABLE,
+  ]);
+  if (blocked.has(ticket.status)) {
+    throw new ValidationError("Ticket is not payable");
   }
   if (method !== PAYMENT_METHOD.CASH && method !== PAYMENT_METHOD.SEPAY) {
     throw new ValidationError("Unknown payment method");
@@ -361,6 +371,32 @@ const getPaymentForTicket = async ({
   return paymentRepository.findByTicketId(ticketId);
 };
 
+const cancelPendingPayments = async (ticketId: string): Promise<void> => {
+  const payments = await paymentRepository.findByTicket(ticketId);
+  const pending = payments.filter((p) => p.status === PAYMENT_STATUS.PENDING);
+  for (const payment of pending) {
+    try {
+      const updated = await paymentRepository.updateStatus(
+        payment.id,
+        PAYMENT_STATUS.CANCELLED,
+      );
+      if (updated) await stampTicketPayment(ticketId, updated);
+    } catch {
+      continue;
+    }
+  }
+  if (pending.length > 0) {
+    try {
+      await dispatchRepository.update(ticketId, {
+        checkoutUrl: null,
+        qrUrl: null,
+      });
+    } catch {
+      return;
+    }
+  }
+};
+
 const listPayments = async ({
   adminUid,
   status,
@@ -386,6 +422,7 @@ const listPayments = async ({
 
 export {
   PaymentWithCheckout,
+  cancelPendingPayments,
   createPaymentForTicket,
   confirmCash,
   buildSepayOrder,

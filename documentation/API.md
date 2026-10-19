@@ -1366,11 +1366,11 @@ Decline a pending walk-in addressed to the caller's shop (`403` for other provid
 
 ### `POST /dispatch/work` **(Auth)**
 
-Record the repair order on an open ticket: free-text `workType`, integer VND `quotedAmount`/`finalAmount`, and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is on an editable leg (matched/arrived/in-progress/in-shop/quoted/estimated/estimate-approved, `400` once closed). Shop-only: tower operators get `403`, even on tows they hold. Amounts already on file are refused (`400`). Setting `quotedAmount` on a matched/arrived ticket flips it to `"9"` (Quoted) for rider approval — the legacy one-shot path; the canonical two-stage flow sends estimates via `POST /dispatch/estimate` and the binding final via `POST /dispatch/quote`.
+Record work-done details on an open ticket: free-text `workType` and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is on an editable leg (matched/arrived/in-progress/in-shop/quoted/estimated/estimate-approved, `400` once closed). Shop-only: tower operators get `403`, even on tows they hold. Details only: `quotedAmount`/`finalAmount` are refused (`400`) — the price is set once by `POST /dispatch/quote`.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "workType": "Tire change", "quotedAmount": 400000, "finalAmount": 380000, "invoiceRef": "INV-1042" }
+{ "ticketId": "tick1", "workType": "Tire change", "invoiceRef": "INV-1042" }
 ```
 
 **Response `200`:**
@@ -1382,7 +1382,7 @@ Record the repair order on an open ticket: free-text `workType`, integer VND `qu
 
 ### `POST /dispatch/quote` **(Auth)**
 
-Send the binding stage-2 final — or, on the classic matched/arrived flow with no estimate on file, the one-shot first quote. Only the assigned (or, for walk-ins, named) shop's operator or an admin; towers get `403`. When an estimate is on file (`estimateAmount`) or the ticket is already past `"13"`/`"14"`/`"10"`/`"11"`, the amount posts as `finalAmount` and the ticket moves to `"11"` (Final quoted) for rider approval; otherwise `quotedAmount` writes `shopQuotedAmount` and moves to `"9"` (Quoted). One-shot per amount: re-sending a recorded amount is refused (`400`). Optional `workType` and fault `faultPhotos` (Storage paths) ride along. Work starts only after the rider approves *and* a funded payment exists (`CASH` `PENDING` or `SEPAY` `HELD` — see `POST /dispatch/quote/approve`). A vehicle that cannot be repaired closes via `POST /dispatch/unfixable` with a full refund.
+Send the single binding quote for a walk-in or mechanic ticket: `quotedAmount` writes `shopQuotedAmount` and moves the ticket to `"9"` (Quoted) for rider approval. Only the assigned (or, for walk-ins, named) shop's operator or an admin; towers get `403`, and tow tickets are refused (`400`) — their repair price lives on the spawned walk-in. Allowed from `"2"`/`"3"`/`"10"` (plus legacy `"13"`/`"14"`), one-shot: re-sending a recorded amount is refused (`400`). `finalAmount` is refused (`400`): the quote is the price, there is no second stage. Optional `workType` and fault `faultPhotos` (Storage paths) ride along. Work starts only after the rider approves *and* a funded payment exists (`CASH` `PENDING` or `SEPAY` `HELD` — see `POST /dispatch/quote/approve`). A vehicle that cannot be repaired closes via `POST /dispatch/unfixable` with a full refund.
 
 **Request:**
 ```json
@@ -1398,7 +1398,7 @@ Send the binding stage-2 final — or, on the classic matched/arrived flow with 
 
 ### `POST /dispatch/quote/approve` **(Auth)**
 
-Approve the pending quote, moving the ticket to `"6"` (In progress) with the rider as actor: from `"9"` (stage-1 quote), `"11"` (binding final), or the legacy variants (matched/arrived carrying a quote, or `"10"`/`"14"`/`"9"` carrying a final). Only the ticket's rider. Requires a funded payment on the ticket — a `PENDING` `CASH` charge or a `HELD` `SEPAY` charge (`400` "Payment required before starting work") — and stamps `paymentArmed` plus `quoteApprovedAt`. Declining a quote is a plain rider cancel (`PUT /dispatch/status` → `"5"`).
+Approve the pending quote, moving the ticket to `"6"` (In progress) with the rider as actor: from `"9"` (binding quote), or the legacy variants (`"11"` final quote, matched/arrived carrying a quote, or `"10"`/`"14"`/`"9"` carrying a final). Only the ticket's rider. Requires a funded payment on the ticket — a `PENDING` `CASH` charge or a `HELD` `SEPAY` charge (`400` "Payment required before starting work") — and stamps `paymentArmed` plus `quoteApprovedAt`. Declining a quote is a plain rider cancel (`PUT /dispatch/status` → `"5"`).
 
 **Request:**
 ```json
@@ -1414,9 +1414,7 @@ Approve the pending quote, moving the ticket to `"6"` (In progress) with the rid
 
 ### `POST /dispatch/estimate` **(Auth, shop)**
 
-Stage-1 estimate (status `"13"` Estimated) — the non-binding first half of the two-stage quote. On walk-ins (and shop-assigned jobs) only the assigned (or named) shop's operator or an admin; towers get `403` ("Only shops send quotes"). `estimateAmount` is a non-negative integer VND; optional `estimateNote` (≤500 chars) and `eta` (seconds) ride along. Allowed on active tickets (`"1"`, `"2"`, `"3"`, `"10"`, `"9"`, `"13"`); a live estimate is refused (`400` "Estimate already sent"). Writes `estimateAmount`, `estimateBy`, `estimatedAt`, and `estimateExpiresAt` (15-minute TTL) and flips the ticket to `"13"`; the rider hears "Your shop sent an estimate". The estimate does not settle money — approval authorizes work, and the binding amount comes later via `POST /dispatch/quote`.
-
-On **tows** the drop-off shop pre-quotes the repair while the tow is still inbound: only its operator (or an admin) may send, allowed while the ticket is `"1"`, `"2"`, or `"3"`, and the ticket's status is left untouched (the tow leg keeps its own lifecycle). A live estimate is refused (`400` "Estimate already sent"), an approved one is refused (`400` "Estimate already approved"), and an expired one frees a resend. The estimate carries a 24-hour TTL; the rider hears "Repair estimate ready". Destination edits and a destination decline clear the estimate; the rider's own decline clears it and reopens drop-off picking.
+Optional repair estimate on **tow** tickets: the drop-off shop pre-quotes the repair while the tow is still inbound, and the tow leg keeps its own lifecycle (status untouched). Only the destination shop's operator (or an admin); walk-ins get `400` — they quote once via `POST /dispatch/quote`. Allowed while the ticket is `"1"`, `"2"`, or `"3"`. A live estimate is refused (`400` "Estimate already sent"), an approved one is refused (`400` "Estimate already approved"), and an expired one frees a resend. `estimateAmount` is a non-negative integer VND; optional `estimateNote` (≤500 chars) and `eta` (seconds) ride along. Writes `estimateAmount`, `estimateBy`, `estimatedAt`, and `estimateExpiresAt` (24-hour TTL); the rider hears "Repair estimate ready". The estimate is advisory and non-binding — the repair price is quoted on the walk-in ticket spawned at drop-off. Destination edits and a destination decline clear the estimate; the rider's own decline clears it and reopens drop-off picking.
 
 **Request:**
 ```json
@@ -1432,9 +1430,7 @@ On **tows** the drop-off shop pre-quotes the repair while the tow is still inbou
 
 ### `POST /dispatch/estimate/approve` **(Auth, rider)**
 
-Rider approves the pending estimate: `"13" → "14"` (Estimate approved), stamping `estimateApprovedAt`. Only the ticket's rider, only from `"13"`, and not after `estimateExpiresAt` (`400` "Estimate expired"). The operator hears "Estimate approved".
-
-On **tows** approval is advisory and never moves status: it requires a live, unapproved `estimateAmount` on the ticket and only stamps `estimateApprovedAt` again (`400` "No estimate awaiting approval" / "Estimate expired" / "Estimate already approved"). The destination shop hears "Estimate approved".
+Rider approves the pending **tow** estimate — advisory only, never moves status: it requires a live, unapproved `estimateAmount` on the ticket and stamps `estimateApprovedAt` (`400` "No estimate awaiting approval" / "Estimate expired" / "Estimate already approved"). The destination shop hears "Estimate approved". Legacy shop estimates (`"13" → "14"`, stamping `estimateApprovedAt`) remain approvable until those tickets close; new estimates are tow-only.
 
 **Request:**
 ```json
@@ -1450,9 +1446,7 @@ On **tows** approval is advisory and never moves status: it requires a live, una
 
 ### `POST /dispatch/estimate/decline` **(Auth, rider)**
 
-Rider declines the estimate: the ticket returns to `"1"` (Pending), `estimateExpiresAt` clears, and the shop that sent it — optional explicit `shopId`, else `suggestedShopId`, else `destinationShopId` — is appended to `declinedShopIds` (a declined `suggestedShopId`/`destinationShopId` is cleared so the ticket can route elsewhere). The operator hears "Estimate declined". Declined shops stay recorded for the life of the ticket and surface greyed in shop search.
-
-On **tows** a decline requires an estimate on file (else `400` "No estimate awaiting decision") and clears the estimate block without touching status. When the declined shop held the drop-off, the destination clears (`destinationShopId`/`destinationSnapshot`/`destinationPoint`) and `needsNewDestination` is set so the rider repicks; either way the shop lands in `declinedShopIds`. The destination shop hears "Estimate declined" (the push names the shop explicitly, since the destination may already be cleared).
+Rider declines the **tow** estimate: the estimate block clears without touching status. When the declined shop held the drop-off, the destination clears (`destinationShopId`/`destinationSnapshot`/`destinationPoint`) and `needsNewDestination` is set so the rider repicks; either way the shop lands in `declinedShopIds`. The destination shop hears "Estimate declined" (the push names the shop explicitly, since the destination may already be cleared). Legacy shop estimates still return the ticket to `"1"` (Pending) and append the shop to `declinedShopIds`.
 
 **Request:**
 ```json
@@ -1468,7 +1462,7 @@ On **tows** a decline requires an estimate on file (else `400` "No estimate awai
 
 ### `POST /dispatch/unfixable` **(Auth, shop)**
 
-Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"10"` (In shop), `"11"` (Final quoted), `"9"` (Quoted), or `"3"` (Arrived). Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path (`dispatch/...` scope, no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, and refunds every `HELD` SePay charge **in full** (best-effort; a `PENDING` cash charge needs no refund). No `final` is recorded, the shop's `completedJobs` does not increment, and the rider is pushed urgently.
+Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), `"9"` (Quoted), `"10"` (In shop), or `"11"` (Final quoted). Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path (`dispatch/...` scope, no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, cancels every `PENDING` charge (its QR stops being payable — status `CANCELLED`), and refunds every `HELD` SePay charge **in full** (best-effort). No `final` is recorded, the shop's `completedJobs` does not increment, and the rider is pushed urgently.
 
 **Request:**
 ```json
@@ -1669,11 +1663,11 @@ Ratings filed on one ticket (either direction), so the reply box can bind to the
 
 ## Payments
 
-Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. Commission splits come from `platform_config/global`.
+Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits come from `platform_config/global`.
 
 ### `POST /payments/create` **(Auth, rider)**
 
-Create a charge for the ticket's payable amount (`finalAmount`, else `shopQuotedAmount`, else `towFare.final`, else `towFare.estimate` — `400` when the ticket has no amount yet). Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). Refused when the ticket already has an active charge (`409`) or the method is disabled in platform config. SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
+Create a charge for the ticket's payable amount (`finalAmount`, else `shopQuotedAmount`, else `towFare.final`, else `towFare.estimate` — `400` when the ticket has no amount yet). Refused when the ticket is cancelled, declined, or unfixable (`400` "Ticket is not payable"), already has an active charge (`409`), or the method is disabled in platform config. Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
 
 **Request:**
 ```json

@@ -68,9 +68,11 @@ URLs come from env vars — `SEPAY_MERCHANT_ID`, `SEPAY_SECRET_KEY`,
 
 ## Charge states
 
-`PENDING` → `HELD` → `CONFIRMED`, with `REFUNDED` and `PARTIAL` as money-out
-exits. `CASH` charges skip `HELD` (`PENDING` → `CONFIRMED` on operator
-confirm). Stored docs mirror the `paymentRepository.Payment` interface:
+`PENDING` → `HELD` → `CONFIRMED`, with `REFUNDED`, `PARTIAL` and
+`CANCELLED` as exits. `CASH` charges skip `HELD` (`PENDING` → `CONFIRMED` on
+operator confirm). `CANCELLED` marks a pending charge voided by the flow
+(the unfixable close) — its QR no longer credits, and it is not counted as
+received. Stored docs mirror the `paymentRepository.Payment` interface:
 `{id, ticketId, riderUid, payeeId, amount, currency, method, status, qrRef,
 ipnRef, commissionRate, commissionAmount, payoutAmount, confirmedBy,
 confirmedAt, receiptUrl, refundAmount, refundedAt, refundedBy, payoutRef,

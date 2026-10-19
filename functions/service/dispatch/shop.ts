@@ -14,7 +14,6 @@ import {autoFile} from "../disputeService";
 import {startWaiting, stopWaiting} from "./waiting";
 import {
   DISPUTE_TYPE,
-  ESTIMATE_TTL_MS,
   LATE_GRACE_MS,
   NS,
   SHOP_DECLINE_REASON,
@@ -562,43 +561,13 @@ export const updateWorkOrder = async ({
   if (!editable.has(ticket.status)) {
     throw new ValidationError("Work order is no longer editable");
   }
-  if (quotedAmount !== undefined &&
-    typeof ticket.shopQuotedAmount === "number") {
-    throw new ValidationError("Quote already sent");
-  }
-  if (finalAmount !== undefined &&
-    typeof ticket.finalAmount === "number") {
-    throw new ValidationError("Final amount already recorded");
+  if (quotedAmount !== undefined || finalAmount !== undefined) {
+    throw new ValidationError("Quote amounts are sent via the quote endpoint");
   }
   await dispatchRepository.update(ticketId, {
     ...(workType !== undefined ? {workType} : {}),
-    ...(quotedAmount !== undefined ? {shopQuotedAmount: quotedAmount} : {}),
-    ...(finalAmount !== undefined ? {finalAmount} : {}),
     ...(invoiceRef !== undefined ? {invoiceRef} : {}),
-    ...(quotedAmount !== undefined ? {
-      quotedBy: userId,
-      quotedAt: new Date().toISOString(),
-    } : {}),
   });
-  if (quotedAmount !== undefined &&
-    (ticket.status === STATUS_DISPATCH.MATCHED ||
-      ticket.status === STATUS_DISPATCH.ARRIVED)) {
-    const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
-      (v): v is string => typeof v === "string" && v !== "",
-    );
-    if (shopIds.length === 0) {
-      throw new ValidationError("Quotes need a shop ticket");
-    }
-    await dispatchRepository.updateStatus(
-      ticketId,
-      STATUS_DISPATCH.QUOTED,
-      userId,
-    );
-    await enqueueDispatchPush(
-      ticketId,
-      `-status-${STATUS_DISPATCH.QUOTED}`,
-    );
-  }
   cacheManager.del(NS);
   return {updated: 1};
 };
@@ -627,28 +596,6 @@ const resolveTicketOperator = async (
     if (shop && shop.operatorUid === userId) return;
   }
   throw new ForbiddenError("Only the helper sends quotes");
-};
-
-const requireShopOperator = async (
-  ticket: TicketActors,
-  userId: string,
-): Promise<void> => {
-  const caller = await userRepository.findById(userId);
-  if (!caller) throw new NotFoundError("User not found");
-  if (caller.role === ROLE_ADMIN) return;
-  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
-    (v): v is string => typeof v === "string" && v !== "",
-  );
-  for (const shopId of shopIds) {
-    const shop = await providerRepository.findById(shopId);
-    if (shop && shop.operatorUid === userId) {
-      if (shop.kind !== PROVIDER_KIND.SHOP) {
-        throw new ForbiddenError("Only shops send quotes");
-      }
-      return;
-    }
-  }
-  throw new ForbiddenError("Only shops send quotes");
 };
 
 const requireDestinationShopOperator = async (
@@ -691,89 +638,46 @@ export const sendEstimate = async ({
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
-  if (ticket.ticketType === "TOW") {
-    await requireDestinationShopOperator(ticket, userId);
-    const towStates: Set<string> = new Set([
-      STATUS_DISPATCH.PENDING,
-      STATUS_DISPATCH.MATCHED,
-      STATUS_DISPATCH.ARRIVED,
-    ]);
-    if (!towStates.has(ticket.status)) {
-      throw new ValidationError("Estimates go out on active tows");
-    }
-    if (typeof ticket.estimateApprovedAt === "string" &&
-      ticket.estimateApprovedAt !== "") {
-      throw new ValidationError("Estimate already approved");
-    }
-    if (typeof ticket.estimateExpiresAt === "string" &&
-      Date.parse(ticket.estimateExpiresAt) > Date.now()) {
-      throw new ValidationError("Estimate already sent");
-    }
-    if (!Number.isInteger(estimateAmount) || estimateAmount < 0) {
-      throw new ValidationError("Estimate must be a non-negative integer");
-    }
-    await dispatchRepository.update(ticketId, {
-      estimateAmount,
-      ...(estimateNote !== undefined ? {estimateNote} : {}),
-      ...(eta !== undefined ? {estimateEta: eta} : {}),
-      estimateExpiresAt: new Date(
-        Date.now() + TOW_ESTIMATE_TTL_MS,
-      ).toISOString(),
-      estimateApprovedAt: null,
-      estimateBy: userId,
-      estimatedAt: new Date().toISOString(),
-    });
-    cacheManager.del(NS);
-    await enqueueDispatchPush(ticketId, "-estimate-sent-rider", {
-      audience: "rider",
-      title: "Repair estimate ready",
-      body: "The drop-off shop sent an estimate — tap to review",
-    });
-    return {estimated: true};
+  if (ticket.ticketType !== "TOW") {
+    throw new ValidationError("Estimates are for tow tickets");
   }
-  await resolveTicketOperator(ticket, userId);
-  await requireShopOperator(ticket, userId);
-  const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
-    (v): v is string => typeof v === "string" && v !== "",
-  );
-  if (shopIds.length === 0) {
-    throw new ValidationError("Quotes need a shop ticket");
-  }
-  const allowed: Set<string> = new Set([
+  await requireDestinationShopOperator(ticket, userId);
+  const towStates: Set<string> = new Set([
     STATUS_DISPATCH.PENDING,
     STATUS_DISPATCH.MATCHED,
     STATUS_DISPATCH.ARRIVED,
-    STATUS_DISPATCH.IN_SHOP,
-    STATUS_DISPATCH.QUOTED,
-    STATUS_DISPATCH.ESTIMATED,
   ]);
-  if (!allowed.has(ticket.status)) {
-    throw new ValidationError("Estimates go out on active tickets");
+  if (!towStates.has(ticket.status)) {
+    throw new ValidationError("Estimates go out on active tows");
   }
-  if (ticket.status === STATUS_DISPATCH.ESTIMATED &&
-    typeof ticket.estimateExpiresAt === "string" &&
+  if (typeof ticket.estimateApprovedAt === "string" &&
+    ticket.estimateApprovedAt !== "") {
+    throw new ValidationError("Estimate already approved");
+  }
+  if (typeof ticket.estimateExpiresAt === "string" &&
     Date.parse(ticket.estimateExpiresAt) > Date.now()) {
     throw new ValidationError("Estimate already sent");
   }
   if (!Number.isInteger(estimateAmount) || estimateAmount < 0) {
     throw new ValidationError("Estimate must be a non-negative integer");
   }
-  const nowIso = new Date().toISOString();
   await dispatchRepository.update(ticketId, {
     estimateAmount,
     ...(estimateNote !== undefined ? {estimateNote} : {}),
     ...(eta !== undefined ? {estimateEta: eta} : {}),
-    estimateExpiresAt: new Date(Date.now() + ESTIMATE_TTL_MS).toISOString(),
+    estimateExpiresAt: new Date(
+      Date.now() + TOW_ESTIMATE_TTL_MS,
+    ).toISOString(),
+    estimateApprovedAt: null,
     estimateBy: userId,
-    estimatedAt: nowIso,
+    estimatedAt: new Date().toISOString(),
   });
-  await dispatchRepository.updateStatus(
-    ticketId,
-    STATUS_DISPATCH.ESTIMATED,
-    userId,
-  );
   cacheManager.del(NS);
-  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.ESTIMATED}`);
+  await enqueueDispatchPush(ticketId, "-estimate-sent-rider", {
+    audience: "rider",
+    title: "Repair estimate ready",
+    body: "The drop-off shop sent an estimate — tap to review",
+  });
   return {estimated: true};
 };
 
@@ -1000,64 +904,33 @@ export const sendQuote = async ({
       throw new ForbiddenError("Only shops send quotes");
     }
   }
-  const amount = finalAmount !== undefined ? finalAmount : quotedAmount;
-  if (amount === undefined) {
+  if (ticket.ticketType === "TOW") {
+    throw new ValidationError("Quotes belong to the shop ticket");
+  }
+  if (finalAmount !== undefined) {
+    throw new ValidationError("Walk-in quotes are binding");
+  }
+  if (quotedAmount === undefined) {
     throw new ValidationError("Quote needs an amount");
   }
-  if (!Number.isInteger(amount) || amount < 0) {
+  if (!Number.isInteger(quotedAmount) || quotedAmount < 0) {
     throw new ValidationError("Quote must be a non-negative integer");
   }
-  const hasEstimate = typeof ticket.estimateAmount === "number";
-  const finalStates: Set<string> = new Set([
-    STATUS_DISPATCH.EST_APPROVED,
+  const quoteStates: Set<string> = new Set([
+    STATUS_DISPATCH.MATCHED,
+    STATUS_DISPATCH.ARRIVED,
     STATUS_DISPATCH.IN_SHOP,
-    STATUS_DISPATCH.FINAL_QUOTED,
     STATUS_DISPATCH.ESTIMATED,
+    STATUS_DISPATCH.EST_APPROVED,
   ]);
-  const useFinal = hasEstimate || finalStates.has(ticket.status) ||
-    finalAmount !== undefined;
-  if (useFinal) {
-    if (!finalStates.has(ticket.status) &&
-      ticket.status !== STATUS_DISPATCH.MATCHED &&
-      ticket.status !== STATUS_DISPATCH.ARRIVED &&
-      ticket.status !== STATUS_DISPATCH.QUOTED &&
-      ticket.status !== STATUS_DISPATCH.IN_PROGRESS) {
-      throw new ValidationError("Final quote goes out on active tickets");
-    }
-    if (typeof ticket.finalAmount === "number") {
-      throw new ValidationError("Final quote already sent");
-    }
-    await dispatchRepository.update(ticketId, {
-      finalAmount: amount,
-      ...(typeof ticket.shopQuotedAmount !== "number" ?
-        {shopQuotedAmount: amount} :
-        {}),
-      ...(workType !== undefined ? {workType} : {}),
-      ...(faultPhotos !== undefined ? {faultPhotos} : {}),
-      quotedBy: userId,
-      quotedAt: new Date().toISOString(),
-    });
-    await dispatchRepository.updateStatus(
-      ticketId,
-      STATUS_DISPATCH.FINAL_QUOTED,
-      userId,
-    );
-    cacheManager.del(NS);
-    await enqueueDispatchPush(
-      ticketId,
-      `-status-${STATUS_DISPATCH.FINAL_QUOTED}`,
-    );
-    return {quoted: true};
-  }
-  if (ticket.status !== STATUS_DISPATCH.MATCHED &&
-    ticket.status !== STATUS_DISPATCH.ARRIVED) {
+  if (!quoteStates.has(ticket.status)) {
     throw new ValidationError("Quotes go out on active tickets");
   }
   if (typeof ticket.shopQuotedAmount === "number") {
     throw new ValidationError("Quote already sent");
   }
   await dispatchRepository.update(ticketId, {
-    shopQuotedAmount: amount,
+    shopQuotedAmount: quotedAmount,
     ...(workType !== undefined ? {workType} : {}),
     ...(faultPhotos !== undefined ? {faultPhotos} : {}),
     quotedBy: userId,
@@ -1201,6 +1074,14 @@ const tryRefundPayment = async (
   }
 };
 
+const tryVoidPendingPayments = async (ticketId: string): Promise<void> => {
+  try {
+    await paymentService.cancelPendingPayments(ticketId);
+  } catch {
+    return;
+  }
+};
+
 export const markUnfixable = async ({
   userId,
   ticketId,
@@ -1231,6 +1112,8 @@ export const markUnfixable = async ({
     throw new ForbiddenError("Only the operator marks unfixable");
   }
   const allowed: Set<string> = new Set([
+    STATUS_DISPATCH.MATCHED,
+    STATUS_DISPATCH.IN_PROGRESS,
     STATUS_DISPATCH.IN_SHOP,
     STATUS_DISPATCH.FINAL_QUOTED,
     STATUS_DISPATCH.QUOTED,
@@ -1265,6 +1148,7 @@ export const markUnfixable = async ({
   } catch {
     return {unfixable: true};
   }
+  await tryVoidPendingPayments(ticketId);
   await tryRefundPayment(ticketId, userId);
   cacheManager.del(NS);
   await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.UNFIXABLE}`, {

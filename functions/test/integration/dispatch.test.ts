@@ -573,11 +573,11 @@ describe("dispatch walk-in flow", () => {
       .set("Authorization", bearer(WALKOP))
       .send({ticketId: walkTicket, shopId: walkShop});
     expect(accept.status).toBe(200);
-    const work = await request(app)
-      .post("/dispatch/work")
+    const quote = await request(app)
+      .post("/dispatch/quote")
       .set("Authorization", bearer(WALKOP))
       .send({ticketId: walkTicket, workType: "Chain", quotedAmount: 150000});
-    expect(work.status).toBe(200);
+    expect(quote.status).toBe(200);
     const quoted = await request(app)
       .post("/dispatch/one")
       .set("Authorization", bearer(USER))
