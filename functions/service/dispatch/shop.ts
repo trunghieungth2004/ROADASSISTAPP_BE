@@ -1193,8 +1193,10 @@ export const approveQuote = async ({
   }
   const payments = await paymentRepository.findByTicket(ticketId);
   const funded = payments.some((p) =>
-    (p.method === "CASH" && p.status === "PENDING") ||
-    (p.method === "SEPAY" && p.status === "HELD"));
+    (p.method === "CASH" && (p.status === "PENDING" ||
+      p.status === "CONFIRMED")) ||
+    (p.method === "SEPAY" && (p.status === "HELD" ||
+      p.status === "CONFIRMED")));
   if (!funded) {
     throw new ValidationError("Payment required before starting work");
   }

@@ -18,6 +18,7 @@ const ALL_COLLECTIONS = [
   "provider_reports",
   "diagnostics",
   "dispatch_tickets",
+  "payments",
   "volunteer_locations",
   "ratings",
   "fcm_tokens",

@@ -3890,6 +3890,23 @@ describe("dispatchService quote approval", () => {
     );
   });
 
+  it("approves on a confirmed cash payment", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "9",
+      ticketType: "WALK_IN",
+      providerId: "shop9",
+      shopQuotedAmount: 150000,
+    } as never);
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      {id: "p1", method: "CASH", status: "CONFIRMED"},
+    ] as never);
+    await expect(
+      approveQuote({userId: "rider1", ticketId: "t1"}),
+    ).resolves.toEqual({approved: true});
+  });
+
   it("refuses approval from strangers", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",

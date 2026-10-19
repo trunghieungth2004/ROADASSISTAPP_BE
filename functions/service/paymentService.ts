@@ -29,7 +29,7 @@ import {
   ValidationError,
 } from "../utils/errors";
 
-type TicketLike = {
+export type TicketLike = {
   id: string;
   userId: string;
   ticketType: string;
@@ -43,6 +43,7 @@ type TicketLike = {
   towFare?: {
     final?: number | null;
     estimate?: number | null;
+    waitingFee?: number | null;
   } | null;
 };
 
@@ -53,17 +54,35 @@ type PaymentWithCheckout = paymentRepository.Payment & {
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value !== "";
 
-const expectedAmountFor = (ticket: TicketLike): number => {
-  if (typeof ticket.finalAmount === "number") return ticket.finalAmount;
+const billableAmountFor = (
+  ticket: TicketLike,
+): {amount: number; waitingFee: number} | null => {
+  if (ticket.ticketType === "TOW") {
+    const fare = ticket.towFare;
+    const base = fare && typeof fare === "object" ?
+      (typeof fare.final === "number" ? fare.final :
+        typeof fare.estimate === "number" ? fare.estimate : null) :
+      (typeof ticket.finalAmount === "number" ? ticket.finalAmount : null);
+    if (base === null) return null;
+    const waitingFee = fare && typeof fare.waitingFee === "number" ?
+      fare.waitingFee :
+      0;
+    return {amount: base + waitingFee, waitingFee};
+  }
+  if (ticket.ticketType === "SOS") return null;
   if (typeof ticket.shopQuotedAmount === "number") {
-    return ticket.shopQuotedAmount;
+    return {amount: ticket.shopQuotedAmount, waitingFee: 0};
   }
-  const fare = ticket.towFare;
-  if (fare && typeof fare === "object") {
-    if (typeof fare.final === "number") return fare.final;
-    if (typeof fare.estimate === "number") return fare.estimate;
+  if (typeof ticket.finalAmount === "number") {
+    return {amount: ticket.finalAmount, waitingFee: 0};
   }
-  throw new ValidationError("Ticket has no payable amount yet");
+  return null;
+};
+
+const expectedAmountFor = (ticket: TicketLike): number => {
+  const billable = billableAmountFor(ticket);
+  if (!billable) throw new ValidationError("Ticket has no payable amount yet");
+  return billable.amount;
 };
 
 const resolvePayeeId = async (ticket: TicketLike): Promise<string> => {
@@ -422,13 +441,17 @@ const listPayments = async ({
 
 export {
   PaymentWithCheckout,
+  billableAmountFor,
   cancelPendingPayments,
   createPaymentForTicket,
   confirmCash,
   buildSepayOrder,
   handleSepayIpn,
+  isParticipant,
+  isOperatorOfTicket,
   refund,
   refundPayment,
   getPaymentForTicket,
   listPayments,
+  resolvePayeeId,
 };

@@ -1663,11 +1663,11 @@ Ratings filed on one ticket (either direction), so the reply box can bind to the
 
 ## Payments
 
-Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits come from `platform_config/global`.
+Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits come from `platform_config/global`. Rider charges are itemized per bill: a TOW journey is one bill whose tow item (fare + waiting fee) sits beside the repair quote on its linked drop-off walk-in, and each item is paid by its own charge to its own payee.
 
 ### `POST /payments/create` **(Auth, rider)**
 
-Create a charge for the ticket's payable amount (`finalAmount`, else `shopQuotedAmount`, else `towFare.final`, else `towFare.estimate` — `400` when the ticket has no amount yet). Refused when the ticket is cancelled, declined, or unfixable (`400` "Ticket is not payable"), already has an active charge (`409`), or the method is disabled in platform config. Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
+Create a charge for the ticket's payable amount. A TOW bills `towFare.final` (or `towFare.estimate` before settlement) plus `towFare.waitingFee`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`. SOS tickets have no payable amount (`400`). Refused when the ticket is cancelled, declined, or unfixable (`400` "Ticket is not payable"), already has an active charge (`409`), or the method is disabled in platform config. Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
 
 **Request:**
 ```json
@@ -1703,6 +1703,24 @@ Charge ledger, newest first, with optional `status` / `limit`.
 **Request:**
 ```json
 { "status": "HELD", "limit": 50 }
+```
+
+### `POST /bills/all` **(Auth)**
+
+The caller's bills, newest journey first (default 20, max 50). A bill is the TOW ticket plus the walk-in tickets linked to it (`linkedTicketIds`); a standalone walk-in/mechanic ticket is its own bill, a walk-in linked to a tow never appears twice, and SOS tickets are excluded. Each row returns `billId` (the journey ticket), `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), and itemized `items` — `kind` (`TOW_FARE`/`REPAIR`), `ticketId`, `amount`, `waitingFee`, item `status` (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`), payee, and the latest payment snapshot (`method`, `status`) when present. `due` counts unpaid and pending items; settled, refunded, and void items are excluded.
+
+**Request:**
+```json
+{ "limit": 20 }
+```
+
+### `POST /bills/one` **(Auth, participant)**
+
+One bill by `billId` or any `ticketId` in the journey (the server walks the links up to the TOW). Visible to the rider, any operator on the journey's tickets, and admins (`403` otherwise). Same shape as the list rows.
+
+**Request:**
+```json
+{ "ticketId": "walk1" }
 ```
 
 ---

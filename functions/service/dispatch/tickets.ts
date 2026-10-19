@@ -1032,7 +1032,8 @@ const spawnShopTicket = async (
   const mine = await dispatchRepository.findByUserId(ticket.userId);
   const live = mine.find((t) =>
     t.ticketType === "WALK_IN" &&
-    !TERMINAL_STATUSES.has(t.status as string));
+    !TERMINAL_STATUSES.has(t.status as string) &&
+    (t.providerId === shopId || t.assignedShopId === shopId));
   if (live) {
     const parent = await dispatchRepository.findById(parentId);
     const parentLinks = Array.isArray(parent?.linkedTicketIds) ?

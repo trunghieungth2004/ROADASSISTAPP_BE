@@ -22,6 +22,7 @@ import {
 import {SHOP_DECLINE_REASON} from "../constants/dispatch";
 import {
   ACCUSED_KIND,
+  BILL_LIST_MAX,
   DISPUTE_LIST_MAX,
   DISPUTE_REASON,
   DISPUTE_STATUS,
@@ -647,6 +648,13 @@ const schemas = {
       .optional(),
     limit: Joi.number().integer().min(1).max(PAYMENT_LIST_MAX).optional(),
   }),
+  billsAll: Joi.object({
+    limit: Joi.number().integer().min(1).max(BILL_LIST_MAX).optional(),
+  }),
+  billOne: Joi.object({
+    ticketId: Joi.string().trim().max(120).optional(),
+    billId: Joi.string().trim().max(120).optional(),
+  }).or("ticketId", "billId"),
   adminConfigGet: emptyBody(),
   adminConfigUpdate: Joi.object({
     commissionRate: Joi.object({

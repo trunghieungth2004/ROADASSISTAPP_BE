@@ -26,6 +26,7 @@ import dispatchRoutes, {mountDispatchDeliver} from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 import paymentRoutes, {mountPaymentIpn} from "./routes/paymentRoutes";
+import billRoutes from "./routes/billRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import disputeRoutes from "./routes/disputeRoutes";
 import * as flagService from "./service/flagService";
@@ -146,6 +147,7 @@ dispatchRoutes(app, routeDeps);
 ratingRoutes(app, routeDeps);
 pushRoutes(app, routeDeps);
 paymentRoutes(app, routeDeps);
+billRoutes(app, routeDeps);
 adminRoutes(app, routeDeps);
 disputeRoutes(app, routeDeps);
 

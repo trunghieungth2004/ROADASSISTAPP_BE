@@ -59,14 +59,18 @@ shows "up to" while live, final on resolve, recorded partial on cancel.
 ## Charges
 
 The ride record still lives on the ticket; money lives in `payments` (see
-`PAYMENTS.md`). `POST /payments/create` computes the payable amount from
-`finalAmount` → `shopQuotedAmount` → `towFare.final` → `towFare.estimate`
-(`400` when the ticket has no amount yet), snapshots the commission split,
-and stamps `paymentMethod`/`paymentStatus` on the ticket. `CASH` charges
-settle `PENDING → CONFIRMED` when the operator confirms
+`PAYMENTS.md`). `POST /payments/create` computes the payable amount per
+ticket: a TOW bills `towFare.final` (or `towFare.estimate` before settlement)
+plus `towFare.waitingFee`; a WALK_IN/MECHANIC bills `shopQuotedAmount`, else
+the legacy `finalAmount`. It snapshots the commission split and stamps
+`paymentMethod`/`paymentStatus` on the ticket. `CASH` charges settle
+`PENDING → CONFIRMED` when the operator confirms
 (`POST /payments/confirm-cash`); `SEPAY` charges move `PENDING → HELD` on the
 gateway IPN. Copy says "on record" until the charge settles, "paid" after.
-Combined tow + shop checkout remains future work.
+The rider sees the journey as one bill (`POST /bills/all`): the tow item
+(fare + waiting fee) and the repair quote on the walk-in spawned at the
+drop-off shop, itemized and paid by its own charge; a standalone walk-in is
+its own bill.
 
 ## Legacy path (deprecated, preserved)
 
@@ -85,7 +89,8 @@ photo Storage paths) from `MATCHED`/`ARRIVED`/`IN_SHOP` — legacy
 `ESTIMATED`/`EST_APPROVED` tickets can still be quoted once. The ticket
 records `shopQuotedAmount`, moves to `"9"` (Quoted), and the rider approves
 (`POST /dispatch/quote/approve`, `9→6` — gated on a funded payment: a
-`PENDING` `CASH` charge or a `HELD` `SEPAY` charge). There is no estimate
+`CASH` charge `PENDING` or `CONFIRMED`, or a `SEPAY` charge `HELD` or
+`CONFIRMED`). There is no estimate
 stage and no final quote: the quoted amount is the price. Amounts are
 one-shot; re-sending is refused (`400`). Work-done (`POST /dispatch/work`)
 records `workType`/`invoiceRef` only and refuses amounts.
@@ -120,8 +125,8 @@ when a tow's rider marks arrival (`2→3`) or when a destination shop declines
 with a tower engaged, and stops on `"6"`/`"7"`/`"4"`/`"5"`, on unfixable, and
 on a mid-tow re-match. The window lives on the ticket
 (`waiting.{active, startedAt, endedAt, fee, withinRadius, accruedAt}`); tow
-tickets mirror it into `towFare.waitingFee`. Volunteer rescues never accrue
-waiting.
+tickets mirror it into `towFare.waitingFee`, which is part of the tow item on
+the journey bill. Volunteer rescues never accrue waiting.
 
 ## Platform commission
 

@@ -546,7 +546,7 @@ flows:
 | `towLegs` | array of `{toShopId, km, actual, at}` — traveled legs; `actual` only when the tower fix was fresh | destination decline / re-match freeze |
 | `unfixable` | `{reason, photoUrls, by, at}` — on-site verdict; ticket closes `"15"`, full refund, no `final` | `POST /dispatch/unfixable` |
 | `shopQuotedAmount` / `finalAmount` / `workType` / `faultPhotos` / `invoiceRef` / `quotedBy` / `quotedAt` | one-shot quote + work-order fields (fault photos are Storage paths) | `sendQuote` / work orders |
-| `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | stage-1 estimate + 15-minute TTL | `sendEstimate` / `approveEstimate` |
+| `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | tow drop-off advisory estimate + 24-hour TTL | `sendEstimate` / `approveEstimate` |
 | `paymentArmed` / `quoteApprovedAt` | work-start gate stamp | `approveQuote` |
 | `paymentId` / `paymentMethod` / `paymentStatus` / `checkoutUrl` | latest charge link, stamped on every payment transition | `POST /payments/*` |
 
@@ -563,9 +563,10 @@ come from `platform_config/global`.
 | `ticketId` | string | req |
 | `method` | enum: `CASH`, `SEPAY` | req |
 
-Creates a `PENDING` charge for the ticket's payable amount (`finalAmount`,
-else `shopQuotedAmount`, else `towFare.final`, else `towFare.estimate` —
-`400` when none), stamped with the commission split
+Creates a `PENDING` charge for the ticket's payable amount — a TOW bills
+`towFare.final` (or `towFare.estimate`) plus `towFare.waitingFee`;
+WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`; SOS
+has none (`400` when none) — stamped with the commission split
 (`commissionRate`/`commissionAmount`/`payoutAmount`). Refused when the ticket
 already has an active charge (`409` "Ticket already has an active payment")
 or the method is disabled in `platform_config.paymentMethodsEnabled`. `SEPAY`
@@ -600,6 +601,25 @@ and admins (`403` otherwise).
 |-------|------|---|
 | `status` | enum from `PAYMENT_STATUS` | opt |
 | `limit` | number (1–100) | opt (default 50) |
+
+### `POST /bills/all` — `listBills` (auth)
+| Field | Type | |
+|-------|------|---|
+| `limit` | number (1–50) | opt (default 20) |
+
+### `POST /bills/one` — `getBill` (participant)
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | one of |
+| `billId` | string | one of |
+
+Bills are a derived view, not a collection: `billId` is the TOW ticket and
+the items come from its `linkedTicketIds` walk-in/mechanic tickets (tow fare
++ waiting fee, then the repair quote). A standalone walk-in/mechanic ticket
+is its own bill; a linked walk-in never appears separately and SOS tickets
+are excluded. Each item exposes `amount`, `waitingFee`, `status`
+(`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`) and the latest charge
+snapshot.
 
 ### Stored `payments` collection
 

@@ -1,16 +1,21 @@
 # Payments
 
-Two rails, one ticket. Shop bills settle against the two-stage quote
-(estimate → final, see `PRICING.md`); tow fares settle against `towFare`.
-Canonical routes: `POST /payments/create`, `POST /payments/ipn`,
-`POST /payments/confirm-cash`, `POST /payments/one`, `POST /payments/all`
-(shapes in `API.md` → Payments and `SCHEMA.md` → Payments).
+Two rails, itemized bills. One TOW journey is one bill — its tow item (fare
+plus waiting fee) sits beside the repair quote on the walk-in spawned at the
+drop-off shop, and each item settles on its own ticket with its own payee.
+A shop's single binding quote lives on its walk-in ticket (see
+`PRICING.md`). Canonical routes: `POST /payments/create`, `POST /payments/ipn`,
+`POST /payments/confirm-cash`, `POST /payments/one`, `POST /payments/all`,
+`POST /bills/all`, `POST /bills/one` (shapes in `API.md` → Payments and
+`SCHEMA.md` → Payments).
 
 ## Creating a charge
 
 `POST /payments/create` `{ticketId, method}` — rider only. The amount is the
-ticket's payable amount: `finalAmount` → `shopQuotedAmount` → `towFare.final`
-→ `towFare.estimate` (`400` "Ticket has no payable amount yet" when none).
+ticket's payable amount: on a TOW, `towFare.final` (or `towFare.estimate`
+before settlement) plus `towFare.waitingFee`; on WALK_IN/MECHANIC,
+`shopQuotedAmount`, else the legacy `finalAmount`; SOS tickets have no
+payable amount (`400` "Ticket has no payable amount yet" when none).
 The payee resolves to the first of the ticket's shops that carries an
 operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a
 volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). The
@@ -20,6 +25,37 @@ stamped with `paymentId`/`paymentMethod`/`paymentStatus`/`checkoutUrl`.
 Refusals: unknown method, method disabled in
 `platform_config.paymentMethodsEnabled`, or an existing active charge on the
 ticket (`409` "Ticket already has an active payment").
+
+## Bills
+
+A bill is a journey view over existing tickets and charges — no money is
+stored twice. The bill id is the TOW ticket; its items are the tow ticket and
+every walk-in/mechanic ticket linked to it through `linkedTicketIds`. A
+standalone walk-in/mechanic ticket is its own bill; a linked walk-in never
+appears as a separate bill, and SOS tickets are excluded. When a tow resolves
+to a drop-off shop, the spawn reuses a live walk-in at that shop (linking it)
+and otherwise creates one there, so the journey never picks up another
+shop's ticket.
+
+`POST /bills/all` lists the rider's bills newest first (`limit`, default 20,
+max 50); `POST /bills/one` accepts `billId` or any `ticketId` in the journey
+and walks the links up to the tow. Rows carry `total`, `paid`, `due`,
+`status`, and itemized `items`:
+
+- `kind`: `TOW_FARE` (`amount` = fare + `waitingFee`) or `REPAIR` (the
+  walk-in's binding quote, legacy `finalAmount` fallback).
+- `status`: `UNPAID` (no charge), `PENDING` (armed charge), `PAID`
+  (`HELD`/`CONFIRMED`), `REFUNDED`, `PARTIAL`, or `VOID` (cancelled/declined/
+  unfixable ticket with no live charge).
+- `payment`: the latest charge snapshot (`method`, `status`) when present;
+  `payeeName` names the shop the item settles with.
+
+`due` counts `UNPAID` and `PENDING` items, `paid` counts `PAID` items, and
+the bill status is `PAID` when nothing is due with money received, `VOID`
+when nothing was ever received, and `PARTIAL` in between. Paying is
+itemized: the client calls `POST /payments/create` with the item's
+`ticketId`, so a SePay QR or cash handover settles only that item and the
+bill reflects both rails side by side.
 
 ## `CASH` (operator-confirm)
 
