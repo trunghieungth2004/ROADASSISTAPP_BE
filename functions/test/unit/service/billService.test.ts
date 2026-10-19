@@ -187,7 +187,10 @@ describe("billService.getBill", () => {
 
   it("reports a partially paid journey", async () => {
     routeTickets(
-      towTicket({linkedTicketIds: ["walk1"]}),
+      towTicket({
+        linkedTicketIds: ["walk1"],
+        checkoutUrl: "https://pay.example/qr1",
+      }),
       walkTicket({linkedTicketIds: ["tow1"], status: STATUS_DISPATCH.QUOTED}),
     );
     jest
@@ -197,6 +200,7 @@ describe("billService.getBill", () => {
       );
     const bill = await getBill({userId: "rider1", billId: "tow1"});
     expect(bill.items[0].status).toBe("PAID");
+    expect(bill.items[0].qrUrl).toBe("https://pay.example/qr1");
     expect(bill.items[0].payment).toMatchObject({
       method: "CASH",
       status: "CONFIRMED",

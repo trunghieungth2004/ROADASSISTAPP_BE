@@ -38,6 +38,7 @@ type BillItem = {
   status: string;
   payeeId: string | null;
   payeeName: string | null;
+  qrUrl: string | null;
   payment: {
     id: string;
     method: string;
@@ -200,6 +201,7 @@ const buildItem = async (
     status,
     payeeId: await payeeUidFor(ticket),
     payeeName: await payeeNameFor(ticket),
+    qrUrl: nonEmpty(ticket.checkoutUrl) ? ticket.checkoutUrl : null,
     payment: payment ? {
       id: payment.id,
       method: payment.method,
