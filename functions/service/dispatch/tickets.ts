@@ -1079,13 +1079,24 @@ const spawnShopTicket = async (
     (shop as {suspended?: boolean}).suspended === true) {
     throw new ValidationError("Destination provider is not available");
   }
+  const parent = await dispatchRepository.findById(parentId);
   const mine = await dispatchRepository.findByUserId(ticket.userId);
-  const live = mine.find((t) =>
-    t.ticketType === "WALK_IN" &&
-    !TERMINAL_STATUSES.has(t.status as string) &&
-    (t.providerId === shopId || t.assignedShopId === shopId));
+  const live = mine.find((t) => {
+    if (t.ticketType !== "WALK_IN") return false;
+    if (TERMINAL_STATUSES.has(t.status as string)) return false;
+    if (t.status !== STATUS_DISPATCH.PENDING) return false;
+    if (!(t.providerId === shopId || t.assignedShopId === shopId)) return false;
+    const links = Array.isArray(t.linkedTicketIds) ?
+      t.linkedTicketIds as string[] :
+      [];
+    if (links.length > 0 && !links.includes(parentId)) return false;
+    if (typeof parent?.createdAt === "string" &&
+      typeof t.createdAt === "string") {
+      if (Date.parse(t.createdAt) < Date.parse(parent.createdAt)) return false;
+    }
+    return true;
+  });
   if (live) {
-    const parent = await dispatchRepository.findById(parentId);
     const parentLinks = Array.isArray(parent?.linkedTicketIds) ?
       parent?.linkedTicketIds as string[] :
       [];
