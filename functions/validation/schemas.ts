@@ -20,6 +20,7 @@ import {
   VOLUNTEER_CAPABILITY,
 } from "../constants/status";
 import {SHOP_DECLINE_REASON} from "../constants/dispatch";
+import {REPORT_FORMAT} from "../constants/reports";
 import {
   ACCUSED_KIND,
   BILL_LIST_MAX,
@@ -30,6 +31,7 @@ import {
   PAYMENT_LIST_MAX,
   PAYMENT_METHOD,
   PAYMENT_STATUS,
+  PAYOUT_LIST_MAX,
   REFUND_POLICY,
 } from "../constants/payments";
 import {PHOTO_MAX_COUNT, PHOTO_URL_MAX_LENGTH} from "../constants/media";
@@ -654,6 +656,7 @@ const schemas = {
   billOne: Joi.object({
     ticketId: Joi.string().trim().max(120).optional(),
     billId: Joi.string().trim().max(120).optional(),
+    scope: Joi.string().valid("payee").optional(),
   }).or("ticketId", "billId"),
   adminConfigGet: emptyBody(),
   adminConfigUpdate: Joi.object({
@@ -688,6 +691,40 @@ const schemas = {
   adminPayout: Joi.object({
     paymentId: strReq(),
   }),
+  payoutsPending: Joi.object({
+    payeeId: strOpt(),
+    limit: Joi.number().integer().min(1).max(PAYOUT_LIST_MAX).optional(),
+  }),
+  payoutsSettle: Joi.object({
+    payeeId: strReq(),
+    paymentIds: Joi.array()
+      .items(Joi.string().required())
+      .min(1)
+      .max(PAYOUT_LIST_MAX)
+      .optional(),
+    payoutRef: Joi.string().trim().max(80).optional(),
+    note: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  payoutsBatches: Joi.object({
+    payeeId: strOpt(),
+    limit: Joi.number().integer().min(1).max(PAYOUT_LIST_MAX).optional(),
+  }),
+  payoutMine: Joi.object({
+    limit: Joi.number().integer().min(1).max(PAYOUT_LIST_MAX).optional(),
+  }),
+  paymentsAudit: Joi.object({
+    limit: Joi.number().integer().min(1).max(PAYMENT_LIST_MAX).optional(),
+  }),
+  reportRange: Joi.object({
+    from: strOpt(),
+    to: strOpt(),
+    format: Joi.string().valid(...Object.values(REPORT_FORMAT)).optional(),
+  }),
+  notificationPrefs: Joi.object({}),
+  notificationPrefsUpdate: Joi.object({
+    paymentUpdates: Joi.boolean().optional(),
+    payoutUpdates: Joi.boolean().optional(),
+  }).min(1),
   fileDispute: Joi.object({
     ticketId: strReq(),
     accusedId: strOpt(),

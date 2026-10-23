@@ -71,6 +71,9 @@ No body schema (any body allowed).
 |-------|------|---|
 | `displayName` | string (trimmed, 1–120) | req |
 
+> `users/{uid}.notificationPrefs` is an optional map `{paymentUpdates,
+> payoutUpdates}`; missing or non-boolean entries default to `true`.
+
 ---
 
 ## Roles
@@ -567,26 +570,32 @@ Creates a `PENDING` charge for the ticket's payable amount — a TOW bills
 `towFare.final` (or `towFare.estimate`) plus `towFare.waitingFee`;
 WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`; SOS
 has none (`400` when none) — stamped with the commission split
-(`commissionRate`/`commissionAmount`/`payoutAmount`). Refused when the ticket
-already has an active charge (`409` "Ticket already has an active payment")
-or the method is disabled in `platform_config.paymentMethodsEnabled`. `SEPAY`
+(`commissionRate`/`commissionAmount`/`payoutAmount`). Idempotent per ticket:
+the same method reuses the active charge (`201`, `reused: true`), a different
+method is `409` "Ticket already has an active payment", and the
+`payment_guards/{ticketId}` transaction prevents duplicates. Refused when the
+method is disabled in `platform_config.paymentMethodsEnabled`. `SEPAY`
 returns a signed `checkout` payload (`action`, `method: "POST"`, `fields`,
-`qrUrl`).
+`qrUrl`). Throttled per `uid + ticketId` (20/min by default).
 
 ### `POST /payments/ipn` — `ipn` (SePay only)
 Public callback, mounted before the rate limiters. The
 `Authorization: Apikey {SEPAY_SECRET_KEY}` header is verified (`403`
-otherwise) and the callback is idempotent per `qrRef`. Moves the charge
-`PENDING` → `HELD` with the gateway `ipnRef`; an amount mismatch is `400`.
+otherwise) and the callback is idempotent per `qrRef`. The gateway `amount`
+is required and must be a positive integer equal to the charge (`400`
+otherwise). Moves `PENDING` → `HELD` with the gateway `ipnRef`; refunded,
+partial, and cancelled charges are rejected (`400`).
 
-### `POST /payments/confirm-cash` — `confirmCash` (operator/admin)
+### `POST /payments/confirm-cash` — `confirmCash` (payee/admin)
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
 
-Confirms the ticket's pending cash charge (`CASH` + `PENDING`), moving it
-`PENDING` → `CONFIRMED` with `confirmedBy`/`confirmedAt`. The rider's
-operator/assignee or an admin; anyone else gets `403`.
+Confirms the ticket's pending cash charge (`CASH` + `PENDING`) in one
+conditional transaction, moving it `PENDING` → `CONFIRMED` with
+`confirmedBy`/`confirmedAt`. The charge's `payeeId` or an admin; anyone else
+gets `403`. A concurrent second confirmation gets `404` and does not
+double-stamp. Throttled per `uid + ticketId`.
 
 ### `POST /payments/one` — `getOne` (participant)
 | Field | Type | |
@@ -602,16 +611,102 @@ and admins (`403` otherwise).
 | `status` | enum from `PAYMENT_STATUS` | opt |
 | `limit` | number (1–100) | opt (default 50) |
 
+### `POST /payouts/mine` — `myPayouts` (auth)
+| Field | Type | |
+|-------|------|---|
+| `limit` | number (1–100) | opt (default 50) |
+
+Returns `batches` (terminal `PAID` payout docs, newest first) plus `pending`
+and `settled` totals. `pending` is the caller's received-but-unstamped
+charges; `settled` sums the returned batches. Non-payees get empty lists.
+
+### `POST /admin/payouts/pending` — `pendingPayouts` (admin)
+| Field | Type | |
+|-------|------|---|
+| `payeeId` | string | opt |
+| `limit` | number (1–100) | opt (default 100) |
+
+Settleable charges (`HELD`/`CONFIRMED`/`PARTIAL`, no `payoutAt`,
+no `payoutBatchId`) grouped by payee with gross/commission/refunded/net.
+
+### `POST /admin/payouts/batch` — `settlePayoutBatch` (admin)
+| Field | Type | |
+|-------|------|---|
+| `payeeId` | string | req |
+| `paymentIds` | string[] (1–100) | opt (defaults to all settleable) |
+| `payoutRef` | string (≤80) | opt (server generates `PO…`) |
+| `note` | string (≤280) | opt |
+
+Creates one terminal `payouts` doc (`status: "PAID"`) and stamps every
+settled charge with `payoutRef`, `payoutAt`, `payoutBy`, `payoutBatchId`.
+
+### `POST /admin/payouts/batches` — `listPayoutBatches` (admin)
+| Field | Type | |
+|-------|------|---|
+| `payeeId` | string | opt |
+| `limit` | number (1–100) | opt (default 50) |
+
+### `POST /admin/payments/audit` — `auditLedger` (admin)
+| Field | Type | |
+|-------|------|---|
+| `limit` | number (1–100) | opt (default 100) |
+
+Compares latest charges with ticket `paymentStatus` and returns
+`scanned`, `tickets`, `missingTickets`, and `drift`.
+
+### `POST /admin/reports/revenue` — `revenueReport` (admin)
+| Field | Type | |
+|-------|------|---|
+| `from` | ISO date | opt (default 30 days ago) |
+| `to` | ISO date | opt (default now; date-only includes the day) |
+| `format` | `json`, `csv` | opt (default `json`) |
+
+Paid charges only. Returns totals, `byMethod`, and `byDay`; commission is
+prorated to the refund-adjusted remainder and `net = gross - refunds -
+commission`.
+
+### `POST /admin/reports/payees` — `payeeReport` (admin)
+| Field | Type | |
+|-------|------|---|
+| `from` / `to` | ISO date | opt |
+| `format` | `json`, `csv` | opt |
+
+Per-payee totals plus `paid` (batch net in range) and `pending` (paid charges
+without a payout stamp).
+
+### `POST /notifications/prefs` — `getPrefs` (auth)
+Empty object. Returns `{paymentUpdates, payoutUpdates}`; both default to
+`true`.
+
+### `PUT /notifications/prefs` — `updatePrefs` (auth)
+| Field | Type | |
+|-------|------|---|
+| `paymentUpdates` | boolean | opt |
+| `payoutUpdates` | boolean | opt |
+
+At least one field is required; the merged preferences are stored on
+`users/{uid}.notificationPrefs`.
+
 ### `POST /bills/all` — `listBills` (auth)
 | Field | Type | |
 |-------|------|---|
 | `limit` | number (1–50) | opt (default 20) |
+
+### `POST /bills/payee` — `listPayeeBills` (auth)
+| Field | Type | |
+|-------|------|---|
+| `limit` | number (1–50) | opt (default 20) |
+
+Derives candidate tickets from providers the caller operates and tickets
+assigned to them, deduplicates by journey root, and returns only the
+caller's items with `viewer: "PAYEE"` and `canPay: false`.
 
 ### `POST /bills/one` — `getBill` (participant)
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | one of |
 | `billId` | string | one of |
+| `scope` | `"payee"` | opt |
 
 Bills are a derived view, not a collection: `billId` is the TOW ticket and
 the items come from its `linkedTicketIds` walk-in/mechanic tickets (tow fare
@@ -619,7 +714,9 @@ the items come from its `linkedTicketIds` walk-in/mechanic tickets (tow fare
 is its own bill; a linked walk-in never appears separately and SOS tickets
 are excluded. Each item exposes `amount`, `waitingFee`, `status`
 (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`) and the latest charge
-snapshot.
+snapshot. Rows also expose `viewer` (`RIDER`/`PAYEE`/`OPERATOR`/`ADMIN`) and
+`canPay`; `scope: "payee"` filters items to the caller and requires them to
+be that payee.
 
 ### Stored `payments` collection
 
@@ -627,14 +724,42 @@ snapshot.
 |-------|-------|
 | `ticketId` / `riderUid` / `payeeId` | charge owner, payer, operator receiver |
 | `method` | `CASH` or `SEPAY` |
-| `status` | `PENDING` → `HELD` → `CONFIRMED`, or `REFUNDED` / `PARTIAL` |
+| `status` | `PENDING` → `HELD` → `CONFIRMED`, or `REFUNDED` / `PARTIAL`; `DISPUTED` / `CANCELLED` terminal |
 | `amount` / `currency` | integer VND gross; `VND` |
 | `qrRef` / `ipnRef` | SePay order reference + gateway reference (idempotency keys) |
 | `commissionRate` / `commissionAmount` / `payoutAmount` | platform cut snapshot |
 | `confirmedBy` / `confirmedAt` | cash confirmation actor + time |
 | `receiptUrl` | reserved |
-| `refundAmount` / `refundedAt` / `refundedBy` | refund record |
-| `payoutRef` / `payoutAt` / `payoutBy` | operator payout record |
+| `refundAmount` / `refundedAt` / `refundedBy` | cumulative refund record; `refundAmount` is the total across partials |
+| `payoutRef` / `payoutAt` / `payoutBy` / `payoutBatchId` | batch payout stamp (`payoutBatchId` joins `payouts/{id}`) |
+
+### Stored `payment_guards` collection
+
+One doc per ticket, id `ticketId`:
+
+| Field | Shape |
+|-------|-------|
+| `ticketId` / `paymentId` | ticket + the one active charge |
+| `updatedAt` | ISO timestamp |
+
+Created transactionally with the charge. Cleared on full refund
+(`REFUNDED`) or cancellation. A guard pointing at a non-active charge is
+ignored and replaced on the next create.
+
+### Stored `payouts` collection
+
+| Field | Shape |
+|-------|-------|
+| `payeeId` / `payeeName` | receiver snapshot |
+| `gross` / `commission` / `refunded` / `net` | batch money totals (integer VND) |
+| `itemCount` / `paymentIds` / `ticketIds` | settled charge scope |
+| `status` / `payoutMethod` | terminal `PAID`; `MANUAL` |
+| `payoutRef` / `note` | operator reference + note |
+| `batchedUid` / `batchedAt` / `createdAt` | admin actor + ISO timestamps |
+
+Payout batches are immutable after settlement. Post-settlement refunds are
+not retro-adjusted into existing batches; they reduce future pending/settled
+reporting through the payment refund snapshot.
 
 ## Disputes
 

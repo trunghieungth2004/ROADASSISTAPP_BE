@@ -26,13 +26,16 @@ import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
 import ratingRoutes from "../../routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "../../routes/pushRoutes";
-import paymentRoutes from "../../routes/paymentRoutes";
+import paymentRoutes, {mountPaymentIpn} from "../../routes/paymentRoutes";
 import billRoutes from "../../routes/billRoutes";
+import payoutRoutes from "../../routes/payoutRoutes";
+import notificationRoutes from "../../routes/notificationRoutes";
 import adminRoutes from "../../routes/adminRoutes";
 import disputeRoutes from "../../routes/disputeRoutes";
 
 const registerRoutes = (app: Express, deps: RouteDeps): void => {
   mountPushDeliver(app, deps);
+  mountPaymentIpn(app);
   userRoutes(app, deps);
   roleRoutes(app, deps);
   statusRoutes(app, deps);
@@ -50,6 +53,8 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   pushRoutes(app, deps);
   paymentRoutes(app, deps);
   billRoutes(app, deps);
+  payoutRoutes(app, deps);
+  notificationRoutes(app, deps);
   adminRoutes(app, deps);
   disputeRoutes(app, deps);
 };

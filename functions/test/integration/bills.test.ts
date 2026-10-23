@@ -25,7 +25,14 @@ type BillItem = {
   amount: number;
   waitingFee: number;
   status: string;
-  payment: {method: string; status: string} | null;
+  payment: {
+    method: string;
+    status: string;
+    commissionAmount?: number | null;
+    payoutAmount?: number | null;
+    payoutStatus?: string;
+    canConfirmCash?: boolean;
+  } | null;
 };
 
 type Bill = {
@@ -35,6 +42,8 @@ type Bill = {
   paid: number;
   due: number;
   status: string;
+  viewer: string;
+  canPay: boolean;
   items: BillItem[];
 };
 
@@ -234,12 +243,99 @@ describe("bills", () => {
     expect(fromBill.body.data.billId).toBe(towTicket);
   });
 
+  it("scopes the journey to each payee", async () => {
+    const full = await request(app)
+      .post("/bills/one")
+      .set("Authorization", bearer(SHOPOP))
+      .send({billId: towTicket});
+    expect(full.status).toBe(200);
+    expect(full.body.data).toMatchObject({
+      viewer: "PAYEE",
+      canPay: false,
+    });
+    expect((full.body.data as Bill).items).toHaveLength(2);
+    const towPayee = await request(app)
+      .post("/bills/payee")
+      .set("Authorization", bearer(TOWOP))
+      .send({});
+    expect(towPayee.status).toBe(200);
+    const towBills = towPayee.body.data as Bill[];
+    expect(towBills).toHaveLength(1);
+    expect(towBills[0]).toMatchObject({
+      billId: towTicket,
+      viewer: "PAYEE",
+      canPay: false,
+      total: towAmount,
+    });
+    expect(towBills[0].items).toHaveLength(1);
+    expect(towBills[0].items[0]).toMatchObject({
+      kind: "TOW_FARE",
+      ticketId: towTicket,
+      amount: towAmount,
+    });
+    const shopPayee = await request(app)
+      .post("/bills/payee")
+      .set("Authorization", bearer(SHOPOP))
+      .send({});
+    expect(shopPayee.status).toBe(200);
+    const shopBills = shopPayee.body.data as Bill[];
+    expect(shopBills).toHaveLength(1);
+    expect(shopBills[0]).toMatchObject({
+      billId: towTicket,
+      total: repairAmount,
+    });
+    expect(shopBills[0].items).toHaveLength(1);
+    expect(shopBills[0].items[0]).toMatchObject({
+      kind: "REPAIR",
+      ticketId: spawnedId,
+      amount: repairAmount,
+    });
+    const shopScoped = await request(app)
+      .post("/bills/one")
+      .set("Authorization", bearer(SHOPOP))
+      .send({ticketId: spawnedId, scope: "payee"});
+    expect(shopScoped.status).toBe(200);
+    expect(shopScoped.body.data.items).toHaveLength(1);
+    expect(shopScoped.body.data.items[0].ticketId).toBe(spawnedId);
+    const towScoped = await request(app)
+      .post("/bills/one")
+      .set("Authorization", bearer(TOWOP))
+      .send({ticketId: towTicket, scope: "payee"});
+    expect(towScoped.status).toBe(200);
+    expect(towScoped.body.data.items).toHaveLength(1);
+    expect(towScoped.body.data.items[0].ticketId).toBe(towTicket);
+    const riderScoped = await request(app)
+      .post("/bills/one")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId: towTicket, scope: "payee"});
+    expect(riderScoped.status).toBe(403);
+    const other = await request(app)
+      .post("/bills/payee")
+      .set("Authorization", bearer(OTHER))
+      .send({});
+    expect(other.status).toBe(200);
+    expect(other.body.data).toEqual([]);
+  });
+
   it("settles one item without clearing the journey", async () => {
     const pay = await request(app)
       .post("/payments/create")
       .set("Authorization", bearer(RIDER))
       .send({ticketId: spawnedId, method: "CASH"});
     expect(pay.status).toBe(201);
+    const feed = await request(app)
+      .post("/dispatch/feed")
+      .set("Authorization", bearer(SHOPOP))
+      .send({});
+    expect(feed.status).toBe(200);
+    const shopRow = (feed.body.data as {id: string; canConfirmCash?: boolean}[])
+      .find((row) => row.id === spawnedId);
+    expect(shopRow?.canConfirmCash).toBe(true);
+    const refused = await request(app)
+      .post("/payments/confirm-cash")
+      .set("Authorization", bearer(TOWOP))
+      .send({ticketId: spawnedId});
+    expect(refused.status).toBe(403);
     const confirm = await request(app)
       .post("/payments/confirm-cash")
       .set("Authorization", bearer(SHOPOP))
@@ -258,11 +354,30 @@ describe("bills", () => {
     const data = bill.body.data as Bill;
     expect(data.items[1]).toMatchObject({
       status: "PAID",
-      payment: {method: "CASH", status: "CONFIRMED"},
+      payment: {
+        method: "CASH",
+        status: "CONFIRMED",
+        payoutStatus: "PENDING",
+        canConfirmCash: false,
+      },
     });
+    expect(typeof data.items[1].payment?.commissionAmount).toBe("number");
+    expect(typeof data.items[1].payment?.payoutAmount).toBe("number");
     expect(data.paid).toBe(repairAmount);
     expect(data.due).toBe(towAmount);
     expect(data.status).toBe("PARTIAL");
+    const payee = await request(app)
+      .post("/bills/payee")
+      .set("Authorization", bearer(SHOPOP))
+      .send({});
+    expect(payee.status).toBe(200);
+    const payeeBills = payee.body.data as Bill[];
+    expect(payeeBills).toHaveLength(1);
+    expect(payeeBills[0].paid).toBe(repairAmount);
+    expect(payeeBills[0].items[0].payment).toMatchObject({
+      status: "CONFIRMED",
+      payoutStatus: "PENDING",
+    });
     const ready = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(SHOPOP))
@@ -314,6 +429,18 @@ describe("bills", () => {
     const standalone = bills.find((b) => b.billId === standaloneId);
     expect(standalone?.total).toBe(standaloneAmount);
     expect(standalone?.status).toBe("UNPAID");
+    const payee = await request(app)
+      .post("/bills/payee")
+      .set("Authorization", bearer(SHOPOP))
+      .send({});
+    expect(payee.status).toBe(200);
+    const payeeBills = payee.body.data as Bill[];
+    expect(payeeBills.map((b) => b.billId).sort()).toEqual(
+      [towTicket, standaloneId].sort(),
+    );
+    const payeeStandalone = payeeBills.find((b) => b.billId === standaloneId);
+    expect(payeeStandalone?.items).toHaveLength(1);
+    expect(payeeStandalone?.total).toBe(standaloneAmount);
   });
 
   it("marks an armed SePay item as pending", async () => {

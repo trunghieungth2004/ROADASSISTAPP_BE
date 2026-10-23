@@ -1,5 +1,6 @@
 import * as dispatchRepository from "../repository/dispatchRepository";
 import * as paymentRepository from "../repository/paymentRepository";
+import * as paymentPush from "./paymentPush";
 import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
@@ -16,6 +17,7 @@ import {
   PAYMENT_QR_PREFIX,
   PAYMENT_QR_TICKET_LENGTH,
   PAYMENT_STATUS,
+  REFUND_POLICY,
 } from "../constants/payments";
 import {
   SEPAY_AMOUNT_KEYS,
@@ -49,15 +51,25 @@ export type TicketLike = {
 
 type PaymentWithCheckout = paymentRepository.Payment & {
   checkout?: sepayService.SepayCheckoutFields;
+  reused?: boolean;
 };
 
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value !== "";
 
+const notify = async (task: Promise<unknown>): Promise<void> => {
+  try {
+    await task;
+  } catch {
+    return;
+  }
+};
+
 const billableAmountFor = (
   ticket: TicketLike,
 ): {amount: number; waitingFee: number} | null => {
   if (ticket.ticketType === "TOW") {
+    if (ticket.status !== STATUS_DISPATCH.RESOLVED) return null;
     const fare = ticket.towFare;
     const base = fare && typeof fare === "object" ?
       (typeof fare.final === "number" ? fare.final :
@@ -175,6 +187,21 @@ const numField = (
   return undefined;
 };
 
+const asReused = async (
+  payment: paymentRepository.Payment,
+  method: string,
+): Promise<PaymentWithCheckout> => {
+  if (payment.method !== method) {
+    throw new ConflictError("Ticket already has an active payment");
+  }
+  if (method === PAYMENT_METHOD.SEPAY) {
+    const checkout = sepayService.buildCheckoutFields(payment);
+    await stampTicketPayment(payment.ticketId, payment, checkout);
+    return {...payment, checkout, reused: true};
+  }
+  return {...payment, reused: true};
+};
+
 const createPaymentForTicket = async ({
   userId,
   ticketId,
@@ -198,6 +225,14 @@ const createPaymentForTicket = async ({
   if (blocked.has(ticket.status)) {
     throw new ValidationError("Ticket is not payable");
   }
+  if (
+    ticket.ticketType === "TOW" &&
+    ticket.status !== STATUS_DISPATCH.RESOLVED
+  ) {
+    throw new ValidationError(
+      "Tow payment is available after the tow is resolved",
+    );
+  }
   if (method !== PAYMENT_METHOD.CASH && method !== PAYMENT_METHOD.SEPAY) {
     throw new ValidationError("Unknown payment method");
   }
@@ -207,9 +242,10 @@ const createPaymentForTicket = async ({
   }
   const amount = expectedAmountFor(ticket);
   const existing = await paymentRepository.findByTicketId(ticketId);
-  if (existing.some((p) => PAYMENT_ACTIVE_STATUSES.includes(p.status))) {
-    throw new ConflictError("Ticket already has an active payment");
-  }
+  const active = existing.find(
+    (payment) => PAYMENT_ACTIVE_STATUSES.includes(payment.status),
+  );
+  if (active) return asReused(active, method);
   const payeeId = await resolvePayeeId(ticket);
   const rate = await platformConfigService.getCommissionRate(
     ticket.ticketType,
@@ -219,7 +255,7 @@ const createPaymentForTicket = async ({
   const qrRef = method === PAYMENT_METHOD.SEPAY ?
     generateQrRef(ticketId) :
     null;
-  const payment = await paymentRepository.create({
+  const created = await paymentRepository.createGuarded({
     ticketId,
     riderUid: userId,
     payeeId,
@@ -231,12 +267,16 @@ const createPaymentForTicket = async ({
     commissionAmount,
     payoutAmount,
   });
+  const payment = created.payment;
+  if (created.reused) return asReused(payment, method);
   if (method === PAYMENT_METHOD.SEPAY) {
     const checkout = sepayService.buildCheckoutFields(payment);
     await stampTicketPayment(ticketId, payment, checkout);
+    await notify(paymentPush.deliverOpened(payment));
     return {...payment, checkout};
   }
   await stampTicketPayment(ticketId, payment);
+  await notify(paymentPush.deliverOpened(payment));
   return payment;
 };
 
@@ -252,23 +292,25 @@ const confirmCash = async ({
     p.method === PAYMENT_METHOD.CASH &&
     PAYMENT_CASH_CONFIRMABLE_STATUSES.includes(p.status));
   if (!payment) throw new NotFoundError("Pending cash payment not found");
-  const ticket = await dispatchRepository.findById(ticketId);
-  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
-  if (caller.role !== ROLE_ADMIN) {
-    const operator = await isOperatorOfTicket(ticket, userId);
-    if (!operator) throw new ForbiddenError("Only the operator confirms cash");
+  if (caller.role !== ROLE_ADMIN && payment.payeeId !== userId) {
+    throw new ForbiddenError("Only the payee confirms cash");
   }
-  const confirmed = await paymentRepository.updateStatus(
+  const confirmed = await paymentRepository.updateStatusWhen(
     payment.id,
+    PAYMENT_STATUS.PENDING,
     PAYMENT_STATUS.CONFIRMED,
     {
       confirmedBy: userId,
       confirmedAt: new Date().toISOString(),
     },
   );
-  if (confirmed) await stampTicketPayment(ticketId, confirmed);
+  if (!confirmed) {
+    throw new NotFoundError("Pending cash payment not found");
+  }
+  await stampTicketPayment(ticketId, confirmed);
+  await notify(paymentPush.deliverConfirmed(confirmed));
   return confirmed;
 };
 
@@ -301,7 +343,10 @@ const handleSepayIpn = async (
     throw new ValidationError("Payment cannot be held");
   }
   const notified = numField(body, SEPAY_AMOUNT_KEYS);
-  if (typeof notified === "number" && notified !== payment.amount) {
+  if (typeof notified !== "number") {
+    throw new ValidationError("IPN amount missing");
+  }
+  if (notified !== payment.amount) {
     throw new ValidationError("IPN amount mismatch");
   }
   const ipnRef = strField(body, SEPAY_IPN_REF_KEYS) ?? qrRef;
@@ -312,7 +357,10 @@ const handleSepayIpn = async (
       ipnRef,
     },
   );
-  if (held) await stampTicketPayment(payment.ticketId, held);
+  if (held) {
+    await stampTicketPayment(payment.ticketId, held);
+    await notify(paymentPush.deliverReceived(held));
+  }
   return held;
 };
 
@@ -329,31 +377,48 @@ const refund = async ({
 }): Promise<paymentRepository.Payment | null> => {
   const payment = await paymentRepository.findById(paymentId);
   if (!payment) throw new NotFoundError("Payment not found");
-  if (payment.status === PAYMENT_STATUS.REFUNDED) {
-    throw new ValidationError("Payment already refunded");
+  const config = await platformConfigService.getConfig();
+  const policy = String(config.refundPolicy ?? REFUND_POLICY.FULL);
+  if (policy === REFUND_POLICY.NONE) {
+    throw new ValidationError("Refunds are disabled");
   }
   const refundable = payment.status === PAYMENT_STATUS.HELD ||
     payment.status === PAYMENT_STATUS.CONFIRMED ||
     payment.status === PAYMENT_STATUS.PARTIAL;
   if (!refundable) throw new ValidationError("Payment cannot be refunded");
+  const already = typeof payment.refundAmount === "number" ?
+    payment.refundAmount :
+    0;
+  const remaining = payment.amount - already;
+  if (remaining <= 0) throw new ValidationError("Payment already refunded");
   let refundAmount: number;
   if (full === true || amount === undefined) {
-    refundAmount = payment.amount;
+    refundAmount = remaining;
   } else {
-    if (!Number.isInteger(amount) || amount <= 0 || amount > payment.amount) {
+    if (!Number.isInteger(amount) || amount <= 0 || amount > remaining) {
       throw new ValidationError("Invalid refund amount");
     }
     refundAmount = amount;
   }
-  const status = refundAmount >= payment.amount ?
+  const totalRefunded = already + refundAmount;
+  const status = totalRefunded >= payment.amount ?
     PAYMENT_STATUS.REFUNDED :
     PAYMENT_STATUS.PARTIAL;
+  if (policy === REFUND_POLICY.PARTIAL && status === PAYMENT_STATUS.REFUNDED) {
+    throw new ValidationError("Full refunds are disabled");
+  }
   const updated = await paymentRepository.updateStatus(payment.id, status, {
-    refundAmount,
+    refundAmount: totalRefunded,
     refundedAt: new Date().toISOString(),
     refundedBy: by ?? null,
   });
-  if (updated) await stampTicketPayment(payment.ticketId, updated);
+  if (updated) {
+    await stampTicketPayment(payment.ticketId, updated);
+    if (status === PAYMENT_STATUS.REFUNDED) {
+      await paymentRepository.clearGuard(payment.ticketId, payment.id);
+    }
+    await notify(paymentPush.deliverRefunded(updated));
+  }
   return updated;
 };
 
@@ -399,7 +464,10 @@ const cancelPendingPayments = async (ticketId: string): Promise<void> => {
         payment.id,
         PAYMENT_STATUS.CANCELLED,
       );
-      if (updated) await stampTicketPayment(ticketId, updated);
+      if (updated) {
+        await stampTicketPayment(ticketId, updated);
+        await paymentRepository.clearGuard(ticketId, payment.id);
+      }
     } catch {
       continue;
     }
@@ -439,6 +507,61 @@ const listPayments = async ({
   return paymentRepository.findAll(capped);
 };
 
+const auditLedger = async ({
+  limit,
+}: {
+  limit?: number;
+}): Promise<{
+  scanned: number;
+  tickets: number;
+  missingTickets: number;
+  drift: Array<{
+    ticketId: string;
+    paymentId: string;
+    expected: string;
+    actual: string | null;
+  }>;
+}> => {
+  const capped = typeof limit === "number" ?
+    Math.min(limit, PAYMENT_LIST_MAX) :
+    PAYMENT_LIST_MAX;
+  const payments = await paymentRepository.findAll(capped);
+  const latest = new Map<string, paymentRepository.Payment>();
+  for (const payment of payments) {
+    if (!latest.has(payment.ticketId)) latest.set(payment.ticketId, payment);
+  }
+  const drift: Array<{
+    ticketId: string;
+    paymentId: string;
+    expected: string;
+    actual: string | null;
+  }> = [];
+  let missingTickets = 0;
+  for (const [ticketId, payment] of latest.entries()) {
+    const ticket = await dispatchRepository.findById(ticketId);
+    if (!ticket) {
+      missingTickets += 1;
+      continue;
+    }
+    const raw = (ticket as {paymentStatus?: unknown}).paymentStatus;
+    const actual = typeof raw === "string" ? raw : null;
+    if (actual !== payment.status) {
+      drift.push({
+        ticketId,
+        paymentId: payment.id,
+        expected: String(payment.status),
+        actual,
+      });
+    }
+  }
+  return {
+    scanned: payments.length,
+    tickets: latest.size,
+    missingTickets,
+    drift,
+  };
+};
+
 export {
   PaymentWithCheckout,
   billableAmountFor,
@@ -453,5 +576,6 @@ export {
   refundPayment,
   getPaymentForTicket,
   listPayments,
+  auditLedger,
   resolvePayeeId,
 };

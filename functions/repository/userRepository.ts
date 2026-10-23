@@ -139,6 +139,15 @@ const updateRating = async (
   });
 };
 
+const updateNotificationPrefs = async (
+  userId: string,
+  prefs: {paymentUpdates: boolean; payoutUpdates: boolean},
+): Promise<void> => {
+  await db.collection("users").doc(userId).update({
+    notificationPrefs: prefs,
+  });
+};
+
 const updateRoles = async (
   userIds: string[],
   role: string,
@@ -210,6 +219,7 @@ export {
   updateActiveVehicle,
   updateOnboarded,
   updateRating,
+  updateNotificationPrefs,
   updateRoles,
   updateStatuses,
   findByIds,

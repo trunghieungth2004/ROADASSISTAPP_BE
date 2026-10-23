@@ -41,20 +41,22 @@ export const nearDispatchInner = async ({
   limit?: number;
 }) => {
   let capability: unknown;
+  let activeTow = false;
   if (userId) {
     const me = await userRepository.findById(userId);
     if (!me) return [];
+    const operated =
+      (await providerRepository.findByOperator(me.id)) ?? [];
+    activeTow = operated.some(
+      (p) => p.kind === PROVIDER_KIND.TOW &&
+        p.status === PROVIDER_STATUS.ACTIVE,
+    );
     if (me.volunteerAvailable === true) {
       capability = me.capability;
-    } else {
-      const operated =
-        (await providerRepository.findByOperator(me.id)) ?? [];
-      const activeTow = operated.some(
-        (p) => p.kind === PROVIDER_KIND.TOW &&
-          p.status === PROVIDER_STATUS.ACTIVE,
-      );
-      if (!activeTow) return [];
+    } else if (activeTow) {
       capability = me.capability;
+    } else {
+      return [];
     }
   }
   const tickets = await dispatchRepository.findByStatusForTypes(
@@ -79,7 +81,7 @@ export const nearDispatchInner = async ({
     .slice(0, limit);
   return nearby.map((t) => {
     const row: Record<string, unknown> = {...t};
-    delete row.photoUrls;
+    if (!(activeTow && t.ticketType === "TOW")) delete row.photoUrls;
     return row;
   });
 };

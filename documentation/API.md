@@ -783,7 +783,7 @@ Retract your own report (hard delete). Only the reporter may unflag; `"3"` (Lock
 
 ### `POST /flags/near` **(Auth)**
 
-List active flags near a point (`"4"` Expired and `"5"` Rejected are excluded).
+List active flags near a point (`"4"` Expired and `"5"` Rejected are excluded). Responses include the requester's own `voteDirection` (`"up"` / `"down"` / `null`) for each flag.
 
 **Request:**
 ```json
@@ -1105,6 +1105,19 @@ Hazard push notifications (FCM, direct-to-token — no topics). Clients register
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "tokens": 2, "sent": 1, "failed": 0, "firstError": null } }` — sends a test notification to the caller's own tokens only, prunes dead tokens with the same codes as dispatch delivery, and never touches another user's tokens. `firstError` is `"FCM_DISABLED"` with FCM off and `"NO_TOKENS"` when the caller has no registered tokens.
 
+Payment and payout pushes use Android channel `payments`, carry `screen: "payments"`, `event` (`PAYMENT_OPENED`, `PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED`, `PAYMENT_REFUNDED`, `PAYOUT_SETTLED`), `paymentId`, `ticketId`, and optional `payoutId`, and respect the caller's notification preferences below.
+
+### `POST /notifications/prefs` · `PUT /notifications/prefs` **(Auth)**
+
+Read (`POST`, empty body) / update (`PUT`) the caller's payment notification preferences. Both toggles default to `true` when unset. `PUT` requires at least one of `paymentUpdates` / `payoutUpdates` and returns the merged values; both gates are applied server-side before an FCM send.
+
+**Request:**
+```json
+{ "paymentUpdates": true, "payoutUpdates": false }
+```
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "paymentUpdates": true, "payoutUpdates": false } }`.
+
 ### `POST /push/deliver` (Cloud Tasks only)
 
 Enqueued automatically — guarded by the `X-CloudTasks-QueueName: hazard-push` header (else `403`), not rate-limited.
@@ -1249,6 +1262,8 @@ Open a dispatch ticket, optionally linked to a diagnostic, an alley segment (cle
 
 Filing while holding a non-terminal ticket of the same type is refused with `409` (`errors: {ticketId, status, createdAt}` naming the live ticket) unless `force: true` — cross-type filings and refiles after terminal states pass freely. The system-spawned walk-in at tow resolve always files forced.
 
+A TOW drop-off shop must be `ACTIVE`, non-suspended, and servicing the towed class. A shop that has switched duty off (`accepting: false`) is rejected as a new or retargeted destination (`400 "Destination shop is not accepting drop-offs"`); a destination already committed before the shop switched off stays valid and is honored at resolve.
+
 ---
 
 ### `POST /dispatch/mine` **(Auth + `RIDER` license)**
@@ -1276,7 +1291,7 @@ Get a ticket by ID. Visible to the ticket rider, the assigned volunteer, the ass
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED`, `ESTIMATED`, `EST_APPROVED`, `FINAL_QUOTED`, `UNFIXABLE`, and `RESOLVED_UNFIXABLE` are sent, not set — dedicated endpoints own them; arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator on shop tickets (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor; `10` In shop is set from `2`/`3`/`9`/`14`); quotes themselves need a shop ticket (volunteer-held SOS stays on money-free work orders); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`/`12`/`15`) accept no further moves. Admins bypass the matrix. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
+Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED`, `ESTIMATED`, `EST_APPROVED`, `FINAL_QUOTED`, `UNFIXABLE`, and `RESOLVED_UNFIXABLE` are sent, not set — dedicated endpoints own them; arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator on shop tickets (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor; `10` In shop is set from `2`/`3`/`9`/`14`); quotes themselves need a shop ticket (volunteer-held SOS stays on money-free work orders); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`/`12`/`15`) accept no further moves. Admins bypass the matrix. Resolving a tow with an unlinked destination validates that the destination shop is still `ACTIVE` and non-suspended (`400 "Destination shop is no longer available — choose another drop-off"` otherwise); an active shop that has switched duty off still resolves and spawns the linked walk-in with an urgent `"Tow drop-off arrived"` push. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
 
 **Request:**
 ```json
@@ -1546,7 +1561,7 @@ Unified in/out record feed for the Records surface: the caller's own tickets (`d
 
 ### `POST /dispatch/destination` **(Auth + `RIDER` license)**
 
-Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP` that services the towed class) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. Walk-in tickets have no editable destination. The chosen destination is snapshotted onto the ticket, and any tow estimate on file (`estimateAmount`/`estimateNote`/`estimateExpiresAt`/`estimateApprovedAt`) is cleared — estimates belong to the shop that quoted them. The new shop hears `"Incoming tow"` and the previous shop (when replaced) hears `"Drop-off changed"`; on matched/arrived tickets with an engaged tower the tower hears `"Drop-off updated"` and its pickup/drop-off ETAs are restamped from the live fix.
+Change a ticket's drop-off: a registered repair-shop destination (`destinationShopId`, must be an `ACTIVE`, non-suspended `SHOP` that services the towed class) or a free-form point (`destinationPoint {lat, lng, label?}`, which clears the shop). Only the rider, while the ticket is pending/matched/arrived. Walk-in tickets have no editable destination. The chosen destination is snapshotted onto the ticket, and any tow estimate on file (`estimateAmount`/`estimateNote`/`estimateExpiresAt`/`estimateApprovedAt`) is cleared — estimates belong to the shop that quoted them. The new shop hears `"Incoming tow"` and the previous shop (when replaced) hears `"Drop-off changed"`; on matched/arrived tickets with an engaged tower the tower hears `"Drop-off updated"` and its pickup/drop-off ETAs are restamped from the live fix. Retargeting to a shop that has switched duty off is refused (`400 "Destination shop is not accepting drop-offs"`); an unchanged committed destination remains valid.
 
 **Request:**
 ```json
@@ -1663,24 +1678,30 @@ Ratings filed on one ticket (either direction), so the reply box can bind to the
 
 ## Payments
 
-Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the operator confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits come from `platform_config/global`. Rider charges are itemized per bill: a TOW journey is one bill whose tow item (fare + waiting fee) sits beside the repair quote on its linked drop-off walk-in, and each item is paid by its own charge to its own payee.
+Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the payee confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits and the refund policy come from `platform_config/global`. Rider charges are itemized per bill: a TOW journey is one bill whose tow item (fare + waiting fee) sits beside the repair quote on its linked drop-off walk-in, and each item is paid by its own charge to its own payee.
+
+One active charge per ticket is enforced by `payment_guards/{ticketId}` inside a Firestore transaction. `POST /payments/create` and `POST /payments/confirm-cash` are additionally throttled per `uid + ticketId` (20 attempts/minute by default, `PAYMENT_WRITE_LIMIT_PER_MIN`); `429` carries a stable payment error message. The write limiter is separate from the per-IP limiter mounted in `index.ts`.
 
 ### `POST /payments/create` **(Auth, rider)**
 
-Create a charge for the ticket's payable amount. A TOW bills `towFare.final` (or `towFare.estimate` before settlement) plus `towFare.waitingFee`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`. SOS tickets have no payable amount (`400`). Refused when the ticket is cancelled, declined, or unfixable (`400` "Ticket is not payable"), already has an active charge (`409`), or the method is disabled in platform config. Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
+Create a charge for the ticket's payable amount. A TOW bills `towFare.final` (or `towFare.estimate` before settlement) plus `towFare.waitingFee`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`. SOS tickets have no payable amount (`400`). Refused when the ticket is cancelled, declined, or unfixable (`400` "Ticket is not payable"), or the method is disabled in platform config (`400` "Payment method is disabled"). Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a volunteer `assignedUid` (`400` "Ticket has no payee yet" when none).
+
+The create is idempotent per ticket. A retry with the **same** method returns the existing `PENDING`/`HELD`/`CONFIRMED`/`PARTIAL` charge with `reused: true` and HTTP `201`; a different method returns `409` "Ticket already has an active payment". New charges get `201` and `reused: false`. `payment_guards/{ticketId}` backs this check transactionally, and is cleared when a charge is fully refunded or cancelled. SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
 
 **Request:**
 ```json
 { "ticketId": "tick1", "method": "SEPAY" }
 ```
 
+**Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "message": "Payment created", "data": { "id": "pay1", "status": "PENDING", "reused": false, "...": "..." } }`.
+
 ### `POST /payments/ipn` (SePay only)
 
-Public IPN callback for VietQR charges, mounted before the rate limiters. The `Authorization: Apikey {SEPAY_SECRET_KEY}` header is verified (`403` otherwise) and the callback is idempotent per `qrRef`. Moves the charge `PENDING` → `HELD` with the gateway `ipnRef`.
+Public IPN callback for VietQR charges, mounted before the rate limiters. The `Authorization: Apikey {SEPAY_SECRET_KEY}` header is verified (`403` otherwise) and the callback is idempotent per `qrRef`. A missing or non-positive gateway amount is `400`; an amount that does not equal the charge is `400`. Moves `PENDING` → `HELD` with the gateway `ipnRef` and returns the current charge for already-held/confirmed callbacks. `REFUNDED`, `PARTIAL`, and `CANCELLED` charges are rejected (`400` "Payment cannot be held").
 
-### `POST /payments/confirm-cash` **(Auth, operator)**
+### `POST /payments/confirm-cash` **(Auth, payee)**
 
-Operator confirms cash received roadside; admins bypass. Moves the `PENDING` cash charge to `CONFIRMED` for the ticket.
+The payment's payee confirms cash received roadside; admins bypass. Moves the ticket's `PENDING` cash charge to `CONFIRMED` with `confirmedBy`/`confirmedAt` in one conditional transaction, so two devices cannot confirm twice; the loser gets `404` "Pending cash payment not found". Any caller other than the charge's payee or an admin receives `403`. Throttled per `uid + ticketId` alongside create.
 
 **Request:**
 ```json
@@ -1705,9 +1726,27 @@ Charge ledger, newest first, with optional `status` / `limit`.
 { "status": "HELD", "limit": 50 }
 ```
 
+### `POST /payouts/mine` **(Auth)**
+
+The caller's payout history and running totals. `batches` are settled payout batches newest first (default 50, max 100), each carrying `id`, `payeeId`, `payeeName`, `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`, `status: "PAID"`, `payoutRef`, `payoutMethod: "MANUAL"`, `note`, `batchedUid`, `batchedAt`, and `createdAt`. `pending` sums the caller's received-but-unstamped charges (`gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`); `settled` sums `gross`, `commission`, `net`, and `itemCount` across the returned batches. Any authenticated user may call it; a non-payee gets empty lists and zero totals.
+
+**Request:**
+```json
+{ "limit": 50 }
+```
+
 ### `POST /bills/all` **(Auth)**
 
-The caller's bills, newest journey first (default 20, max 50). A bill is the TOW ticket plus the walk-in tickets linked to it (`linkedTicketIds`); a standalone walk-in/mechanic ticket is its own bill, a walk-in linked to a tow never appears twice, and SOS tickets are excluded. Each row returns `billId` (the journey ticket), `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), and itemized `items` — `kind` (`TOW_FARE`/`REPAIR`), `ticketId`, `amount`, `waitingFee`, item `status` (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`), payee, and the latest payment snapshot (`method`, `status`) when present. `due` counts unpaid and pending items; settled, refunded, and void items are excluded.
+The caller's rider bills, newest journey first (default 20, max 50). A bill is the TOW ticket plus the walk-in tickets linked to it (`linkedTicketIds`); a standalone walk-in/mechanic ticket is its own bill, a walk-in linked to a tow never appears twice, and SOS tickets are excluded. Each row returns `billId` (the journey ticket), `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), `viewer` (`RIDER`), `canPay`, and itemized `items` — `kind` (`TOW_FARE`/`REPAIR`), `ticketId`, `amount`, `waitingFee`, item `status` (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`), payee, and the latest payment snapshot when present: `method`, `status`, `commissionRate`, `commissionAmount`, `payoutAmount`, `payoutRef`, `payoutAt`, `payoutStatus` (`NONE`/`PENDING`/`PAID`), and `canConfirmCash`. `due` counts unpaid and pending items; settled, refunded, and void items are excluded.
+
+**Request:**
+```json
+{ "limit": 20 }
+```
+
+### `POST /bills/payee` **(Auth, payee)**
+
+The caller's payee bills, newest first (default 20, max 50), derived from the shops and tow providers they operate plus tickets assigned to them. Candidate tickets are deduplicated by journey root. Each bill uses the same shape as `/bills/all` with `viewer: "PAYEE"` and `canPay: false`, and `items` contain only the caller's payable items on that journey. Unpaid items, pending cash, commission, net payout, and payout state are included. A rider with no provider or assignment gets `[]`.
 
 **Request:**
 ```json
@@ -1716,11 +1755,11 @@ The caller's bills, newest journey first (default 20, max 50). A bill is the TOW
 
 ### `POST /bills/one` **(Auth, participant)**
 
-One bill by `billId` or any `ticketId` in the journey (the server walks the links up to the TOW). Visible to the rider, any operator on the journey's tickets, and admins (`403` otherwise). Same shape as the list rows.
+One bill by `billId` or any `ticketId` in the journey (the server walks the links up to the TOW). Visible to the rider, any operator on the journey's tickets, the payee, and admins (`403` otherwise). Same shape as the list rows, with `viewer` set to `RIDER`, `PAYEE`, `OPERATOR`, or `ADMIN` and `canPay` true only for the rider. Pass `scope: "payee"` to return only the caller's items and payout details; the caller must be that payee (`403` otherwise).
 
 **Request:**
 ```json
-{ "ticketId": "walk1" }
+{ "ticketId": "walk1", "scope": "payee" }
 ```
 
 ---
@@ -1785,13 +1824,67 @@ Read (`POST`) / patch (`PUT`) `platform_config/global`; updates write only provi
 { "waitingCapMin": 60, "paymentMethodsEnabled": ["CASH", "SEPAY"] }
 ```
 
-### `POST /admin/payouts` **(Admin, BE-only)**
+### `POST /admin/payouts` **(Admin, BE-only, legacy)**
 
-Mark a `HELD` / `CONFIRMED` / `PARTIAL` charge as paid out, stamping `payoutRef`, `payoutAt`, and `payoutBy`.
+Mark one `HELD` / `CONFIRMED` / `PARTIAL` charge as paid out, stamping `payoutRef`, `payoutAt`, and `payoutBy`. Kept for compatibility; the batch flow below is the current operator path.
 
 **Request:**
 ```json
 { "paymentId": "pay1" }
+```
+
+### `POST /admin/payouts/pending` **(Admin, BE-only)**
+
+Settleable charges grouped by payee (`HELD`/`CONFIRMED`/`PARTIAL`, no `payoutAt` and no `payoutBatchId`). Each group has `payeeId`, `payeeName`, `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, and `ticketIds`, highest net first. Pass `payeeId` to narrow to one payee; `limit` defaults/caps at 100.
+
+**Request:**
+```json
+{ "payeeId": "payee1", "limit": 100 }
+```
+
+### `POST /admin/payouts/batch` **(Admin, BE-only)**
+
+Settle one payee's charges in a single batch. `paymentIds` is optional; when omitted every settleable charge for the payee is included. Every listed charge must belong to `payeeId` and still be settleable (`400` "Payment belongs to another payee" / "Payment is not settleable"). `payoutRef` is optional (server generates `PO…`); `note` is optional. The batch is terminal `status: "PAID"`; each charge is stamped with `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`. Response: `{ "batch": {...}, "settled": 3 }`.
+
+**Request:**
+```json
+{ "payeeId": "payee1", "paymentIds": ["pay1", "pay2"], "payoutRef": "PO-2026-001", "note": "Week 42" }
+```
+
+### `POST /admin/payouts/batches` **(Admin, BE-only)**
+
+Settled batches newest first, all payees or filtered by `payeeId`; `limit` defaults 50 and caps at 100.
+
+**Request:**
+```json
+{ "payeeId": "payee1", "limit": 50 }
+```
+
+### `POST /admin/payments/audit` **(Admin, BE-only)**
+
+Compare the latest payment per ticket with the ticket's denormalized `paymentStatus`. Returns `scanned`, `tickets`, `missingTickets`, and `drift: [{ticketId, paymentId, expected, actual}]`; `actual: null` means the ticket has no payment status. `limit` defaults/caps at 100 charges.
+
+**Request:**
+```json
+{ "limit": 100 }
+```
+
+### `POST /admin/reports/revenue` **(Admin, BE-only)**
+
+Revenue over paid charges (`HELD`/`CONFIRMED`/`PARTIAL`/`REFUNDED`) in the inclusive `[from, to]` window. Defaults to the last 30 days; date-only `to` includes the whole UTC day. Returns `{from, to, currency: "VND", gross, refunds, commission, net, count, byMethod, byDay}`. `commission` is prorated to the refund-adjusted remainder; `net = gross - refunds - commission`. Send `format: "csv"` for a `text/csv` download with a per-day breakdown and `TOTAL` row.
+
+**Request:**
+```json
+{ "from": "2026-10-01", "to": "2026-10-31", "format": "json" }
+```
+
+### `POST /admin/reports/payees` **(Admin, BE-only)**
+
+Per-payee revenue plus payout totals for the same range. `rows` are sorted by `net` descending and carry `payeeId`, `payeeName`, `gross`, `refunds`, `commission`, `net`, `count`, `paid` (sum of batch `net` in range), and `pending` (unpayout-stamped paid charges). `format: "csv"` returns one row per payee.
+
+**Request:**
+```json
+{ "from": "2026-10-01", "to": "2026-10-31", "format": "csv" }
 ```
 
 ---

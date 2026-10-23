@@ -3,6 +3,7 @@ import {RouteDeps} from "../types/routes";
 import {SERVICE_ROLE} from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
 import * as paymentController from "../controller/paymentController";
+import paymentWriteLimiter from "../middleware/paymentRateLimit";
 
 const mountPaymentIpn = (app: Express) => {
   app.post("/payments/ipn", paymentController.ipn);
@@ -15,6 +16,7 @@ export default (
   app.post(
     "/payments/create",
     requireAuth,
+    paymentWriteLimiter,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createPayment}),
     paymentController.createPayment,
@@ -22,6 +24,7 @@ export default (
   app.post(
     "/payments/confirm-cash",
     requireAuth,
+    paymentWriteLimiter,
     validate({body: schemas.confirmCash}),
     paymentController.confirmCash,
   );

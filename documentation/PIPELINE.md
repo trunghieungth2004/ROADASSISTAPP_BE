@@ -201,6 +201,7 @@ the name (a repeated suffix silently swallows the later push):
 | Walk-in filed | (none) | named shop operator | "Walk-in request" | always, unless the shop switched duty off (filing rejected, push skipped) |
 | TOW filed | (none) | nearby towers | "Tow request near you" | always; freezes `candidates` + `candidateTs` like SOS |
 | TOW filed with shop drop-off | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | destinationShopId set |
+| Tow resolves at an off-duty shop | `-dropoff-arrived` | destination shop (carried) | "Tow drop-off arrived" | destination shop active but off-duty; forced walk-in spawn |
 | Destination retargeted to shop | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | new destinationShopId set |
 | Destination moved away from shop | `-dropped-<shopId>` | previous shop (carried) | "Drop-off changed" | previous ≠ new, both set |
 | Accept (shop/tower/volunteer) | `-status-2-rider` | rider (explicit) | per-type matched body | always on accept |
@@ -246,6 +247,8 @@ audiences set `urgent: "true"` explicitly because their ticket status is not
 itself a rider-urgency signal — a destination declined at PENDING would
 otherwise ride the normal tier, which is precisely the case the rider most
 needs to act on. The flag travels enqueue → `/dispatch/deliver` → sender.
+The drop-off-arrived push to a committed off-duty shop is the one
+destination-shop push that bypasses the normal off-duty skip.
 
 The client mirrors the split: `urgent` bypasses the navigation-time banner
 suppression (see the app's `PUSH.md`), so a MATCHED arriving mid-turn still

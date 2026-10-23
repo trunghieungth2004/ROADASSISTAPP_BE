@@ -27,6 +27,8 @@ import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
 import paymentRoutes, {mountPaymentIpn} from "./routes/paymentRoutes";
 import billRoutes from "./routes/billRoutes";
+import payoutRoutes from "./routes/payoutRoutes";
+import notificationRoutes from "./routes/notificationRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import disputeRoutes from "./routes/disputeRoutes";
 import * as flagService from "./service/flagService";
@@ -81,7 +83,7 @@ const writeLimiter = rateLimiter({
 app.use(
   ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places",
     "/alleys", "/landmarks", "/diagnostics", "/vehicleProfiles",
-    "/payments", "/admin"],
+    "/payments", "/payouts", "/admin"],
   writeLimiter,
 );
 
@@ -148,6 +150,8 @@ ratingRoutes(app, routeDeps);
 pushRoutes(app, routeDeps);
 paymentRoutes(app, routeDeps);
 billRoutes(app, routeDeps);
+payoutRoutes(app, routeDeps);
+notificationRoutes(app, routeDeps);
 adminRoutes(app, routeDeps);
 disputeRoutes(app, routeDeps);
 

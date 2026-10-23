@@ -285,6 +285,20 @@ const isPastTtl = (flag: FlagRecord): boolean => {
   return (ttl as {toMillis: () => number}).toMillis() <= Date.now();
 };
 
+const voteDirectionFor = (
+  flag: FlagRecord,
+  uid: string | undefined,
+): "up" | "down" | null => {
+  if (!uid) return null;
+  const stored = flag.votes ?? {};
+  if (Object.prototype.hasOwnProperty.call(stored, uid)) {
+    const value = stored[uid];
+    return value > 0 ? "up" : value < 0 ? "down" : null;
+  }
+  const voters = Array.isArray(flag.voters) ? flag.voters : [];
+  return voters.includes(uid) ? "up" : null;
+};
+
 const toPublicFlag = (
   flag: FlagRecord,
   requesterUid: string | undefined,
@@ -293,6 +307,7 @@ const toPublicFlag = (
   const consensus = {
     consensusThreshold: CONSENSUS_THRESHOLD,
     confirmerCount: voters.length,
+    voteDirection: voteDirectionFor(flag, requesterUid),
   };
   const pub = stripVoters(flag);
   const reporterUid = pub.reporterUid as string | undefined;
@@ -326,7 +341,6 @@ const getNear = cacheManager.wrap(
           f.status !== STATUS_FLAGS.REJECTED &&
           !isPastTtl(f),
       )
-      .map(stripVoters)
       .map((f) => toPublicFlag(f, requesterUid));
   },
   {

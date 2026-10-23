@@ -125,7 +125,9 @@ export const deliverShopPush = async (
   const shop = await providerRepository.findById(shopId);
   const operatorUid = shop?.operatorUid as string | null;
   if (!operatorUid) return {delivered: 0, skipped: true};
-  if (shop?.accepting === false) return {delivered: 0, skipped: true};
+  if (shop?.accepting === false && !urgent) {
+    return {delivered: 0, skipped: true};
+  }
   const record = await fcmTokenRepository.findByUserId(operatorUid);
   const tokens = (record?.tokens as string[] | undefined) ?? [];
   if (tokens.length === 0) return {delivered: 0, skipped: true};

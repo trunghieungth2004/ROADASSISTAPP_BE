@@ -603,6 +603,44 @@ describe("flagService.getNear", () => {
       "c",
     ]);
   });
+  it("returns the requester's vote direction and confirmer count", async () => {
+    jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
+      {
+        id: "a",
+        status: "1",
+        votes: {u1: 1, u2: -1, u3: 1},
+        voters: ["u1", "u3"],
+        reporterUid: "reporter",
+      },
+    ] as never);
+    const up = await getNear({
+      lat: 10.72,
+      lng: 106.62,
+      requesterUid: "u1",
+    });
+    expect(up[0]).toMatchObject({
+      voteDirection: "up",
+      confirmerCount: 2,
+    });
+    const down = await getNear({
+      lat: 10.72,
+      lng: 106.62,
+      requesterUid: "u2",
+    });
+    expect(down[0]).toMatchObject({
+      voteDirection: "down",
+      confirmerCount: 2,
+    });
+    const none = await getNear({
+      lat: 10.72,
+      lng: 106.62,
+      requesterUid: "u4",
+    });
+    expect(none[0]).toMatchObject({
+      voteDirection: null,
+      confirmerCount: 2,
+    });
+  });
   it("keeps reporterUid for the requester and handles others", async () => {
     jest.mocked(flagRepository.findByGeohashPrefixes).mockResolvedValue([
       {id: "a", status: "1", reporterUid: "u1"},

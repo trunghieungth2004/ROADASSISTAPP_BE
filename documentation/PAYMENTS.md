@@ -6,8 +6,17 @@ drop-off shop, and each item settles on its own ticket with its own payee.
 A shop's single binding quote lives on its walk-in ticket (see
 `PRICING.md`). Canonical routes: `POST /payments/create`, `POST /payments/ipn`,
 `POST /payments/confirm-cash`, `POST /payments/one`, `POST /payments/all`,
-`POST /bills/all`, `POST /bills/one` (shapes in `API.md` → Payments and
-`SCHEMA.md` → Payments).
+`POST /payouts/mine`, `POST /bills/all`, `POST /bills/payee`, `POST /bills/one`
+(shapes in `API.md` → Payments and `SCHEMA.md` → Payments).
+
+## Bill, ticket, payment
+
+A **ticket** is the operational job (one tow leg, one walk-in repair, one SOS
+assist). A **bill** is the rider-facing money view derived from one ticket or
+a TOW journey plus its linked walk-in tickets; it is not its own collection.
+A **payment** is one charge against one ticket and one payee. That split is
+why a TOW journey can show a single bill total while the tower and the shop
+are paid separately.
 
 ## Creating a charge
 
@@ -20,105 +29,108 @@ The payee resolves to the first of the ticket's shops that carries an
 operator (`assignedShopId` → `providerId` → `destinationShopId`), then to a
 volunteer `assignedUid` (`400` "Ticket has no payee yet" when none). The
 commission split is snapshotted onto the charge (`commissionRate`,
-`commissionAmount`, `payoutAmount`), it starts `PENDING`, and the ticket is
-stamped with `paymentId`/`paymentMethod`/`paymentStatus`/`checkoutUrl`.
-Refusals: unknown method, method disabled in
-`platform_config.paymentMethodsEnabled`, or an existing active charge on the
-ticket (`409` "Ticket already has an active payment").
+`commissionAmount`, `payoutAmount` from `platform_config/global`). A method
+disabled in `paymentMethodsEnabled` is rejected with `400` "Payment method is
+disabled".
 
-## Bills
+Create is idempotent. `payment_guards/{ticketId}` is read and written in one
+Firestore transaction together with the charge. A retry carrying the same
+method returns the existing active charge with `reused: true` and HTTP `201`;
+a different method returns `409` "Ticket already has an active payment".
+New charges get `reused: false`. Only `PENDING`, `HELD`, `CONFIRMED`, and
+`PARTIAL` count as active. The guard is cleared when a charge is fully
+refunded or cancelled, so a later retry can create a fresh charge if the
+ticket is still payable.
 
-A bill is a journey view over existing tickets and charges — no money is
-stored twice. The bill id is the TOW ticket; its items are the tow ticket and
-every walk-in/mechanic ticket linked to it through `linkedTicketIds`. A
-standalone walk-in/mechanic ticket is its own bill; a linked walk-in never
-appears as a separate bill, and SOS tickets are excluded. When a tow resolves
-to a drop-off shop, the spawn reuses a live walk-in at that shop (linking it)
-and otherwise creates one there, so the journey never picks up another
-shop's ticket.
+`/payments/create` and `/payments/confirm-cash` are throttled per
+`uid + ticketId` (20 attempts/minute by default,
+`PAYMENT_WRITE_LIMIT_PER_MIN`). This is separate from the IP write limiter.
 
-`POST /bills/all` lists the rider's bills newest first (`limit`, default 20,
-max 50); `POST /bills/one` accepts `billId` or any `ticketId` in the journey
-and walks the links up to the tow. Rows carry `total`, `paid`, `due`,
-`status`, and itemized `items`:
+## SePay rail
 
-- `kind`: `TOW_FARE` (`amount` = fare + `waitingFee`) or `REPAIR` (the
-  walk-in's binding quote, legacy `finalAmount` fallback).
-- `status`: `UNPAID` (no charge), `PENDING` (armed charge), `PAID`
-  (`HELD`/`CONFIRMED`), `REFUNDED`, `PARTIAL`, or `VOID` (cancelled/declined/
-  unfixable ticket with no live charge).
-- `payment`: the latest charge snapshot (`method`, `status`) when present;
-  `payeeName` names the shop the item settles with.
+`SEPAY` charges start `PENDING` and return a signed checkout payload
+(`action`, `method: "POST"`, `fields`, `qrUrl`). SePay calls
+`POST /payments/ipn`, mounted before the rate limiters, with
+`Authorization: Apikey {SEPAY_SECRET_KEY}`. The callback requires the gateway
+`amount` and moves `PENDING` → `HELD` with `ipnRef`; a missing, non-positive,
+or mismatched amount is `400`. The callback is idempotent per `qrRef` and
+returns the current charge for already-held/confirmed callbacks. `REFUNDED`,
+`PARTIAL`, and `CANCELLED` charges cannot be held.
 
-`due` counts `UNPAID` and `PENDING` items, `paid` counts `PAID` items, and
-the bill status is `PAID` when nothing is due with money received, `VOID`
-when nothing was ever received, and `PARTIAL` in between. Paying is
-itemized: the client calls `POST /payments/create` with the item's
-`ticketId`, so a SePay QR or cash handover settles only that item and the
-bill reflects both rails side by side.
+## Cash rail
 
-## `CASH` (operator-confirm)
+`CASH` charges start `PENDING`. The charge's `payeeId` (admin exempt) calls
+`POST /payments/confirm-cash` after receiving cash. The transition is one
+conditional Firestore update (`PENDING` → `CONFIRMED`) with
+`confirmedBy`/`confirmedAt`, so a second device cannot double-confirm; the
+loser gets `404` "Pending cash payment not found". Anyone else gets `403`
+"Only the payee confirms cash". The ticket's denormalized payment fields are
+stamped on every transition.
 
-No gateway round-trip: the ticket's operator or an admin confirms cash
-received (`POST /payments/confirm-cash` with `ticketId`) and the charge moves
-`PENDING` → `CONFIRMED` with `confirmedBy`/`confirmedAt`. The platform
-commission stays a recorded receivable on the charge — cash never moves
-server-side — and the operator marks it paid out via `POST /admin/payouts`
-(`payoutRef`/`payoutAt`/`payoutBy`). Display copy says "on record" until
-confirmed.
+## Refunds
 
-## `SEPAY` VietQR (checkout → IPN → `HELD`)
+Refunds are cumulative and capped at the charge's remaining amount.
+`refundAmount` stores the total refunded, and the status becomes `PARTIAL`
+until the total reaches `amount`, then `REFUNDED`. A full refund also clears
+`payment_guards/{ticketId}`. The operator's `refundPolicy` controls the
+window:
 
-1. **Create**: `POST /payments/create` with `method: "SEPAY"` returns the
-   `PENDING` charge plus a signed `checkout`
-   (`{action, method: "POST", fields, qrUrl}`) built from the `SEPAY_*` env
-   config; the mobile app link-outs to `qrUrl`.
-2. **Pay**: the rider pays through the hosted VietQR page.
-3. **IPN**: SePay posts `POST /payments/ipn` (mounted before the rate
-   limiters). The `Authorization: Apikey {SEPAY_SECRET_KEY}` header is
-   verified first (`403` otherwise), the reference arrives under any of the
-   known QR-ref keys, and the callback is idempotent: a charge already
-   `HELD`/`CONFIRMED` returns unchanged, a non-`PENDING` charge is refused
-   (`400` "Payment cannot be held"), and a notified amount that does not
-   equal the charge is refused (`400` "IPN amount mismatch"). Success moves
-   the charge `PENDING` → `HELD` with `ipnRef` and stamps the ticket.
-4. **Refund**: `HELD` charges refund programmatically in full when a shop
-   closes a job `UNFIXABLE`; `PARTIAL`/`REFUNDED` are the money-out exits and
-   record `refundAmount`/`refundedAt`/`refundedBy`. Outside that flow,
-   refunds are admin-initiated service calls.
+| Policy | Full refund | Partial refund | Closing the charge |
+|--------|-------------|----------------|--------------------|
+| `FULL` | allowed | allowed | allowed |
+| `PARTIAL` | rejected (`400` "Full refunds are disabled") | allowed | rejected (a partial that reaches the full amount is a full refund) |
+| `NONE` | rejected (`400` "Refunds are disabled") | rejected | rejected |
 
-Idempotency: every charge gets a `qrRef` (`RA` prefix + short ticket
-fragment — `PAYMENT_QR_PREFIX`/`PAYMENT_QR_TICKET_LENGTH`); the IPN resolves
-it through the fixed key list and replays return the stored outcome without
-moving money. `POST /payments/one` (participants) and `POST /payments/all`
-(admin, `status`/`limit`) are poll-safe reads.
+Refunds after a payout are not retro-adjusted into the settled batch. This is
+intentional: batches are an audit record of what was paid at settlement time,
+and later refunds show up in reporting through the payment snapshot.
 
-## Sandbox vs prod
+## Payout batches
 
-`SEPAY_ENV` picks the host pair from `functions/constants/sepay.ts`
-(`sandbox` is the default; `production` is opt-in); credentials and return
-URLs come from env vars — `SEPAY_MERCHANT_ID`, `SEPAY_SECRET_KEY`,
-`SEPAY_SUCCESS_URL`, `SEPAY_ERROR_URL`, `SEPAY_CANCEL_URL` (see
-`.env.example`). No host or key is hardcoded. Sequence diagram in
-`PIPELINE.md` → SePay payment pipeline.
+Settlement is a batch operation, not a per-charge flag:
 
-## Charge states
+1. `POST /admin/payouts/pending` groups settleable charges (received status,
+   no `payoutAt`, no `payoutBatchId`) by payee, highest net first. Net is the
+   charge's `payoutAmount` (or gross minus commission) minus cumulative
+   refunds.
+2. `POST /admin/payouts/batch` settles one payee. `paymentIds` is optional;
+   omitted means every settleable charge for that payee. Every listed charge
+   must belong to the payee and still be settleable. The server writes one
+   terminal `payouts` doc (`status: "PAID"`, `payoutMethod: "MANUAL"`,
+   generated `PO…` ref unless supplied) and stamps each charge with
+   `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`.
+3. `POST /admin/payouts/batches` lists batches; `POST /payouts/mine` returns
+   the caller's batches plus pending and settled totals.
 
-`PENDING` → `HELD` → `CONFIRMED`, with `REFUNDED`, `PARTIAL` and
-`CANCELLED` as exits. `CASH` charges skip `HELD` (`PENDING` → `CONFIRMED` on
-operator confirm). `CANCELLED` marks a pending charge voided by the flow
-(the unfixable close) — its QR no longer credits, and it is not counted as
-received. Stored docs mirror the `paymentRepository.Payment` interface:
-`{id, ticketId, riderUid, payeeId, amount, currency, method, status, qrRef,
-ipnRef, commissionRate, commissionAmount, payoutAmount, confirmedBy,
-confirmedAt, receiptUrl, refundAmount, refundedAt, refundedBy, payoutRef,
-payoutAt, payoutBy, createdAt, updatedAt}`. The ticket carries
-`paymentId`/`paymentMethod`/`paymentStatus`/`checkoutUrl`.
+The legacy `POST /admin/payouts` single-charge stamp remains for
+compatibility. Batches created by the new flow are terminal and are not
+reopened or edited.
 
-## Admin (BE-only, FE later)
+## Notifications
 
-The charge ledger (`POST /payments/all`), payout marking
-(`POST /admin/payouts`), and rail toggles / rate card (`PUT /admin/config` —
-`paymentMethodsEnabled`, `commissionRate`, `refundPolicy`, waiting rates) are
-admin endpoints only. No operator or rider client exposes them yet; the FE
-console lands later.
+`users/{uid}.notificationPrefs` stores two server-side gates, both default
+`true`: `paymentUpdates` and `payoutUpdates`. `POST /notifications/prefs`
+reads them and `PUT /notifications/prefs` updates one or both. Payment events
+(`PAYMENT_OPENED`, `PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED`,
+`PAYMENT_REFUNDED`) require `paymentUpdates`; `PAYOUT_SETTLED` requires
+`payoutUpdates`. Pushes use Android channel `payments` and carry
+`screen: "payments"`, `event`, `paymentId`, `ticketId`, and optional
+`payoutId` so the app can open the bill or the payee's payout history.
+
+## Reports and audit
+
+Reports are computed from paid charges only (`HELD`, `CONFIRMED`, `PARTIAL`,
+`REFUNDED`). Revenue commission is prorated to the refund-adjusted remainder;
+`net = gross - refunds - commission`. Payee rows add `paid` (batch net in
+range) and `pending` (paid charges without a payout stamp). Both reports
+accept `format: "csv"`. `POST /admin/payments/audit` compares each ticket's
+denormalized `paymentStatus` with its latest charge and returns drift without
+mutating anything.
+
+## Non-goals
+
+- No post-settlement retro-adjustment of payout batches.
+- No automatic payout scheduling or gateway disbursement; batches record
+  manual settlement.
+- No separate bill storage; bills remain a derived read model.
+- No mobile deploy until the backend functions above are live.

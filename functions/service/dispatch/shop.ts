@@ -20,7 +20,12 @@ import {
   TERMINAL_STATUSES,
   TOW_ESTIMATE_TTL_MS,
 } from "./constants";
-import {ACCUSED_KIND} from "../../constants/payments";
+import {
+  ACCUSED_KIND,
+  PAYMENT_LIST_MAX,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
+} from "../../constants/payments";
 import {
   DECLINE_REASON,
   HELPER_KIND,
@@ -204,7 +209,13 @@ export const feedTickets = async ({
       .filter((provider) => provider.kind === PROVIDER_KIND.SHOP)
       .map((provider) => provider.id),
   );
+  const ownTowIds = new Set(
+    operated
+      .filter((provider) => provider.kind === PROVIDER_KIND.TOW)
+      .map((provider) => provider.id),
+  );
   const canReadPhotos = (ticket: {
+    ticketType?: unknown;
     assignedShopId?: string | null;
     providerId?: string | null;
     destinationShopId?: string | null;
@@ -216,6 +227,10 @@ export const feedTickets = async ({
       ownShopIds.has(ticket.providerId)) return true;
     if (typeof ticket.destinationShopId === "string" &&
       ownShopIds.has(ticket.destinationShopId)) return true;
+    if (typeof ticket.assignedShopId === "string" &&
+      ownTowIds.has(ticket.assignedShopId)) return true;
+    if (typeof ticket.providerId === "string" &&
+      ownTowIds.has(ticket.providerId)) return true;
     return hasVolunteer &&
       typeof ticket.assignedUid === "string" &&
       ticket.assignedUid === userId;
@@ -272,6 +287,29 @@ export const feedTickets = async ({
     return av < bv ? 1 : av > bv ? -1 : 0;
   });
   const rows = merged.slice(0, limit);
+  let pendingCash: paymentRepository.Payment[] = [];
+  if (rows.some((row) => row.direction === "in")) {
+    try {
+      const found = await paymentRepository.findByPayee(
+        userId,
+        PAYMENT_STATUS.PENDING,
+        PAYMENT_LIST_MAX,
+      );
+      if (Array.isArray(found)) pendingCash = found;
+    } catch {
+      pendingCash = [];
+    }
+  }
+  const cashTicketIds = new Set(
+    pendingCash
+      .filter((payment) => payment.method === PAYMENT_METHOD.CASH)
+      .map((payment) => payment.ticketId),
+  );
+  for (const row of rows) {
+    if (row.direction === "in" && cashTicketIds.has(String(row.id))) {
+      row.canConfirmCash = true;
+    }
+  }
   await attachParties(rows);
   return rows;
 };

@@ -46,6 +46,7 @@ export const resolveDestination = async (
     | undefined,
   ticketType?: string,
   vehicleType?: string,
+  allowOffDuty = false,
 ): Promise<Record<string, unknown> | undefined> => {
   if (destinationShopId) {
     const shop = await providerRepository.findById(destinationShopId);
@@ -56,6 +57,9 @@ export const resolveDestination = async (
     }
     if (shop.kind !== PROVIDER_KIND.SHOP) {
       throw new ValidationError("Destination must be a repair shop");
+    }
+    if (ticketType === "TOW" && shop.accepting === false && !allowOffDuty) {
+      throw new ValidationError("Destination shop is not accepting drop-offs");
     }
     if (ticketType && ticketType !== "TOW" && ticketType !== "MECHANIC") {
       throw new ValidationError("This ticket type takes no shop destination");

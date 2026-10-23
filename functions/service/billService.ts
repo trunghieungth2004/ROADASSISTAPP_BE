@@ -8,7 +8,9 @@ import {
   BILL_LIST_LIMIT,
   BILL_LIST_MAX,
   BILL_STATUS,
+  PAYMENT_CASH_CONFIRMABLE_STATUSES,
   PAYMENT_CURRENCY,
+  PAYMENT_RECEIVED_STATUSES,
   PAYMENT_STATUS,
 } from "../constants/payments";
 import {ROLE_ADMIN} from "../constants/roles";
@@ -28,6 +30,24 @@ import {
 const MAX_JOURNEY_DEPTH = 4;
 const BILL_SCAN_LIMIT = 100;
 
+type BillViewer = "RIDER" | "PAYEE" | "OPERATOR" | "ADMIN";
+type BillPayoutStatus = "NONE" | "PENDING" | "PAID";
+
+type BillPayment = {
+  id: string;
+  method: string;
+  status: string;
+  amount: number;
+  refundAmount: number | null;
+  commissionRate: number | null;
+  commissionAmount: number | null;
+  payoutAmount: number | null;
+  payoutRef: string | null;
+  payoutAt: string | null;
+  payoutStatus: BillPayoutStatus;
+  canConfirmCash: boolean;
+};
+
 type BillItem = {
   kind: string;
   ticketId: string;
@@ -39,13 +59,7 @@ type BillItem = {
   payeeId: string | null;
   payeeName: string | null;
   qrUrl: string | null;
-  payment: {
-    id: string;
-    method: string;
-    status: string;
-    amount: number;
-    refundAmount: number | null;
-  } | null;
+  payment: BillPayment | null;
 };
 
 type Bill = {
@@ -59,6 +73,8 @@ type Bill = {
   paid: number;
   due: number;
   status: string;
+  viewer: BillViewer;
+  canPay: boolean;
   items: BillItem[];
 };
 
@@ -166,8 +182,18 @@ const payeeUidFor = async (
   }
 };
 
+const payoutStatusFor = (
+  payment: paymentRepository.Payment,
+): BillPayoutStatus => {
+  if (nonEmpty(payment.payoutAt)) return "PAID";
+  if (PAYMENT_RECEIVED_STATUSES.includes(payment.status)) return "PENDING";
+  return "NONE";
+};
+
 const buildItem = async (
   ticket: dispatchRepository.DispatchTicket,
+  viewerUid: string,
+  admin: boolean,
 ): Promise<BillItem | null> => {
   const billable = billableAmountFor(asBillable(ticket));
   if (!billable || billable.amount <= 0) return null;
@@ -208,18 +234,40 @@ const buildItem = async (
       status: payment.status,
       amount: payment.amount,
       refundAmount: payment.refundAmount,
+      commissionRate: payment.commissionRate,
+      commissionAmount: payment.commissionAmount,
+      payoutAmount: payment.payoutAmount,
+      payoutRef: payment.payoutRef,
+      payoutAt: payment.payoutAt,
+      payoutStatus: payoutStatusFor(payment),
+      canConfirmCash: payment.method === "CASH" &&
+        PAYMENT_CASH_CONFIRMABLE_STATUSES.includes(payment.status) &&
+        (admin || payment.payeeId === viewerUid),
     } : null,
   };
 };
 
-const buildBill = async (rootId: string): Promise<Bill> => {
+const buildBill = async (
+  rootId: string,
+  {
+    viewer,
+    viewerUid,
+    payeeId,
+  }: {
+    viewer: BillViewer;
+    viewerUid: string;
+    payeeId?: string;
+  },
+): Promise<Bill> => {
   const root = await dispatchRepository.findById(rootId);
   if (!root) throw new NotFoundError("Dispatch ticket not found");
   const tickets = await journeyTickets(root);
   const items: BillItem[] = [];
   for (const ticket of tickets) {
-    const item = await buildItem(ticket);
-    if (item) items.push(item);
+    const item = await buildItem(ticket, viewerUid, viewer === "ADMIN");
+    if (!item) continue;
+    if (payeeId !== undefined && item.payeeId !== payeeId) continue;
+    items.push(item);
   }
   let total = 0;
   let paid = 0;
@@ -246,23 +294,30 @@ const buildBill = async (rootId: string): Promise<Bill> => {
     paid,
     due,
     status,
+    viewer,
+    canPay: viewer === "RIDER",
     items,
   };
 };
 
-const authorizeBill = async (
+const viewerOfBill = async (
   root: dispatchRepository.DispatchTicket,
   userId: string,
-): Promise<void> => {
-  if (root.userId === userId) return;
+): Promise<BillViewer> => {
+  if (root.userId === userId) return "RIDER";
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
-  if (caller.role === ROLE_ADMIN) return;
+  if (caller.role === ROLE_ADMIN) return "ADMIN";
   const tickets = await journeyTickets(root);
+  let operator = false;
   for (const ticket of tickets) {
-    if (ticket.userId === userId) return;
-    if (await isOperatorOfTicket(asBillable(ticket), userId)) return;
+    if (ticket.userId === userId) return "RIDER";
+    if (await payeeUidFor(ticket) === userId) return "PAYEE";
+    if (await isOperatorOfTicket(asBillable(ticket), userId)) {
+      operator = true;
+    }
   }
+  if (operator) return "OPERATOR";
   throw new ForbiddenError("Not allowed to view this bill");
 };
 
@@ -285,7 +340,10 @@ const listBills = async ({
   const bills: Bill[] = [];
   for (const ticket of tickets) {
     if (ticket.ticketType === "TOW") {
-      const bill = await buildBill(ticket.id);
+      const bill = await buildBill(ticket.id, {
+        viewer: "RIDER",
+        viewerUid: userId,
+      });
       if (bill.total > 0) bills.push(bill);
       continue;
     }
@@ -293,8 +351,63 @@ const listBills = async ({
       continue;
     }
     if (await linkedTowFor(ticket)) continue;
-    const bill = await buildBill(ticket.id);
+    const bill = await buildBill(ticket.id, {
+      viewer: "RIDER",
+      viewerUid: userId,
+    });
     if (bill.total > 0) bills.push(bill);
+  }
+  bills.sort((a, b) => {
+    const av = String(a.createdAt ?? "");
+    const bv = String(b.createdAt ?? "");
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
+  return bills.slice(0, capped);
+};
+
+const listPayeeBills = async ({
+  userId,
+  limit,
+}: {
+  userId: string;
+  limit?: number;
+}): Promise<Bill[]> => {
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  const capped = typeof limit === "number" ?
+    Math.min(limit, BILL_LIST_MAX) :
+    BILL_LIST_LIMIT;
+  const operated = await providerRepository.findByOperator(userId);
+  const providerRows = await Promise.all(
+    operated.map((provider) =>
+      dispatchRepository.findRecentForShop(provider.id, BILL_SCAN_LIMIT),
+    ),
+  );
+  const assisted = await dispatchRepository.findByAssignee(
+    userId,
+    BILL_SCAN_LIMIT,
+  );
+  const candidates = [
+    ...providerRows.flat(),
+    ...assisted,
+  ];
+  const roots = new Map<string, dispatchRepository.DispatchTicket>();
+  for (const ticket of candidates) {
+    const rootId = await journeyRootId(ticket);
+    if (roots.has(rootId)) continue;
+    const root = ticket.id === rootId ?
+      ticket :
+      await dispatchRepository.findById(rootId);
+    if (root) roots.set(rootId, root);
+  }
+  const bills: Bill[] = [];
+  for (const root of roots.values()) {
+    const bill = await buildBill(root.id, {
+      viewer: "PAYEE",
+      viewerUid: userId,
+      payeeId: userId,
+    });
+    if (bill.total > 0 && bill.items.length > 0) bills.push(bill);
   }
   bills.sort((a, b) => {
     const av = String(a.createdAt ?? "");
@@ -308,10 +421,12 @@ const getBill = async ({
   userId,
   ticketId,
   billId,
+  scope,
 }: {
   userId: string;
   ticketId?: string;
   billId?: string;
+  scope?: string;
 }): Promise<Bill> => {
   const seedId = nonEmpty(ticketId) ? ticketId : billId;
   if (!nonEmpty(seedId)) {
@@ -322,8 +437,27 @@ const getBill = async ({
   const rootId = await journeyRootId(seed);
   const root = await dispatchRepository.findById(rootId);
   if (!root) throw new NotFoundError("Dispatch ticket not found");
-  await authorizeBill(root, userId);
-  return buildBill(rootId);
+  const viewer = await viewerOfBill(root, userId);
+  if (scope === "payee") {
+    if (viewer !== "PAYEE") {
+      throw new ForbiddenError("Only the payee views a payee bill");
+    }
+    return buildBill(rootId, {
+      viewer,
+      viewerUid: userId,
+      payeeId: userId,
+    });
+  }
+  return buildBill(rootId, {viewer, viewerUid: userId});
 };
 
-export {Bill, BillItem, getBill, listBills};
+export {
+  Bill,
+  BillItem,
+  BillPayment,
+  BillPayoutStatus,
+  BillViewer,
+  getBill,
+  listBills,
+  listPayeeBills,
+};

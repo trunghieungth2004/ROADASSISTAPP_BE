@@ -4,7 +4,11 @@ import * as paymentRepository from "../../../repository/paymentRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import {billableAmountFor} from "../../../service/paymentService";
-import {getBill, listBills} from "../../../service/billService";
+import {
+  getBill,
+  listBills,
+  listPayeeBills,
+} from "../../../service/billService";
 import {STATUS_DISPATCH} from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
@@ -94,6 +98,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([]);
   jest.mocked(providerRepository.findById).mockResolvedValue(null);
+  jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+  jest.mocked(dispatchRepository.findRecentForShop).mockResolvedValue([]);
+  jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
   jest
     .mocked(userRepository.findById)
     .mockResolvedValue({id: "rider1", role: "2"} as never);
@@ -183,6 +190,8 @@ describe("billService.getBill", () => {
     expect(bill.total).toBe(370000);
     expect(bill.due).toBe(370000);
     expect(bill.status).toBe("UNPAID");
+    expect(bill.viewer).toBe("RIDER");
+    expect(bill.canPay).toBe(true);
   });
 
   it("reports a partially paid journey", async () => {
@@ -204,6 +213,10 @@ describe("billService.getBill", () => {
     expect(bill.items[0].payment).toMatchObject({
       method: "CASH",
       status: "CONFIRMED",
+      commissionAmount: 22000,
+      payoutAmount: 198000,
+      payoutStatus: "PENDING",
+      canConfirmCash: false,
     });
     expect(bill.paid).toBe(220000);
     expect(bill.due).toBe(150000);
@@ -223,6 +236,79 @@ describe("billService.getBill", () => {
     expect(bill.total).toBe(370000);
     expect(bill.due).toBe(220000);
     expect(bill.status).toBe("UNPAID");
+  });
+
+  it("shows a payee the whole journey without pay actions", async () => {
+    routeTickets(
+      towTicket({linkedTicketIds: ["walk1"]}),
+      walkTicket({linkedTicketIds: ["tow1"]}),
+    );
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    jest
+      .mocked(userRepository.findById)
+      .mockResolvedValue({id: "shopop1", role: "2"} as never);
+    const bill = await getBill({userId: "shopop1", ticketId: "walk1"});
+    expect(bill.viewer).toBe("PAYEE");
+    expect(bill.canPay).toBe(false);
+    expect(bill.items).toHaveLength(2);
+  });
+
+  it("scopes a payee bill to the viewer's items", async () => {
+    routeTickets(
+      towTicket({linkedTicketIds: ["walk1"]}),
+      walkTicket({linkedTicketIds: ["tow1"]}),
+    );
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    jest
+      .mocked(userRepository.findById)
+      .mockResolvedValue({id: "shopop1", role: "2"} as never);
+    jest
+      .mocked(paymentRepository.findByTicketId)
+      .mockImplementation(async (ticketId) =>
+        ticketId === "walk1" ?
+          [payment({
+            ticketId: "walk1",
+            payeeId: "shopop1",
+            amount: 150000,
+            commissionAmount: 15000,
+            payoutAmount: 135000,
+            payoutAt: "2026-10-02T00:00:00.000Z",
+          }) as never] :
+          [],
+      );
+    const bill = await getBill({
+      userId: "shopop1",
+      ticketId: "walk1",
+      scope: "payee",
+    });
+    expect(bill.viewer).toBe("PAYEE");
+    expect(bill.canPay).toBe(false);
+    expect(bill.items).toHaveLength(1);
+    expect(bill.items[0]).toMatchObject({
+      ticketId: "walk1",
+      amount: 150000,
+      status: "PAID",
+      payment: {
+        payoutStatus: "PAID",
+        commissionAmount: 15000,
+        payoutAmount: 135000,
+      },
+    });
+    expect(bill.total).toBe(150000);
+    expect(bill.paid).toBe(150000);
+  });
+
+  it("refuses a rider from using the payee scope", async () => {
+    routeTickets(towTicket({linkedTicketIds: ["walk1"]}), walkTicket());
+    await expect(
+      getBill({userId: "rider1", ticketId: "tow1", scope: "payee"}),
+    ).rejects.toThrow("Only the payee views a payee bill");
   });
 
   it("refuses a user who is not part of the journey", async () => {
@@ -304,5 +390,62 @@ describe("billService.listBills", () => {
     const bills = await listBills({userId: "rider1", limit: 1});
     expect(bills).toHaveLength(1);
     expect(bills[0].billId).toBe("tow1");
+  });
+});
+
+describe("billService.listPayeeBills", () => {
+  it("lists the journey with only the shop's repair item", async () => {
+    const tow = towTicket({linkedTicketIds: ["walk1"]});
+    const spawned = walkTicket({linkedTicketIds: ["tow1"]});
+    routeTickets(tow, spawned);
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    jest
+      .mocked(providerRepository.findByOperator)
+      .mockResolvedValue([{id: "shop1", name: "Fix Shop"} as never]);
+    jest
+      .mocked(dispatchRepository.findRecentForShop)
+      .mockResolvedValue([tow, spawned]);
+    const bills = await listPayeeBills({userId: "shopop1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      billId: "tow1",
+      viewer: "PAYEE",
+      canPay: false,
+      total: 150000,
+    });
+    expect(bills[0].items).toHaveLength(1);
+    expect(bills[0].items[0]).toMatchObject({
+      ticketId: "walk1",
+      amount: 150000,
+      payeeName: "Fix Shop",
+    });
+  });
+
+  it("keeps a tow payee to the fare item", async () => {
+    const tow = towTicket({linkedTicketIds: ["walk1"]});
+    const spawned = walkTicket({linkedTicketIds: ["tow1"]});
+    routeTickets(tow, spawned);
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    jest
+      .mocked(providerRepository.findByOperator)
+      .mockResolvedValue([{id: "tower1", name: "Tow Co"} as never]);
+    jest
+      .mocked(dispatchRepository.findRecentForShop)
+      .mockResolvedValue([tow]);
+    const bills = await listPayeeBills({userId: "towerop1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0].total).toBe(220000);
+    expect(bills[0].items).toHaveLength(1);
+    expect(bills[0].items[0]).toMatchObject({
+      ticketId: "tow1",
+      amount: 220000,
+      payeeName: "Tow Co",
+    });
   });
 });

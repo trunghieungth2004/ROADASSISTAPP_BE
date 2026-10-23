@@ -1,5 +1,7 @@
 import * as dispatchRepository from
   "../../repository/dispatchRepository";
+import * as paymentRepository from
+  "../../repository/paymentRepository";
 import * as userRepository from "../../repository/userRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
@@ -24,7 +26,11 @@ import {
   WALK_IN_TTL_MS,
   TOWER_SEARCH_ACTIVE,
 } from "./constants";
-import {ACCUSED_KIND, DISPUTE_REASON} from "../../constants/payments";
+import {
+  ACCUSED_KIND,
+  DISPUTE_REASON,
+  PAYMENT_STATUS,
+} from "../../constants/payments";
 import {
   freezeTowLeg,
   resolveAccessWidth,
@@ -41,6 +47,7 @@ import {
 } from "./fare";
 import {findCandidates, findTowOperators} from "./candidates";
 import {stampTowEta} from "./accept";
+import * as paymentService from "../paymentService";
 import {
   PROVIDER_KIND,
   PROVIDER_STATUS,
@@ -79,6 +86,7 @@ export const createDispatch = async ({
   vehicleWidth,
   vehicleLabel,
   force,
+  allowOffDutyShop,
   now,
 }: {
   userId: string;
@@ -98,6 +106,7 @@ export const createDispatch = async ({
   vehicleWidth?: number;
   vehicleLabel?: string;
   force?: boolean;
+  allowOffDutyShop?: boolean;
   now?: Date;
 }) => {
   const user = await userRepository.findById(userId);
@@ -127,7 +136,7 @@ export const createDispatch = async ({
     }
     if (shop.status !== PROVIDER_STATUS.ACTIVE ||
       (shop as {suspended?: boolean}).suspended === true ||
-      shop.accepting === false) {
+      (shop.accepting === false && allowOffDutyShop !== true)) {
       throw new ValidationError("Walk-in shop is not available");
     }
     if (!servesVehicleClass(shop, vehicleClassOf(vehicleType))) {
@@ -485,6 +494,22 @@ export const updateDispatchStatus = async ({
   if (!isRider && !isAssignee && !isOperator && !isAdmin) {
     throw new ForbiddenError("Only the rider, helper, or operator updates");
   }
+  const destinationId = typeof ticket.destinationShopId === "string" ?
+    ticket.destinationShopId :
+    "";
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW" &&
+    destinationId !== "" &&
+    !Array.isArray(ticket.linkedTicketIds)) {
+    const destination = await providerRepository.findById(destinationId);
+    if (!destination ||
+      destination.status !== PROVIDER_STATUS.ACTIVE ||
+      (destination as {suspended?: boolean}).suspended === true) {
+      throw new ValidationError(
+        "Destination shop is no longer available — choose another drop-off",
+      );
+    }
+  }
   assertTransition({
     ticket: {
       status: ticket.status,
@@ -642,6 +667,28 @@ export const updateDispatchStatus = async ({
       return {updated: 1, requeued: true};
     }
     return {updated: 1, requeued: true};
+  }
+  if (isRider && status === STATUS_DISPATCH.CANCELLED) {
+    try {
+      await paymentService.cancelPendingPayments(id);
+    } catch {
+      // Keep the cancellation available even if payment cleanup fails.
+    }
+    try {
+      const payments = await paymentRepository.findByTicketId(id);
+      for (const payment of payments) {
+        if (payment.status === PAYMENT_STATUS.HELD ||
+          payment.status === PAYMENT_STATUS.CONFIRMED ||
+          payment.status === PAYMENT_STATUS.PARTIAL) {
+          await paymentService.refundPayment({
+            paymentId: payment.id,
+            adminUid: userId,
+          });
+        }
+      }
+    } catch {
+      // Payment refund failures do not block the cancellation.
+    }
   }
   await dispatchRepository.updateStatus(id, status, userId);
   if (status === STATUS_DISPATCH.READY) {
@@ -822,11 +869,7 @@ export const updateDispatchStatus = async ({
     typeof ticket.destinationShopId === "string" &&
     ticket.destinationShopId !== "" &&
     !Array.isArray(ticket.linkedTicketIds)) {
-    try {
-      await spawnShopTicket(id, ticket, ticket.destinationShopId as string);
-    } catch {
-      return {updated: 1};
-    }
+    await spawnShopTicket(id, ticket, ticket.destinationShopId as string);
   }
   return {updated: 1};
 };
@@ -1024,11 +1067,18 @@ const spawnShopTicket = async (
     vehicleWidth?: unknown;
     vehicleClass?: unknown;
     vehicleLabel?: unknown;
+    note?: unknown;
+    description?: unknown;
+    photoUrls?: unknown;
   },
   shopId: string,
 ): Promise<void> => {
   const shop = await providerRepository.findById(shopId);
-  if (!shop || shop.status !== PROVIDER_STATUS.ACTIVE) return;
+  if (!shop) throw new NotFoundError("Destination provider not found");
+  if (shop.status !== PROVIDER_STATUS.ACTIVE ||
+    (shop as {suspended?: boolean}).suspended === true) {
+    throw new ValidationError("Destination provider is not available");
+  }
   const mine = await dispatchRepository.findByUserId(ticket.userId);
   const live = mine.find((t) =>
     t.ticketType === "WALK_IN" &&
@@ -1052,28 +1102,68 @@ const spawnShopTicket = async (
         linkedTicketIds: [...childLinks, parentId],
       });
     }
-    cacheManager.del(NS);
-    return;
+    const childPatch: Record<string, unknown> = {};
+    if (typeof ticket.note === "string" && ticket.note !== "" &&
+      !(typeof live.note === "string" && live.note !== "")) {
+      childPatch.note = ticket.note;
+    }
+    if (typeof ticket.description === "string" && ticket.description !== "" &&
+      !(typeof live.description === "string" && live.description !== "")) {
+      childPatch.description = ticket.description;
+    }
+    if (Array.isArray(ticket.photoUrls) && ticket.photoUrls.length > 0) {
+      const existing = Array.isArray(live.photoUrls) ? live.photoUrls : [];
+      const merged = [...existing];
+      for (const path of ticket.photoUrls) {
+        if (typeof path === "string" && path !== "" && !merged.includes(path)) {
+          merged.push(path);
+        }
+      }
+      if (merged.length > existing.length) childPatch.photoUrls = merged;
+    }
+    if (Object.keys(childPatch).length > 0) {
+      await dispatchRepository.update(live.id, childPatch);
+    }
+  } else {
+    const child = await createDispatch({
+      userId: ticket.userId,
+      ticketType: "WALK_IN",
+      lat: typeof shop.lat === "number" ? shop.lat : ticket.lat,
+      lng: typeof shop.lng === "number" ? shop.lng : ticket.lng,
+      providerId: shopId,
+      force: true,
+      allowOffDutyShop: shop.accepting === false,
+      ...(typeof ticket.vehicleType === "string" ?
+        {vehicleType: ticket.vehicleType} :
+        {}),
+      ...(typeof ticket.vehicleWidth === "number" ?
+        {vehicleWidth: ticket.vehicleWidth} :
+        {}),
+      ...(typeof ticket.vehicleLabel === "string" ?
+        {vehicleLabel: ticket.vehicleLabel} :
+        {}),
+      ...(typeof ticket.note === "string" && ticket.note !== "" ?
+        {note: ticket.note} :
+        {}),
+      ...(typeof ticket.description === "string" && ticket.description !== "" ?
+        {description: ticket.description} :
+        {}),
+      ...(Array.isArray(ticket.photoUrls) && ticket.photoUrls.length > 0 ?
+        {photoUrls: ticket.photoUrls} :
+        {}),
+    });
+    await dispatchRepository.update(parentId, {linkedTicketIds: [child.id]});
+    await dispatchRepository.update(child.id, {linkedTicketIds: [parentId]});
   }
-  const child = await createDispatch({
-    userId: ticket.userId,
-    ticketType: "WALK_IN",
-    lat: typeof shop.lat === "number" ? shop.lat : ticket.lat,
-    lng: typeof shop.lng === "number" ? shop.lng : ticket.lng,
-    providerId: shopId,
-    force: true,
-    ...(typeof ticket.vehicleType === "string" ?
-      {vehicleType: ticket.vehicleType} :
-      {}),
-    ...(typeof ticket.vehicleWidth === "number" ?
-      {vehicleWidth: ticket.vehicleWidth} :
-      {}),
-    ...(typeof ticket.vehicleLabel === "string" ?
-      {vehicleLabel: ticket.vehicleLabel} :
-      {}),
-  });
-  await dispatchRepository.update(parentId, {linkedTicketIds: [child.id]});
-  await dispatchRepository.update(child.id, {linkedTicketIds: [parentId]});
+  if (shop.accepting === false) {
+    await enqueueDispatchPush(parentId, "-dropoff-arrived", {
+      audience: "destination-shop",
+      shopId,
+      urgent: "true",
+      title: "Tow drop-off arrived",
+      body: "A tow is dropping a vehicle at your shop — tap to review",
+    });
+  }
   cacheManager.del(NS);
 };
 
@@ -1119,15 +1209,16 @@ export const updateDispatchDestination = async ({userId,
       throw new ValidationError("Shop already declined this ticket");
     }
   }
+  const prevShopId = typeof ticket.destinationShopId === "string" ?
+    ticket.destinationShopId :
+    "";
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
     destinationPoint,
     ticket.ticketType as string,
     ticket.vehicleType ?? undefined,
+    prevShopId !== "" && prevShopId === destinationShopId,
   );
-  const prevShopId = typeof ticket.destinationShopId === "string" ?
-    ticket.destinationShopId :
-    "";
   await dispatchRepository.update(ticketId, {
     destinationShopId: destinationShopId ?? null,
     destinationPoint: destinationPoint ?? null,

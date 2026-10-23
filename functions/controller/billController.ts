@@ -14,15 +14,31 @@ const listAll = async (req: Request, res: Response) => {
   }
 };
 
-const getOne = async (req: Request, res: Response) => {
+const listPayee = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {ticketId, billId} = req.body;
-    const result = await billService.getBill({userId: uid, ticketId, billId});
+    const {limit} = req.body;
+    const result = await billService.listPayeeBills({userId: uid, limit});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
   }
 };
 
-export {listAll, getOne};
+const getOne = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const {ticketId, billId, scope} = req.body;
+    const result = await billService.getBill({
+      userId: uid,
+      ticketId,
+      billId,
+      scope,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {listAll, listPayee, getOne};

@@ -6,10 +6,12 @@ import {
   PLATFORM_CONFIG_CACHE_NAMESPACE,
   PLATFORM_CONFIG_ID,
   PLATFORM_CONFIG_UPDATABLE_KEYS,
+  REFUND_POLICY,
   WAITING_PER_MIN,
   WAITING_RADIUS_M,
 } from "../constants/payments";
 import {ValidationError} from "../utils/errors";
+import {logWarn} from "../utils/logger";
 
 interface TowRates {
   towBaseFee: number;
@@ -39,8 +41,59 @@ const configCached = cacheManager.wrap(
   },
 );
 
-const getConfig = async (): Promise<platformConfigRepository.PlatformConfig> =>
-  configCached();
+const validatePaymentConfig = (
+  config: platformConfigRepository.PlatformConfig,
+): string[] => {
+  const issues: string[] = [];
+  for (const [kind, rate] of Object.entries(config.commissionRate)) {
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      issues.push(`commissionRate.${kind}`);
+    }
+  }
+  if (config.paymentMethodsEnabled.length === 0) {
+    issues.push("paymentMethodsEnabled");
+  }
+  const policies: string[] = Object.values(REFUND_POLICY);
+  if (!policies.includes(config.refundPolicy)) issues.push("refundPolicy");
+  if (!Number.isFinite(config.waitingRatePer15Min) ||
+    config.waitingRatePer15Min < 0) {
+    issues.push("waitingRatePer15Min");
+  }
+  if (!(config.waitingGraceMin >= 0)) issues.push("waitingGraceMin");
+  if (!(config.waitingCapMin >= config.waitingGraceMin)) {
+    issues.push("waitingCapMin");
+  }
+  for (const key of ["towBaseFee", "towPerKmFee", "minimumTowFee"] as const) {
+    if (!Number.isFinite(config[key]) || config[key] < 0) issues.push(key);
+  }
+  for (const key of ["carMultiplier", "nightMultiplier"] as const) {
+    if (!Number.isFinite(config[key]) || config[key] <= 0) issues.push(key);
+  }
+  const start = config.nightWindow.start;
+  const end = config.nightWindow.end;
+  if (!Number.isInteger(start) || start < 0 || start > 23) {
+    issues.push("nightWindow.start");
+  }
+  if (!Number.isInteger(end) || end < 0 || end > 23 || end === start) {
+    issues.push("nightWindow.end");
+  }
+  return issues;
+};
+
+let paymentConfigChecked = false;
+
+const getConfig = async ():
+  Promise<platformConfigRepository.PlatformConfig> => {
+  const config = await configCached();
+  if (!paymentConfigChecked) {
+    paymentConfigChecked = true;
+    const issues = validatePaymentConfig(config);
+    if (issues.length > 0) {
+      logWarn("payments", "Invalid payment config keys", {issues});
+    }
+  }
+  return config;
+};
 
 const updateConfig = async (
   fields: Record<string, unknown>,
@@ -104,4 +157,5 @@ export {
   getCommissionRate,
   getTowRates,
   getWaitingRates,
+  validatePaymentConfig,
 };

@@ -13,6 +13,12 @@ export default (
     billController.listAll,
   );
   app.post(
+    "/bills/payee",
+    requireAuth,
+    validate({body: schemas.billsAll}),
+    billController.listPayee,
+  );
+  app.post(
     "/bills/one",
     requireAuth,
     validate({body: schemas.billOne}),
