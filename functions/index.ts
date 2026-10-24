@@ -29,9 +29,11 @@ import paymentRoutes, {mountPaymentIpn} from "./routes/paymentRoutes";
 import billRoutes from "./routes/billRoutes";
 import payoutRoutes from "./routes/payoutRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
+import chatRoutes from "./routes/chatRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import disputeRoutes from "./routes/disputeRoutes";
 import * as flagService from "./service/flagService";
+import {chatService} from "./service/chatService";
 import * as userService from "./service/userService";
 import * as routingService from "./service/routingService";
 import * as routingCacheRepository from "./repository/routingCacheRepository";
@@ -83,7 +85,7 @@ const writeLimiter = rateLimiter({
 app.use(
   ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places",
     "/alleys", "/landmarks", "/diagnostics", "/vehicleProfiles",
-    "/payments", "/payouts", "/admin"],
+    "/payments", "/payouts", "/admin", "/chat"],
   writeLimiter,
 );
 
@@ -152,6 +154,7 @@ paymentRoutes(app, routeDeps);
 billRoutes(app, routeDeps);
 payoutRoutes(app, routeDeps);
 notificationRoutes(app, routeDeps);
+chatRoutes(app, routeDeps);
 adminRoutes(app, routeDeps);
 disputeRoutes(app, routeDeps);
 
@@ -180,6 +183,7 @@ export const sweepFlagsAndPresence = functions.scheduler.onSchedule(
   },
   async () => {
     await flagService.expireFlags();
+    await chatService.expireChats();
     await userService.sweepStaleVolunteers();
   },
 );

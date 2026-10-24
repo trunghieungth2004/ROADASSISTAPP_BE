@@ -94,6 +94,7 @@ export const resolveDestination = async (
 
 export const providerKindForTicket = (ticketType: unknown): string | null => {
   if (ticketType === "TOW") return PROVIDER_KIND.TOW;
+  if (ticketType === "SOS") return PROVIDER_KIND.MOBILE_SHOP;
   if (ticketType === "MECHANIC" || ticketType === "WALK_IN") {
     return PROVIDER_KIND.SHOP;
   }

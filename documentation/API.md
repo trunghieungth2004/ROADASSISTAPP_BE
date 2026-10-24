@@ -1475,6 +1475,22 @@ Rider declines the **tow** estimate: the estimate block clears without touching 
 
 ---
 
+### `POST /dispatch/mobile-shop/fix` **(Auth, mobile shop)**
+
+Set the repair fee on an assigned SOS mobile-shop visit. Only the mobile shop's operator or an admin, from `"2"` (Matched) or `"3"` (Arrived). `fixAmount` is a non-negative integer stored as `finalAmount`; the rider then resolves the SOS ticket and the bill includes the call-out fee, travel fee, and this fix fee.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "fixAmount": 250000 }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "updated": 1 } }
+```
+
+---
+
 ### `POST /dispatch/unfixable` **(Auth, shop)**
 
 Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), `"9"` (Quoted), `"10"` (In shop), or `"11"` (Final quoted). Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path (`dispatch/...` scope, no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, cancels every `PENDING` charge (its QR stops being payable — status `CANCELLED`), and refunds every `HELD` SePay charge **in full** (best-effort). No `final` is recorded, the shop's `completedJobs` does not increment, and the rider is pushed urgently.
@@ -1920,3 +1936,29 @@ Validation failures include an `errors` array:
 | `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
 | `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`), endpoint inside a hazard zone (`POST /routes`; `errors.control` + `errors.zone`), flag covering an own saved destination/place (`POST /flags`), or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
 | `500` | Internal server error (e.g. Auth create failure, Valhalla outage) |
+
+---
+
+### `POST /dispatch/mobile-shop/tow-offer` **(Auth, mobile shop)**
+
+The assigned mobile shop offers to tow an unfixable SOS vehicle. Optional `destinationShopId` targets the mobile shop's own repair shop; otherwise the rider chooses later.
+
+### `POST /dispatch/mobile-shop/tow-offer/respond` **(Auth, rider)**
+
+The rider accepts or declines a mobile-shop tow offer. Accepting creates a linked TOW ticket and captures the rider's destination point when no shop was offered.
+
+### `POST /dispatch/walk-in/return-tow` **(Auth, rider)**
+
+The rider accepts or declines the return-tow offer created when a WALK_IN reaches READY. Accepting creates a linked TOW from the shop to the rider's current location.
+
+### `POST /chat/open` **(Auth)**
+
+Open or create the chat room for a `TICKET` or `HAZARD` reference. Ticket rooms include only the rider and assigned provider; hazard rooms are open to authenticated users.
+
+### `POST /chat/messages` **(Auth)**
+
+List the latest messages in an authorized chat room.
+
+### `POST /chat/send` **(Auth)**
+
+Send text and/or up to three photo paths to an authorized chat room. Terminal ticket rooms are read-only; hazard rooms close at the hazard TTL.

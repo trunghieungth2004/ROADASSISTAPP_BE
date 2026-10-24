@@ -36,6 +36,7 @@ import {
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
 import {freezeTowLeg} from "./helpers";
+import {createDispatch} from "./tickets";
 import {isOpenNow} from "../providerService";
 import {reporterHandle} from "../../utils/points";
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -214,6 +215,11 @@ export const feedTickets = async ({
       .filter((provider) => provider.kind === PROVIDER_KIND.TOW)
       .map((provider) => provider.id),
   );
+  const ownMobileShopIds = new Set(
+    operated
+      .filter((provider) => provider.kind === PROVIDER_KIND.MOBILE_SHOP)
+      .map((provider) => provider.id),
+  );
   const canReadPhotos = (ticket: {
     ticketType?: unknown;
     assignedShopId?: string | null;
@@ -231,6 +237,10 @@ export const feedTickets = async ({
       ownTowIds.has(ticket.assignedShopId)) return true;
     if (typeof ticket.providerId === "string" &&
       ownTowIds.has(ticket.providerId)) return true;
+    if (typeof ticket.assignedShopId === "string" &&
+      ownMobileShopIds.has(ticket.assignedShopId)) return true;
+    if (typeof ticket.providerId === "string" &&
+      ownMobileShopIds.has(ticket.providerId)) return true;
     return hasVolunteer &&
       typeof ticket.assignedUid === "string" &&
       ticket.assignedUid === userId;
@@ -1120,6 +1130,217 @@ const tryVoidPendingPayments = async (ticketId: string): Promise<void> => {
   }
 };
 
+export const setMobileShopFix = async ({
+  userId,
+  ticketId,
+  fixAmount,
+}: {
+  userId: string;
+  ticketId: string;
+  fixAmount: number;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "SOS") {
+    throw new ValidationError("Mobile shop fees are SOS-only");
+  }
+  const shopId = typeof ticket.assignedShopId === "string" ?
+    ticket.assignedShopId :
+    "";
+  if (shopId === "") {
+    throw new ValidationError("Mobile shop is not assigned");
+  }
+  const shop = await providerRepository.findById(shopId);
+  if (!shop || shop.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+    throw new ForbiddenError("Only the mobile shop sets the fix fee");
+  }
+  if (shop.operatorUid !== userId) {
+    const caller = await userRepository.findById(userId);
+    if (!caller || caller.role !== ROLE_ADMIN) {
+      throw new ForbiddenError("Only the mobile shop sets the fix fee");
+    }
+  }
+  if (ticket.status !== STATUS_DISPATCH.MATCHED &&
+    ticket.status !== STATUS_DISPATCH.ARRIVED) {
+    throw new ValidationError("The mobile shop visit is already closed");
+  }
+  if (!Number.isInteger(fixAmount) || fixAmount < 0) {
+    throw new ValidationError("Fix fee must be a non-negative integer");
+  }
+  await dispatchRepository.update(ticketId, {finalAmount: fixAmount});
+  cacheManager.del(NS);
+  return {updated: 1};
+};
+
+export const offerMobileShopTow = async ({
+  userId,
+  ticketId,
+  destinationShopId,
+}: {
+  userId: string;
+  ticketId: string;
+  destinationShopId?: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "SOS" ||
+    ticket.status !== STATUS_DISPATCH.UNFIXABLE) {
+    throw new ValidationError("Only unfixable SOS tickets take a tow offer");
+  }
+  const shopId = typeof ticket.assignedShopId === "string" ?
+    ticket.assignedShopId :
+    "";
+  if (shopId === "") throw new ValidationError("Mobile shop is not assigned");
+  const shop = await providerRepository.findById(shopId);
+  if (!shop || shop.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+    throw new ForbiddenError("Only the mobile shop offers a tow");
+  }
+  if (shop.operatorUid !== userId) {
+    const caller = await userRepository.findById(userId);
+    if (!caller || caller.role !== ROLE_ADMIN) {
+      throw new ForbiddenError("Only the mobile shop offers a tow");
+    }
+  }
+  if (destinationShopId !== undefined) {
+    const dest = await providerRepository.findById(destinationShopId);
+    if (!dest || dest.kind !== PROVIDER_KIND.SHOP ||
+      dest.status !== PROVIDER_STATUS.ACTIVE) {
+      throw new ValidationError("Destination shop is not available");
+    }
+  }
+  await dispatchRepository.update(ticketId, {
+    mobileTowOffer: {
+      status: "PENDING",
+      shopId,
+      destinationShopId: destinationShopId ?? null,
+      by: userId,
+      at: new Date().toISOString(),
+    },
+  });
+  cacheManager.del(NS);
+  await enqueueDispatchPush(ticketId, "-mobile-tow-offer", {
+    audience: "rider",
+    urgent: "true",
+    title: "Tow offer",
+    body: "The mobile shop can tow your vehicle — tap to review",
+  });
+  return {offered: true};
+};
+
+export const respondMobileShopTow = async ({
+  userId,
+  ticketId,
+  accept,
+  destinationPoint,
+}: {
+  userId: string;
+  ticketId: string;
+  accept: boolean;
+  destinationPoint?: {lat: number; lng: number; label?: string};
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider answers the tow offer");
+  }
+  const offer = ticket.mobileTowOffer;
+  if (!offer || offer.status !== "PENDING") {
+    throw new ValidationError("No tow offer awaiting an answer");
+  }
+  if (!accept) {
+    await dispatchRepository.update(ticketId, {
+      mobileTowOffer: {...offer, status: "DECLINED"},
+    });
+    cacheManager.del(NS);
+    return {accepted: false};
+  }
+  const created = await createDispatch({
+    userId,
+    ticketType: "TOW",
+    lat: ticket.lat,
+    lng: ticket.lng,
+    ...(offer.destinationShopId ?
+      {destinationShopId: offer.destinationShopId} :
+      destinationPoint !== undefined ? {destinationPoint} : {}),
+    vehicleType: ticket.vehicleType ?? undefined,
+    vehicleWidth: ticket.vehicleWidth ?? undefined,
+    force: true,
+  });
+  const sosLinks = Array.isArray(ticket.linkedTicketIds) ?
+    ticket.linkedTicketIds as string[] :
+    [];
+  await dispatchRepository.update(ticketId, {
+    mobileTowOffer: {...offer, status: "ACCEPTED"},
+    linkedTicketIds: [
+      ...sosLinks.filter((id) => id !== created.id),
+      created.id,
+    ],
+  });
+  await dispatchRepository.update(created.id, {
+    linkedTicketIds: [ticketId],
+  });
+  cacheManager.del(NS);
+  return {accepted: true, ticketId: created.id};
+};
+
+export const respondReturnTow = async ({
+  userId,
+  ticketId,
+  accept,
+  destinationPoint,
+}: {
+  userId: string;
+  ticketId: string;
+  accept: boolean;
+  destinationPoint?: {lat: number; lng: number; label?: string};
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider answers the return tow");
+  }
+  if (ticket.ticketType !== "WALK_IN" ||
+    ticket.status !== STATUS_DISPATCH.READY) {
+    throw new ValidationError("The walk-in is not ready for a return tow");
+  }
+  const offer = ticket.returnTowOffer;
+  if (!offer || offer.status !== "PENDING") {
+    throw new ValidationError("No return tow awaiting an answer");
+  }
+  if (!accept) {
+    await dispatchRepository.update(ticketId, {
+      returnTowOffer: {...offer, status: "DECLINED"},
+    });
+    cacheManager.del(NS);
+    return {accepted: false};
+  }
+  if (!destinationPoint) {
+    throw new ValidationError("Rider location is required for a return tow");
+  }
+  const created = await createDispatch({
+    userId,
+    ticketType: "TOW",
+    lat: ticket.lat,
+    lng: ticket.lng,
+    destinationPoint,
+    vehicleType: ticket.vehicleType ?? undefined,
+    vehicleWidth: ticket.vehicleWidth ?? undefined,
+    force: true,
+  });
+  const links = Array.isArray(ticket.linkedTicketIds) ?
+    ticket.linkedTicketIds as string[] :
+    [];
+  await dispatchRepository.update(ticketId, {
+    returnTowOffer: {...offer, status: "ACCEPTED"},
+    linkedTicketIds: [...links.filter((id) => id !== created.id), created.id],
+  });
+  await dispatchRepository.update(created.id, {
+    linkedTicketIds: [ticketId],
+  });
+  cacheManager.del(NS);
+  return {accepted: true, ticketId: created.id};
+};
+
 export const markUnfixable = async ({
   userId,
   ticketId,
@@ -1186,8 +1407,10 @@ export const markUnfixable = async ({
   } catch {
     return {unfixable: true};
   }
-  await tryVoidPendingPayments(ticketId);
-  await tryRefundPayment(ticketId, userId);
+  if (ticket.ticketType !== "SOS") {
+    await tryVoidPendingPayments(ticketId);
+    await tryRefundPayment(ticketId, userId);
+  }
   cacheManager.del(NS);
   await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.UNFIXABLE}`, {
     audience: "rider",

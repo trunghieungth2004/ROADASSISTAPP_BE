@@ -273,6 +273,68 @@ const declineEstimate = async (req: Request, res: Response) => {
   }
 };
 
+const setMobileShopFix = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, fixAmount} = req.body;
+    const result = await dispatchService.setMobileShopFix({
+      userId,
+      ticketId,
+      fixAmount,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const offerMobileShopTow = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, destinationShopId} = req.body;
+    const result = await dispatchService.offerMobileShopTow({
+      userId,
+      ticketId,
+      destinationShopId,
+    });
+    sendSuccess(res, result, {message: "Tow offer sent"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const respondMobileShopTow = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, accept, destinationPoint} = req.body;
+    const result = await dispatchService.respondMobileShopTow({
+      userId,
+      ticketId,
+      accept,
+      destinationPoint,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const respondReturnTow = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, accept, destinationPoint} = req.body;
+    const result = await dispatchService.respondReturnTow({
+      userId,
+      ticketId,
+      accept,
+      destinationPoint,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const markUnfixable = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -439,6 +501,10 @@ export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
   sendQuote, sendEstimate, approveEstimate, declineEstimate, markUnfixable,
+  setMobileShopFix,
+  offerMobileShopTow,
+  respondMobileShopTow,
+  respondReturnTow,
   approveQuote, declineDestination, cancelTowerSearch, waitingStatus,
   refreshTowEta, estimateTowFare,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,

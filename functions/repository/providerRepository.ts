@@ -97,6 +97,56 @@ const createShop = async (data: {
   return doc;
 };
 
+const createMobileShop = async (data: {
+  operatorUid: string;
+  name: string;
+  lat: number;
+  lng: number;
+  label?: string;
+  vehicleClasses: string[];
+  licenseNumber: string;
+  licensePhotoUrl?: string;
+}): Promise<Provider> => {
+  const ref = db.collection("providers").doc();
+  const doc = {
+    id: ref.id,
+    kind: "MOBILE_SHOP",
+    operatorUid: data.operatorUid,
+    name: data.name,
+    nameLower: data.name.trim().toLowerCase(),
+    lat: data.lat,
+    lng: data.lng,
+    label: data.label ?? null,
+    openHours: null,
+    vehicleClasses: data.vehicleClasses,
+    services: [],
+    serviceFee: null,
+    accepting: true,
+    plate: null,
+    plateRaw: null,
+    vehicleType: null,
+    vehicleWidth: null,
+    licenseNumber: data.licenseNumber,
+    licensePhotoUrl: data.licensePhotoUrl ?? null,
+    status: PROVIDER_STATUS.PENDING,
+    suspended: false,
+    suspendedAt: null,
+    suspendedReason: null,
+    suspendedBy: null,
+    geoHash: encodeGeohash(data.lat, data.lng, 8),
+    geoCell: encodeGeohash(data.lat, data.lng, 6),
+    ratingAvg: 0,
+    ratingCount: 0,
+    requestedAt: new Date().toISOString(),
+    decidedAt: null,
+    reviewedBy: null,
+    reviewNote: null,
+    createdAt: new Date().toISOString(),
+  };
+  await ref.set(doc);
+  return doc;
+};
+
 const createTow = async (data: {
   operatorUid: string;
   name: string;
@@ -268,6 +318,7 @@ export {
   Provider,
   ProviderService,
   createShop,
+  createMobileShop,
   createTow,
   findById,
   findByOperator,

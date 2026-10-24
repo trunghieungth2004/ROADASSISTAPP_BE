@@ -22,7 +22,55 @@ import {
 import {volunteerFitsTicket} from "./helpers";
 import {servesVehicleClass, vehicleClassOf} from "../providerService";
 
-export const findCandidates = async ({
+export const findMobileShopOperators = async ({
+  lat,
+  lng,
+  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  vehicleType,
+}: {
+  lat: number;
+  lng: number;
+  radiusMeters?: number;
+  vehicleType?: string;
+}): Promise<string[]> => {
+  const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
+  const cells = cellsCoveringBounds(bounds, 6);
+  const locations =
+    await providerLocationRepository.findByGeohashPrefixes(cells);
+  const cutoff = Date.now() - PROVIDER_FRESH_MS;
+  const fresh = locations.filter((loc) => {
+    if (Date.parse(loc.lastSeen) < cutoff) return false;
+    return haversineMeters(lat, lng, loc.lat, loc.lng) <= radiusMeters;
+  });
+  if (fresh.length === 0) return [];
+  const providers = await Promise.all(
+    fresh.map((loc) => providerRepository.findById(loc.providerId)),
+  );
+  const eligible: Array<{uid: string; providerId: string}> = [];
+  for (const provider of providers) {
+    if (!provider) continue;
+    if (provider.kind !== PROVIDER_KIND.MOBILE_SHOP) continue;
+    if (provider.status !== PROVIDER_STATUS.ACTIVE) continue;
+    if (provider.accepting === false) continue;
+    if (typeof provider.operatorUid !== "string" ||
+      provider.operatorUid === "") continue;
+    if (!servesVehicleClass(provider, vehicleClassOf(vehicleType))) continue;
+    if (!eligible.some((item) => item.uid === provider.operatorUid)) {
+      eligible.push({
+        uid: provider.operatorUid,
+        providerId: provider.id,
+      });
+    }
+  }
+  const free: string[] = [];
+  for (const item of eligible) {
+    const active = await dispatchRepository.findActiveForShop(item.providerId);
+    if (active.length === 0) free.push(item.uid);
+  }
+  return free;
+};
+
+const findVolunteerCandidates = async ({
   lat,
   lng,
   radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
@@ -61,6 +109,17 @@ export const findCandidates = async ({
     if (!busy.has(uid)) free.push(uid);
   }
   return free;
+};
+
+export const findCandidates = async (input: {
+  lat: number;
+  lng: number;
+  radiusMeters?: number;
+  vehicleType?: string;
+}): Promise<string[]> => {
+  const mobile = await findMobileShopOperators(input);
+  if (mobile.length > 0) return mobile;
+  return findVolunteerCandidates(input);
 };
 
 export const findTowOperators = async ({

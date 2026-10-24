@@ -117,6 +117,32 @@ export default (
     dispatchController.declineEstimate,
   );
   app.post(
+    "/dispatch/mobile-shop/fix",
+    requireAuth,
+    validate({body: schemas.setMobileShopFix}),
+    dispatchController.setMobileShopFix,
+  );
+  app.post(
+    "/dispatch/mobile-shop/tow-offer",
+    requireAuth,
+    validate({body: schemas.mobileShopTowOffer}),
+    dispatchController.offerMobileShopTow,
+  );
+  app.post(
+    "/dispatch/mobile-shop/tow-offer/respond",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.respondMobileShopTow}),
+    dispatchController.respondMobileShopTow,
+  );
+  app.post(
+    "/dispatch/walk-in/return-tow",
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.respondReturnTow}),
+    dispatchController.respondReturnTow,
+  );
+  app.post(
     "/dispatch/unfixable",
     requireAuth,
     validate({body: schemas.markUnfixable}),

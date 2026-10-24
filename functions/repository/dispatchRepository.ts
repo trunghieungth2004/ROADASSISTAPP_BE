@@ -68,6 +68,21 @@ interface DispatchTicket {
   quotedBy?: string | null;
   quotedAt?: string | null;
   finalAmount?: number | null;
+  mobileCallOutFee?: number | null;
+  mobileTravelFee?: number | null;
+  mobileTowOffer?: {
+    status: string;
+    shopId: string;
+    destinationShopId: string | null;
+    by: string;
+    at: string;
+  } | null;
+  returnTowOffer?: {
+    status: string;
+    shopId: string;
+    by: string;
+    at: string;
+  } | null;
   faultPhotos?: string[];
   estimateAmount?: number | null;
   estimateNote?: string | null;

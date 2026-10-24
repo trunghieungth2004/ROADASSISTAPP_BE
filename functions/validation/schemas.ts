@@ -180,6 +180,16 @@ const schemas = {
     tier: Joi.string().valid("TIER1", "TIER2", "TIER3").optional(),
     verifiedCount: numOpt(),
   }),
+  chatRoom: Joi.object({
+    scope: Joi.string().valid("TICKET", "HAZARD").required(),
+    refId: strReq(),
+  }),
+  chatSend: Joi.object({
+    scope: Joi.string().valid("TICKET", "HAZARD").required(),
+    refId: strReq(),
+    text: Joi.string().trim().max(1000).allow("", null).optional(),
+    photoUrls: photoList().optional(),
+  }),
   createFlag: Joi.object({
     type: Joi.string().valid("ACCIDENT", "FLOOD", "OBSTRUCTION").required(),
     lat: latAttr(),
@@ -187,6 +197,7 @@ const schemas = {
     note: Joi.string().allow("", null).optional(),
     radiusMeters: Joi.number().min(25).max(3000).optional(),
     photoUrls: photoList().optional(),
+    ttlMinutes: Joi.number().integer().min(15).max(10080).optional(),
   }),
   moderateFlag: Joi.object({
     flagId: strReq(),
@@ -273,7 +284,7 @@ const schemas = {
     removed: Joi.boolean().optional(),
   }),
   createProvider: Joi.object({
-    kind: Joi.string().valid("SHOP", "TOW").required(),
+    kind: Joi.string().valid("SHOP", "TOW", "MOBILE_SHOP").required(),
     name: strReq(),
     lat: latAttr(),
     lng: langAttr(),
@@ -284,7 +295,7 @@ const schemas = {
       otherwise: Joi.forbidden(),
     }),
     vehicleClasses: Joi.when("kind", {
-      is: "SHOP",
+      is: Joi.valid("SHOP", "MOBILE_SHOP"),
       then: Joi.array()
         .items(Joi.string().valid(...Object.values(VEHICLE_CLASS)))
         .min(1)
@@ -320,6 +331,16 @@ const schemas = {
       then: providerServiceList(),
       otherwise: Joi.forbidden(),
     }),
+    licenseNumber: Joi.when("kind", {
+      is: "MOBILE_SHOP",
+      then: Joi.string().trim().min(2).max(80).required(),
+      otherwise: Joi.forbidden(),
+    }),
+    licensePhotoUrl: Joi.when("kind", {
+      is: "MOBILE_SHOP",
+      then: Joi.string().trim().max(500).allow("", null).optional(),
+      otherwise: Joi.forbidden(),
+    }),
     towBaseFee: Joi.when("kind", {
       is: "TOW",
       then: Joi.number().integer().min(0).max(999999999).optional(),
@@ -344,6 +365,8 @@ const schemas = {
       .optional(),
     serviceFee: Joi.number().integer().min(0).max(999999999).optional(),
     services: providerServiceList(),
+    licenseNumber: Joi.string().trim().min(2).max(80).optional(),
+    licensePhotoUrl: Joi.string().trim().max(500).allow("", null).optional(),
     towBaseFee: Joi.number().integer().min(0).max(999999999).optional(),
     towPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
     accepting: Joi.boolean().optional(),
@@ -515,6 +538,32 @@ const schemas = {
     ticketId: strReq(),
     reason: Joi.string().trim().min(1).max(500).required(),
     photoUrls: photoList().min(1).required(),
+  }),
+  setMobileShopFix: Joi.object({
+    ticketId: strReq(),
+    fixAmount: Joi.number().integer().min(0).max(999999999).required(),
+  }),
+  mobileShopTowOffer: Joi.object({
+    ticketId: strReq(),
+    destinationShopId: strOpt(),
+  }),
+  respondMobileShopTow: Joi.object({
+    ticketId: strReq(),
+    accept: Joi.boolean().required(),
+    destinationPoint: Joi.object({
+      lat: latAttr(),
+      lng: langAttr(),
+      label: Joi.string().max(140).allow("", null).optional(),
+    }).optional(),
+  }),
+  respondReturnTow: Joi.object({
+    ticketId: strReq(),
+    accept: Joi.boolean().required(),
+    destinationPoint: Joi.object({
+      lat: latAttr(),
+      lng: langAttr(),
+      label: Joi.string().max(140).allow("", null).optional(),
+    }).optional(),
   }),
   approveQuote: Joi.object({
     ticketId: strReq(),

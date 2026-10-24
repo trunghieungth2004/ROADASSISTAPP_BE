@@ -13,6 +13,8 @@ import {
   PROVIDER_KIND,
   PROVIDER_STATUS,
   STATUS_DISPATCH,
+  VEHICLE_CLASS,
+  VOLUNTEER_CAPABILITY,
   VOLUNTEER_DEFAULT_RADIUS,
 } from "../../constants/status";
 import {NS} from "./constants";
@@ -42,6 +44,7 @@ export const nearDispatchInner = async ({
 }) => {
   let capability: unknown;
   let activeTow = false;
+  let activeMobileShop = false;
   if (userId) {
     const me = await userRepository.findById(userId);
     if (!me) return [];
@@ -51,8 +54,21 @@ export const nearDispatchInner = async ({
       (p) => p.kind === PROVIDER_KIND.TOW &&
         p.status === PROVIDER_STATUS.ACTIVE,
     );
+    const mobile = operated.find(
+      (p) => p.kind === PROVIDER_KIND.MOBILE_SHOP &&
+        p.status === PROVIDER_STATUS.ACTIVE &&
+        p.accepting !== false,
+    );
+    activeMobileShop = mobile !== undefined;
     if (me.volunteerAvailable === true) {
       capability = me.capability;
+    } else if (activeMobileShop && mobile) {
+      const classes = Array.isArray(mobile.vehicleClasses) ?
+        mobile.vehicleClasses as string[] :
+        [];
+      capability = classes.includes(VEHICLE_CLASS.CAR) ?
+        VOLUNTEER_CAPABILITY.CAR :
+        VOLUNTEER_CAPABILITY.SOLO_BIKE;
     } else if (activeTow) {
       capability = me.capability;
     } else {
@@ -81,7 +97,8 @@ export const nearDispatchInner = async ({
     .slice(0, limit);
   return nearby.map((t) => {
     const row: Record<string, unknown> = {...t};
-    if (!(activeTow && t.ticketType === "TOW")) delete row.photoUrls;
+    if (!(activeTow && t.ticketType === "TOW") &&
+      !(activeMobileShop && t.ticketType === "SOS")) delete row.photoUrls;
     return row;
   });
 };

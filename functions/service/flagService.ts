@@ -113,6 +113,7 @@ const createFlag = async ({
   note,
   radiusMeters,
   photoUrls,
+  ttlMinutes,
 }: {
   userId: string;
   type: string;
@@ -121,11 +122,19 @@ const createFlag = async ({
   note?: string;
   radiusMeters?: number;
   photoUrls?: string[];
+  ttlMinutes?: number;
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   await assertNoCoveredDestination({userId, type, lat, lng, radiusMeters});
-  const ttlMs = TTL_MS[type] ?? 3 * 60 * 60 * 1000;
+  if (ttlMinutes !== undefined &&
+    (!Number.isInteger(ttlMinutes) || ttlMinutes < 15 ||
+      ttlMinutes > 7 * 24 * 60)) {
+    throw new ValidationError("Hazard duration is out of range");
+  }
+  const ttlMs = ttlMinutes !== undefined ?
+    ttlMinutes * 60 * 1000 :
+    TTL_MS[type] ?? 3 * 60 * 60 * 1000;
   const trustScore = (user.trustScore as number) ?? 0;
   const photoPaths = validatePhotoPaths({
     paths: photoUrls,

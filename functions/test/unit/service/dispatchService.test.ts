@@ -2117,7 +2117,7 @@ describe("dispatchService.acceptDispatch", () => {
     expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
   });
 
-  it("rejects provider accepts on SOS tickets with 403", async () => {
+  it("rejects non-mobile-shop accepts on SOS tickets", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       status: "1",
@@ -2141,7 +2141,7 @@ describe("dispatchService.acceptDispatch", () => {
         ticketId: "t1",
         shopId: "shop1",
       }),
-    ).rejects.toMatchObject({statusCode: 403});
+    ).rejects.toMatchObject({statusCode: 400});
     expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
   });
 

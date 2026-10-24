@@ -694,7 +694,47 @@ export const updateDispatchStatus = async ({
   if (status === STATUS_DISPATCH.READY) {
     await dispatchRepository.update(id, {
       fulfilledByShopId: ticket.assignedShopId ?? null,
+      ...(ticket.ticketType === "WALK_IN" ?
+        {
+          returnTowOffer: {
+            status: "PENDING",
+            shopId: typeof ticket.assignedShopId === "string" ?
+              ticket.assignedShopId :
+              "",
+            by: userId,
+            at: new Date().toISOString(),
+          },
+        } :
+        {}),
     });
+    if (ticket.ticketType === "WALK_IN") {
+      await enqueueDispatchPush(id, "-return-tow-offer", {
+        audience: "rider",
+        title: "Vehicle ready",
+        body: "Your vehicle is ready — tow it back to you?",
+      });
+    }
+  }
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW") {
+    const links = Array.isArray(ticket.linkedTicketIds) ?
+      ticket.linkedTicketIds as string[] :
+      [];
+    for (const linkedId of links) {
+      try {
+        const linked = await dispatchRepository.findById(linkedId);
+        if (linked && linked.ticketType === "WALK_IN" &&
+          linked.status === STATUS_DISPATCH.READY) {
+          await dispatchRepository.updateStatus(
+            linked.id,
+            STATUS_DISPATCH.RESOLVED,
+            userId,
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
   }
   if (status === STATUS_DISPATCH.RESOLVED ||
     status === STATUS_DISPATCH.CANCELLED) {

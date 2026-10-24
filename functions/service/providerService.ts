@@ -254,6 +254,56 @@ const createShopProvider = async ({
   return created;
 };
 
+const createMobileShopProvider = async ({
+  userId,
+  name,
+  lat,
+  lng,
+  label,
+  vehicleClasses,
+  licenseNumber,
+  licensePhotoUrl,
+}: {
+  userId: string;
+  name: string;
+  lat: number;
+  lng: number;
+  label?: string;
+  vehicleClasses: string[];
+  licenseNumber: string;
+  licensePhotoUrl?: string;
+}) => {
+  const user = await userRepository.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  const valid = Object.values(VEHICLE_CLASS) as string[];
+  if (!Array.isArray(vehicleClasses) || vehicleClasses.length === 0 ||
+    vehicleClasses.length > 2 ||
+    vehicleClasses.some((c) => !valid.includes(c))) {
+    throw new ValidationError("Unknown vehicle class");
+  }
+  if (typeof licenseNumber !== "string" || licenseNumber.trim() === "") {
+    throw new ValidationError("Mobile shop license is required");
+  }
+  const operated = await providerRepository.findByOperator(userId);
+  if (operated.some((p) => p.kind === PROVIDER_KIND.MOBILE_SHOP &&
+    p.status !== PROVIDER_STATUS.DENIED)) {
+    throw new ConflictError("A mobile shop provider already exists");
+  }
+  const created = await providerRepository.createMobileShop({
+    operatorUid: userId,
+    name,
+    lat,
+    lng,
+    label,
+    vehicleClasses,
+    licenseNumber: licenseNumber.trim(),
+    licensePhotoUrl,
+  });
+  cacheManager.del(PROVIDER_NS, userId);
+  cacheManager.del(SHOP_NS);
+  return created;
+};
+
 const createTowProvider = async ({
   userId,
   name,
@@ -340,6 +390,8 @@ const updateProvider = async ({
     vehicleClasses?: string[];
     services?: unknown;
     serviceFee?: number;
+    licenseNumber?: string;
+    licensePhotoUrl?: string | null;
     towBaseFee?: number;
     towPerKmFee?: number;
     accepting?: boolean;
@@ -389,7 +441,8 @@ const updateProvider = async ({
     }
   }
   if (fields.vehicleClasses !== undefined &&
-    provider.kind !== PROVIDER_KIND.SHOP) {
+    provider.kind !== PROVIDER_KIND.SHOP &&
+    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
     throw new ValidationError("Vehicle classes are shop-only");
   }
   if (fields.services !== undefined &&
@@ -399,6 +452,11 @@ const updateProvider = async ({
   if (fields.serviceFee !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP) {
     throw new ValidationError("Service fee is shop-only");
+  }
+  if ((fields.licenseNumber !== undefined ||
+    fields.licensePhotoUrl !== undefined) &&
+    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+    throw new ValidationError("License details are mobile-shop-only");
   }
   if ((fields.towBaseFee !== undefined ||
     fields.towPerKmFee !== undefined) &&
@@ -427,6 +485,12 @@ const updateProvider = async ({
     patch.services = normalizeShopServices(fields.services);
   }
   if (fields.serviceFee !== undefined) patch.serviceFee = fields.serviceFee;
+  if (fields.licenseNumber !== undefined) {
+    patch.licenseNumber = fields.licenseNumber;
+  }
+  if (fields.licensePhotoUrl !== undefined) {
+    patch.licensePhotoUrl = fields.licensePhotoUrl;
+  }
   if (fields.towBaseFee !== undefined) patch.towBaseFee = fields.towBaseFee;
   if (fields.towPerKmFee !== undefined) {
     patch.towPerKmFee = fields.towPerKmFee;
@@ -1055,41 +1119,55 @@ const updateProviderLocation = async ({
   lng: number;
 }) => {
   const operated = await providerRepository.findByOperator(userId);
-  const tow = operated.find((p) => p.kind === PROVIDER_KIND.TOW);
-  if (!tow) throw new NotFoundError("Tow provider not found");
-  if (tow.status !== PROVIDER_STATUS.ACTIVE ||
-    (tow as {suspended?: boolean}).suspended === true) {
-    throw new ForbiddenError("Only active tow providers share location");
+  const sharing = operated.filter((p) =>
+    p.kind === PROVIDER_KIND.TOW ||
+    p.kind === PROVIDER_KIND.MOBILE_SHOP);
+  if (sharing.length === 0) {
+    throw new NotFoundError("Mobile provider not found");
   }
-  if (tow.accepting !== true) {
-    const holding = await dispatchRepository.findActiveForShop(tow.id);
-    if (holding.length === 0) {
-      throw new ForbiddenError("Location sharing needs accepting mode on");
-    }
-  }
-  await providerLocationRepository.upsert(tow.id, lat, lng);
-  const active = await dispatchRepository.findActiveForShop(tow.id);
-  for (const ticket of active) {
-    const waiting = ticket.waiting as {active?: unknown} | null | undefined;
-    if (!waiting || waiting.active !== true) continue;
-    try {
-      await accrue({
-        ticketId: ticket.id,
-        towerLat: lat,
-        towerLng: lng,
-        riderLat: ticket.lat,
-        riderLng: ticket.lng,
-      });
-    } catch {
+  let updated = 0;
+  let providerId: string | null = null;
+  for (const provider of sharing) {
+    if (provider.status !== PROVIDER_STATUS.ACTIVE ||
+      (provider as {suspended?: boolean}).suspended === true) {
       continue;
     }
+    if (provider.accepting !== true) {
+      const holding = await dispatchRepository.findActiveForShop(provider.id);
+      if (holding.length === 0) continue;
+    }
+    await providerLocationRepository.upsert(provider.id, lat, lng);
+    updated += 1;
+    if (providerId === null) providerId = provider.id;
+    if (provider.kind === PROVIDER_KIND.TOW) {
+      const active = await dispatchRepository.findActiveForShop(provider.id);
+      for (const ticket of active) {
+        const waiting = ticket.waiting as {active?: unknown} | null | undefined;
+        if (!waiting || waiting.active !== true) continue;
+        try {
+          await accrue({
+            ticketId: ticket.id,
+            towerLat: lat,
+            towerLng: lng,
+            riderLat: ticket.lat,
+            riderLng: ticket.lng,
+          });
+        } catch {
+          continue;
+        }
+      }
+    }
   }
-  return {updated: 1, providerId: tow.id};
+  if (updated === 0) {
+    throw new ForbiddenError("Location sharing needs accepting mode on");
+  }
+  return {...(providerId !== null ? {providerId} : {}), updated};
 };
 
 export {
   PLATE_SHAPE,
   createShopProvider,
+  createMobileShopProvider,
   createTowProvider,
   updateProvider,
   myProviders,

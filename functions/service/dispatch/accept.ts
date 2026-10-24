@@ -6,9 +6,10 @@ import * as providerRepository from
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 import {isOpenNow} from "../providerService";
+import {haversineMeters} from "../../utils/geo";
 import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
-import {stampTowFare} from "./fare";
+import {roundFare, stampTowFare} from "./fare";
 import {
   estimateTowEta,
   requireProviderForTicket,
@@ -16,6 +17,8 @@ import {
 } from "./helpers";
 import {
   HELPER_KIND,
+  MOBILE_SHOP_CALL_OUT_FEE,
+  MOBILE_SHOP_TRAVEL_PER_KM,
   PROVIDER_FRESH_MS,
   PROVIDER_KIND,
   SERVICE_ROLE,
@@ -60,13 +63,30 @@ export const acceptAsShop = async (
       shop.plate === "")) {
     throw new ForbiddenError("Approved tow provider required");
   }
+  const mobileFees: Record<string, number> = {};
+  if (shop.kind === PROVIDER_KIND.MOBILE_SHOP &&
+    ticket.ticketType === "SOS") {
+    const fixes = await providerLocationRepository.findByIds([shopId]);
+    const fix = fixes.get(shopId);
+    const meters = fix && typeof fix.lat === "number" &&
+      typeof fix.lng === "number" ?
+      haversineMeters(ticket.lat, ticket.lng, fix.lat, fix.lng) :
+      0;
+    mobileFees.mobileCallOutFee = MOBILE_SHOP_CALL_OUT_FEE;
+    mobileFees.mobileTravelFee = roundFare(
+      (meters / 1000) * MOBILE_SHOP_TRAVEL_PER_KM,
+    );
+  }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
     assignedKind: shop.kind === PROVIDER_KIND.TOW ?
       HELPER_KIND.TOW :
-      HELPER_KIND.SHOP,
+      shop.kind === PROVIDER_KIND.MOBILE_SHOP ?
+        HELPER_KIND.MOBILE_SHOP :
+        HELPER_KIND.SHOP,
     status: STATUS_DISPATCH.MATCHED,
     cancelledBy: null,
+    ...mobileFees,
     ...(ticket.ticketType === "WALK_IN" &&
     typeof shop.serviceFee === "number" ?
       {priceEstimate: shop.serviceFee, priceCurrency: "VND"} :
@@ -94,7 +114,9 @@ export const acceptAsShop = async (
     matched: true,
     kind: shop.kind === PROVIDER_KIND.TOW ?
       HELPER_KIND.TOW :
-      HELPER_KIND.SHOP,
+      shop.kind === PROVIDER_KIND.MOBILE_SHOP ?
+        HELPER_KIND.MOBILE_SHOP :
+        HELPER_KIND.SHOP,
   };
 };
 

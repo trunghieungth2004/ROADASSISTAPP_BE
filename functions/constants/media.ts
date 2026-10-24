@@ -16,6 +16,7 @@ const PHOTO_SCHEME_PREFIX = "http";
 const FLAG_PHOTO_PREFIX = "flags";
 const DISPATCH_PHOTO_PREFIX = "dispatch";
 const PAYMENT_PHOTO_PREFIX = "payments";
+const CHAT_PHOTO_PREFIX = "chat";
 
 export {
   PHOTO_MAX_COUNT,
@@ -29,4 +30,5 @@ export {
   FLAG_PHOTO_PREFIX,
   DISPATCH_PHOTO_PREFIX,
   PAYMENT_PHOTO_PREFIX,
+  CHAT_PHOTO_PREFIX,
 };

@@ -6,7 +6,10 @@ import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
 import {ROLE_ADMIN} from "../constants/roles";
-import {STATUS_DISPATCH} from "../constants/status";
+import {
+  MOBILE_SHOP_CALL_OUT_FEE,
+  STATUS_DISPATCH,
+} from "../constants/status";
 import {
   COMMISSION_RATE_PERCENT,
   PAYMENT_ACTIVE_STATUSES,
@@ -42,6 +45,8 @@ export type TicketLike = {
   assignedUid?: string | null;
   shopQuotedAmount?: number | null;
   finalAmount?: number | null;
+  mobileCallOutFee?: number | null;
+  mobileTravelFee?: number | null;
   towFare?: {
     final?: number | null;
     estimate?: number | null;
@@ -81,7 +86,26 @@ const billableAmountFor = (
       0;
     return {amount: base + waitingFee, waitingFee};
   }
-  if (ticket.ticketType === "SOS") return null;
+  if (ticket.ticketType === "SOS") {
+    if (!nonEmpty(ticket.assignedShopId)) return null;
+    const callOut = typeof ticket.mobileCallOutFee === "number" ?
+      ticket.mobileCallOutFee :
+      MOBILE_SHOP_CALL_OUT_FEE;
+    const travel = typeof ticket.mobileTravelFee === "number" ?
+      ticket.mobileTravelFee :
+      0;
+    if (ticket.status === STATUS_DISPATCH.RESOLVED) {
+      const fix = typeof ticket.finalAmount === "number" ?
+        ticket.finalAmount :
+        0;
+      return {amount: callOut + travel + fix, waitingFee: 0};
+    }
+    if (ticket.status === STATUS_DISPATCH.UNFIXABLE ||
+      ticket.status === STATUS_DISPATCH.RESOLVED_UNFIXABLE) {
+      return {amount: callOut, waitingFee: 0};
+    }
+    return null;
+  }
   if (typeof ticket.shopQuotedAmount === "number") {
     return {amount: ticket.shopQuotedAmount, waitingFee: 0};
   }

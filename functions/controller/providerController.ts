@@ -9,7 +9,7 @@ const createProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {kind, name, lat, lng, label, openHours, vehicleClasses,
       services, serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
-      towPerKmFee} = req.body;
+      towPerKmFee, licenseNumber, licensePhotoUrl} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
         userId,
@@ -23,17 +23,28 @@ const createProvider = async (req: Request, res: Response) => {
         towBaseFee,
         towPerKmFee,
       }) :
-      await providerService.createShopProvider({
-        userId,
-        name,
-        lat,
-        lng,
-        label,
-        openHours,
-        vehicleClasses,
-        services,
-        serviceFee,
-      });
+      kind === "MOBILE_SHOP" ?
+        await providerService.createMobileShopProvider({
+          userId,
+          name,
+          lat,
+          lng,
+          label,
+          vehicleClasses,
+          licenseNumber,
+          licensePhotoUrl,
+        }) :
+        await providerService.createShopProvider({
+          userId,
+          name,
+          lat,
+          lng,
+          label,
+          openHours,
+          vehicleClasses,
+          services,
+          serviceFee,
+        });
     sendSuccess(res, result, {message: "Provider created", statusCode: 201});
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -44,7 +55,8 @@ const updateProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {providerId, name, label, openHours, vehicleClasses, services,
-      serviceFee, towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
+      serviceFee, licenseNumber, licensePhotoUrl, towBaseFee, towPerKmFee,
+      accepting, lat, lng} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
@@ -55,6 +67,8 @@ const updateProvider = async (req: Request, res: Response) => {
         vehicleClasses,
         services,
         serviceFee,
+        licenseNumber,
+        licensePhotoUrl,
         towBaseFee,
         towPerKmFee,
         accepting,

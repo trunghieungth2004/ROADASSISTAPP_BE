@@ -112,6 +112,8 @@ const asBillable = (ticket: dispatchRepository.DispatchTicket): TicketLike =>
     assignedUid: ticket.assignedUid,
     shopQuotedAmount: ticket.shopQuotedAmount,
     finalAmount: ticket.finalAmount,
+    mobileCallOutFee: ticket.mobileCallOutFee,
+    mobileTravelFee: ticket.mobileTravelFee,
     towFare: ticket.towFare,
   }) as TicketLike;
 
@@ -200,7 +202,8 @@ const buildItem = async (
   const payments = await paymentRepository.findByTicketId(ticket.id);
   const payment = payments[0] ?? null;
   const paymentStatus = payment ? String(payment.status) : null;
-  const voided = UNPAYABLE_STATUSES.has(String(ticket.status ?? ""));
+  const voided = UNPAYABLE_STATUSES.has(String(ticket.status ?? "")) &&
+    ticket.ticketType !== "SOS";
   let status: string;
   if (paymentStatus !== null && SETTLED_STATUSES.has(paymentStatus)) {
     status = BILL_ITEM_STATUS.PAID;
