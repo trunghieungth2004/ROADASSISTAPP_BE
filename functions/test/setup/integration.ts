@@ -6,6 +6,7 @@ process.env.TASK_INVOKER_EMAIL = "tasks@test-project.iam.gserviceaccount.com";
 process.env.PUSH_DELIVER_URL = "https://test.example.com/push/deliver";
 process.env.DISPATCH_DELIVER_URL =
   "https://test.example.com/dispatch/deliver";
-process.env.ALLOWED_ORIGINS = "";
+process.env.WRITE_LIMIT_DISABLED = "true";
+process.env.ALLOWED_ORIGINS = "https://roadassistapp-c2e37.web.app";
 process.env.VALHALLA_URL = "http://localhost:8002";
 process.env.CACHE_ENABLED = "false";

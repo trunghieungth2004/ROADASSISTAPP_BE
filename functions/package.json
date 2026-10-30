@@ -8,6 +8,7 @@
     "build:watch": "tsc --watch",
     "lint": "eslint --ext .js,.ts .",
     "env:check": "bash ../scripts/lib/check-env.sh",
+    "env:sync-origins": "bash ../scripts/lib/sync-allowed-origins.sh",
     "setup:secrets": "bash ../scripts/lib/setup-secrets.sh",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
@@ -28,7 +29,9 @@
     "valhalla:remove": "bash ../infra/valhalla/remove.sh",
     "push:setup": "npm run build && node lib/scripts/setupPush.js",
     "push:check": "npm run build && node lib/scripts/setupPush.js --check",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "db:backfill-vehicle-profiles": "npm run build && node lib/scripts/backfillVehicleProfiles.js",
+    "db:cleanup-volunteer": "npm run build && node lib/scripts/cleanupVolunteerRole.js"
   },
   "engines": {
     "node": "22"

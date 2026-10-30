@@ -55,11 +55,13 @@ jest.mock("../../config/firebase", () => {
     FieldValue: {
       serverTimestamp: () => ({}),
       increment: () => ({}),
+      arrayUnion: (value: unknown) => ({__arrayUnion: value}),
     },
     Filter: {},
   };
 });
 
+process.env.WRITE_LIMIT_DISABLED = "true";
 process.env.ALLOWED_ORIGINS = "";
 process.env.GCLOUD_PROJECT = "test-project";
 process.env.VALHALLA_URL = "http://localhost:8002";

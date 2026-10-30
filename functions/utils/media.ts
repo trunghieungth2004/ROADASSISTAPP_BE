@@ -1,4 +1,5 @@
 import {
+  CHAT_PHOTO_PREFIX,
   FLAG_PHOTO_PREFIX,
   PHOTO_MAX_COUNT,
   PHOTO_PARENT_SEGMENT,
@@ -42,26 +43,34 @@ const scopeSegment = ({
   ownerUid,
   prefix,
   ticketId,
+  chatId,
 }: {
   ownerUid: string;
   prefix: string;
   ticketId?: string;
-}): string => prefix === FLAG_PHOTO_PREFIX ? ownerUid : ticketId ?? "";
+  chatId?: string;
+}): string => {
+  if (prefix === FLAG_PHOTO_PREFIX) return ownerUid;
+  if (prefix === CHAT_PHOTO_PREFIX) return chatId ?? "";
+  return ticketId ?? "";
+};
 
 const validatePhotoPaths = ({
   paths,
   ownerUid,
   prefix,
   ticketId,
+  chatId,
 }: {
   paths?: string[];
   ownerUid: string;
   prefix: string;
   ticketId?: string;
+  chatId?: string;
 }): string[] => {
   const clean = validatePhotoPathsStructure(paths);
   if (clean.length === 0) return clean;
-  const scope = scopeSegment({ownerUid, prefix, ticketId});
+  const scope = scopeSegment({ownerUid, prefix, ticketId, chatId});
   if (!isPhotoPathSegment(scope)) {
     throw new ValidationError("Photo scope is invalid");
   }

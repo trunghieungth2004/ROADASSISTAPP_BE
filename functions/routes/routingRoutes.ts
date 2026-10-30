@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as routingController from "../controller/routingController";
 import * as savedRouteController from "../controller/savedRouteController";
@@ -17,12 +18,14 @@ export default (
   );
   app.post(
     "/routes/sweep",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     routingController.sweepRoutes,
   );
   app.post(
     "/routes/save",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.saveRoute}),
@@ -42,6 +45,7 @@ export default (
   );
   app.put(
     "/routes/saved",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.renameSavedRoute}),
@@ -49,6 +53,7 @@ export default (
   );
   app.post(
     "/routes/unsave",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.deleteSavedRoute}),

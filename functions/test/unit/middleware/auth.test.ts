@@ -87,7 +87,7 @@ describe("requireService", () => {
   it("rejects unauthenticated requests with 401", () => {
     const res = mockRes();
     const next = jest.fn();
-    requireService("VOLUNTEER")({} as unknown as Request, res, next);
+    requireService("RIDER")({} as unknown as Request, res, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
   });
@@ -95,9 +95,9 @@ describe("requireService", () => {
   it("rejects callers without the license with 403", () => {
     const res = mockRes();
     const next = jest.fn();
-    requireService("VOLUNTEER")({
+    requireService("RIDER")({
       userRole: "2",
-      userServices: ["RIDER"],
+      userServices: ["SHOP"],
     } as unknown as Request, res, next);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe("requireService", () => {
   it("passes callers holding any listed license", () => {
     const res = mockRes();
     const next = jest.fn();
-    requireService("VOLUNTEER", "SHOP")({
+    requireService("RIDER", "SHOP")({
       userRole: "2",
       userServices: ["SHOP"],
     } as unknown as Request, res, next);

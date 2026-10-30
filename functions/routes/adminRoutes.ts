@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {ROLE_ADMIN} from "../constants/roles";
 import * as adminController from "../controller/adminController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/admin/config",
+    writeLimited,
     requireAuth,
     requireRole(ROLE_ADMIN),
     validate({body: schemas.adminConfigGet}),
@@ -16,6 +18,7 @@ export default (
   );
   app.put(
     "/admin/config",
+    writeLimited,
     requireAuth,
     requireRole(ROLE_ADMIN),
     validate({body: schemas.adminConfigUpdate}),
@@ -23,6 +26,7 @@ export default (
   );
   app.post(
     "/admin/payouts",
+    writeLimited,
     requireAuth,
     requireRole(ROLE_ADMIN),
     validate({body: schemas.adminPayout}),
@@ -37,6 +41,7 @@ export default (
   );
   app.post(
     "/admin/payouts/batch",
+    writeLimited,
     requireAuth,
     requireRole(ROLE_ADMIN),
     validate({body: schemas.payoutsSettle}),

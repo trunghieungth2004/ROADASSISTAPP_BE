@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as diagnosticController from "../controller/diagnosticController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/diagnostics",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createDiagnostic}),

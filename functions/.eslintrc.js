@@ -33,8 +33,41 @@ module.exports = {
     "import/no-unresolved": 0,
     "indent": ["error", 2],
     "@typescript-eslint/no-explicit-any": 1,
+    "max-lines": ["error", {"max": 800, "skipBlankLines": true, "skipComments": true}],
+    "max-lines-per-function": ["error", {"max": 250, "skipBlankLines": true, "skipComments": true}],
+    "complexity": ["error", 30],
   },
   overrides: [
+    {
+      files: ["test/**/*.ts"],
+      rules: {
+        "max-lines": "off",
+        "max-lines-per-function": "off",
+        "complexity": "off",
+      },
+    },
+    {
+      files: ["service/dispatch/tickets/transition.ts"],
+      rules: {
+        "max-lines-per-function": "off",
+        "complexity": "off",
+      },
+    },
+    {
+      files: [
+        "service/dispatch/accept.ts",
+        "service/dispatch/tickets/create.ts",
+        "service/dispatch/tickets/destination.ts",
+        "service/dispatch/tickets/read.ts",
+        "service/dispatch/tickets/tow.ts",
+        "service/dispatch/shop/feed.ts",
+        "service/dispatch/shop/mobile.ts",
+        "service/dispatch/shop/estimate.ts",
+        "service/provider/crud.ts",
+        "service/push/service.ts",
+      ],
+      rules: {"complexity": "off"},
+    },
     {
       files: ["*.js"],
       parser: "espree",

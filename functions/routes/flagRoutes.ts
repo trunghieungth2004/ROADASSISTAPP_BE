@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as flagController from "../controller/flagController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/flags",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createFlag}),
@@ -16,6 +18,7 @@ export default (
   );
   app.post(
     "/flags/confirm",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.confirmFlag}),
@@ -23,6 +26,7 @@ export default (
   );
   app.post(
     "/flags/deny",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.denyFlag}),
@@ -55,6 +59,7 @@ export default (
   );
   app.put(
     "/flags/moderate",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.moderateFlag}),
@@ -62,6 +67,7 @@ export default (
   );
   app.post(
     "/flags/unflag",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.unflagFlag}),
@@ -69,6 +75,7 @@ export default (
   );
   app.post(
     "/flags/expire",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     flagController.expireFlags,

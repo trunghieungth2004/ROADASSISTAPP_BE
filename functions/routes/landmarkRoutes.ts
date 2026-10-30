@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as landmarkController from "../controller/landmarkController";
 
@@ -15,6 +16,7 @@ export default (
   );
   app.post(
     "/landmarks",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.createLandmark}),

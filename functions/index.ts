@@ -1,7 +1,8 @@
 import express, {NextFunction, Request, Response} from "express";
 import cors from "cors";
 import compression from "compression";
-import rateLimiter, {ipKeyGenerator} from "express-rate-limit";
+import rateLimiter from "express-rate-limit";
+import {clientIpKey} from "./middleware/rateLimit";
 import morgan from "morgan";
 import * as functions from "firebase-functions";
 import {requireAuth, requireRole, requireService} from "./middleware/auth";
@@ -14,7 +15,6 @@ import userRoutes from "./routes/userRoutes";
 import roleRoutes from "./routes/roleRoutes";
 import statusRoutes from "./routes/statusRoutes";
 import vehicleProfileRoutes from "./routes/vehicleProfileRoutes";
-import alleySegmentRoutes from "./routes/alleySegmentRoutes";
 import flagRoutes from "./routes/flagRoutes";
 import landmarkRoutes from "./routes/landmarkRoutes";
 import placesRoutes from "./routes/placesRoutes";
@@ -39,7 +39,11 @@ import * as routingService from "./service/routingService";
 import * as routingCacheRepository from "./repository/routingCacheRepository";
 import * as dispatchService from "./service/dispatchService";
 
+export {clientIpKey};
+
 const app = express();
+
+app.set("trust proxy", 1);
 
 const routeDeps = {
   requireAuth,
@@ -48,46 +52,6 @@ const routeDeps = {
   validate,
   schemas,
 };
-
-mountPushDeliver(app, routeDeps);
-mountDispatchDeliver(app, routeDeps);
-mountPaymentIpn(app);
-
-const limiter = rateLimiter({
-  windowMs: 1 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    statusCode: 429,
-    status: "ERROR",
-    message: "Too many requests, please try again later",
-  },
-});
-app.use(limiter);
-
-export const clientIpKey = (req: Request): string => {
-  return `ip:${ipKeyGenerator(req.ip ?? "")}`;
-};
-
-const writeLimiter = rateLimiter({
-  windowMs: 1 * 60 * 1000,
-  max: Number(process.env.WRITE_LIMIT_PER_MIN ?? 30),
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: clientIpKey,
-  message: {
-    statusCode: 429,
-    status: "ERROR",
-    message: "Too many requests, please try again later",
-  },
-});
-app.use(
-  ["/flags", "/dispatch", "/routes", "/ratings", "/providers", "/places",
-    "/alleys", "/landmarks", "/diagnostics", "/vehicleProfiles",
-    "/payments", "/payouts", "/admin", "/chat"],
-  writeLimiter,
-);
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -101,11 +65,7 @@ app.use(
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
       if (!origin) return callback(null, true);
-      if (ALLOWED_ORIGINS.length === 0) {
-        return callback(new Error("CORS not configured"));
-      }
-      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+      return callback(null, ALLOWED_ORIGINS.includes(origin));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
@@ -115,8 +75,34 @@ app.use(
       "X-Request-Id",
     ],
     credentials: true,
+    preflightContinue: true,
   }),
 );
+app.options("*", (_req: Request, res: Response) => {
+  res.status(204).end();
+});
+
+mountPushDeliver(app, routeDeps);
+mountDispatchDeliver(app, routeDeps);
+mountPaymentIpn(app);
+
+const skipPreflight = (req: Request): boolean => req.method === "OPTIONS";
+
+const limiter = rateLimiter({
+  windowMs: 1 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: clientIpKey,
+  skip: skipPreflight,
+  validate: {forwardedHeader: false},
+  message: {
+    statusCode: 429,
+    status: "ERROR",
+    message: "Too many requests, please try again later",
+  },
+});
+app.use(limiter);
 
 app.use(express.json({limit: "20mb"}));
 app.use(express.urlencoded({extended: true}));
@@ -139,7 +125,6 @@ userRoutes(app, routeDeps);
 roleRoutes(app, routeDeps);
 statusRoutes(app, routeDeps);
 vehicleProfileRoutes(app, routeDeps);
-alleySegmentRoutes(app, routeDeps);
 flagRoutes(app, routeDeps);
 landmarkRoutes(app, routeDeps);
 placesRoutes(app, routeDeps);
@@ -163,6 +148,8 @@ app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   handleServiceError(res, err);
 });
 
+export {app};
+
 export const api = functions.https.onRequest(
   {
     region: "asia-southeast1",
@@ -184,7 +171,7 @@ export const sweepFlagsAndPresence = functions.scheduler.onSchedule(
   async () => {
     await flagService.expireFlags();
     await chatService.expireChats();
-    await userService.sweepStaleVolunteers();
+    await userService.sweepStalePresence();
   },
 );
 
@@ -201,5 +188,7 @@ export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
     await routingCacheRepository.deleteExpired();
     await dispatchService.sweepStaleWalkIns();
     await dispatchService.sweepLateTows();
+    await dispatchService.sweepMobileTowOffers();
+    await dispatchService.sweepUnfixGrace();
   },
 );

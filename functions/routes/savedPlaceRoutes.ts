@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as savedPlaceController from "../controller/savedPlaceController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/places/save",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.savePlace}),
@@ -22,6 +24,7 @@ export default (
   );
   app.post(
     "/places/unsave",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.unsavePlace}),

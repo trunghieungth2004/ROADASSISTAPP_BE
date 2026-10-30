@@ -1,7 +1,10 @@
 const sanitizeString = (str: unknown): unknown => {
   if (typeof str !== "string") return str;
-  // eslint-disable-next-line no-control-regex
-  return str.trim().replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  return str.trim().split("").filter((char) => {
+    const code = char.charCodeAt(0);
+    return !(code <= 8 || code === 11 || code === 12 ||
+      (code >= 14 && code <= 31) || code === 127);
+  }).join("");
 };
 
 export const sanitizeObject = (obj: unknown): unknown => {
