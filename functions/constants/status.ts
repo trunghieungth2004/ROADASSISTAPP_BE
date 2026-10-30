@@ -33,7 +33,6 @@ const STATUS_DISPATCH = {
 } as const;
 
 const HELPER_KIND = {
-  VOLUNTEER: "VOLUNTEER",
   SHOP: "SHOP",
   TOW: "TOW",
   MOBILE_SHOP: "MOBILE_SHOP",
@@ -45,7 +44,6 @@ const TICKET_SEARCH = {
 } as const;
 
 const RATING_TARGET = {
-  VOLUNTEER: "VOLUNTEER",
   SHOP: "SHOP",
   RIDER: "RIDER",
 } as const;
@@ -56,10 +54,9 @@ const RATING_MAX = 5;
 const TOW_CLASS_MULTIPLIER_BIKE = 1;
 const TOW_CLASS_MULTIPLIER_CAR = 2.5;
 
-const VOLUNTEER_FRESH_MS = 15 * 60 * 1000;
-const VOLUNTEER_DEFAULT_RADIUS = 5000;
 const MOBILE_SHOP_DEFAULT_RADIUS = 5000;
 const MOBILE_SHOP_CALL_OUT_FEE = 50000;
+const MOBILE_SHOP_CALL_OUT_WAIVER_M = 1000;
 const MOBILE_SHOP_TRAVEL_PER_KM = 5000;
 const TOW_DISPATCH_RADIUS = 15000;
 const PROVIDER_FRESH_MS = 15 * 60 * 1000;
@@ -73,31 +70,16 @@ const PROVIDER_SERVICE_CODE_MAX = 64;
 const PROVIDER_SERVICE_NAME_MAX = 120;
 
 const VEHICLE_TYPE = {
-  SCOOTER: "SCOOTER",
-  CUB: "CUB",
-  MANUAL: "MANUAL",
+  BIKE: "BIKE",
   CAR: "CAR",
-  VAN: "VAN",
-  TRUCK: "TRUCK",
 } as const;
 
 const VEHICLE_DEFAULT_WIDTH: Record<string, number> = {
-  SCOOTER: 0.7,
-  CUB: 0.7,
-  MANUAL: 0.8,
+  BIKE: 0.7,
   CAR: 1.9,
-  VAN: 2.0,
-  TRUCK: 2.3,
 };
 
 const TOW_VEHICLE_TYPE = {
-  CAR: "CAR",
-  VAN: "VAN",
-  TRUCK: "TRUCK",
-} as const;
-
-const VOLUNTEER_CAPABILITY = {
-  SOLO_BIKE: "SOLO_BIKE",
   CAR: "CAR",
 } as const;
 
@@ -108,7 +90,6 @@ const VEHICLE_CLASS = {
 
 const SERVICE_ROLE = {
   RIDER: "RIDER",
-  VOLUNTEER: "VOLUNTEER",
 } as const;
 
 const PROVIDER_KIND = {
@@ -264,7 +245,7 @@ const DISPATCH_STATUSES: Record<string, StatusDefinition> = {
     "dispatch",
     STATUS_DISPATCH.READY,
     "Ready",
-    "Work done, awaiting pickup",
+    "Work done, awaiting rider confirmation",
     7,
   ),
   [STATUS_DISPATCH.DECLINED]: definition(
@@ -367,10 +348,9 @@ export {
   RATING_MAX,
   TOW_CLASS_MULTIPLIER_BIKE,
   TOW_CLASS_MULTIPLIER_CAR,
-  VOLUNTEER_FRESH_MS,
-  VOLUNTEER_DEFAULT_RADIUS,
   MOBILE_SHOP_DEFAULT_RADIUS,
   MOBILE_SHOP_CALL_OUT_FEE,
+  MOBILE_SHOP_CALL_OUT_WAIVER_M,
   MOBILE_SHOP_TRAVEL_PER_KM,
   TOW_DISPATCH_RADIUS,
   WALK_RADIUS_MIN,
@@ -384,7 +364,6 @@ export {
   VEHICLE_TYPE,
   VEHICLE_DEFAULT_WIDTH,
   TOW_VEHICLE_TYPE,
-  VOLUNTEER_CAPABILITY,
   VEHICLE_CLASS,
   SERVICE_ROLE,
   PROVIDER_KIND,

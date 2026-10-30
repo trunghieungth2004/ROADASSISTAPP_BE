@@ -43,16 +43,24 @@ const SEPAY_IPN_CODE = {
 } as const;
 
 const SEPAY_FIELD = {
-  MERCHANT_ID: "merchant_id",
+  MERCHANT: "merchant",
   ORDER_INVOICE_NUMBER: "order_invoice_number",
   ORDER_AMOUNT: "order_amount",
   CURRENCY: "currency",
+  OPERATION: "operation",
   ORDER_DESCRIPTION: "order_description",
+  CUSTOMER_ID: "customer_id",
+  PAYMENT_METHOD: "payment_method",
   SUCCESS_URL: "success_url",
   ERROR_URL: "error_url",
   CANCEL_URL: "cancel_url",
   SIGNATURE: "signature",
 } as const;
+
+const SEPAY_OPERATION_PURCHASE = "PURCHASE";
+const SEPAY_IPN_AUTH_HEADER = "x-secret-key";
+const SEPAY_IPN_NOTIFICATION_PAID = "ORDER_PAID";
+const SEPAY_BRIDGE_URL_VAR = "PAYMENT_BRIDGE_URL";
 
 const SEPAY_IPN_FIELD = {
   QR_REF: "qrRef",
@@ -67,6 +75,8 @@ const SEPAY_IPN_FIELD = {
   TRANSFER_AMOUNT_CAMEL: "transferAmount",
   TRANSACTION_ID: "transaction_id",
   TRANSACTION_ID_CAMEL: "transactionId",
+  TRANSACTION_AMOUNT: "transaction_amount",
+  ORDER_AMOUNT: "order_amount",
   ID: "id",
 } as const;
 
@@ -112,6 +122,10 @@ export {
   SEPAY_AUTH_PREFIX,
   SEPAY_CHECKOUT_METHOD,
   SEPAY_ORDER_DESCRIPTION_PREFIX,
+  SEPAY_OPERATION_PURCHASE,
+  SEPAY_IPN_AUTH_HEADER,
+  SEPAY_IPN_NOTIFICATION_PAID,
+  SEPAY_BRIDGE_URL_VAR,
   SEPAY_STATUS,
   SEPAY_IPN_CODE,
   SEPAY_FIELD,

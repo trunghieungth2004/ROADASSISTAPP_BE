@@ -82,93 +82,6 @@ const REFUND_POLICY = {
   NONE: "NONE",
 } as const;
 
-const DISPUTE_TYPE = {
-  TOWER_CANCEL_MID: "TOWER_CANCEL_MID",
-  SHOP_DECLINE_DROPOFF: "SHOP_DECLINE_DROPOFF",
-  RIDER_NO_SHOW: "RIDER_NO_SHOW",
-  UNFIXABLE: "UNFIXABLE",
-} as const;
-
-const DISPUTE_STATUS = {
-  OPEN: "OPEN",
-  RESOLVED: "RESOLVED",
-  DISMISSED: "DISMISSED",
-} as const;
-
-const ACCUSED_KIND = {
-  TOWER: "TOWER",
-  SHOP: "SHOP",
-  RIDER: "RIDER",
-} as const;
-
-const DISPUTE_REASON = {
-  TOWER_CANCEL_BREAKDOWN: "TOWER_CANCEL_BREAKDOWN",
-  TOWER_CANCEL_SAFETY: "TOWER_CANCEL_SAFETY",
-  TOWER_CANCEL_UNREACHABLE: "TOWER_CANCEL_UNREACHABLE",
-  TOWER_CANCEL_OTHER: "TOWER_CANCEL_OTHER",
-  SHOP_FULL: "SHOP_FULL",
-  SHOP_PART_DELAY: "SHOP_PART_DELAY",
-  SHOP_CLOSED: "SHOP_CLOSED",
-  SHOP_CAPACITY: "SHOP_CAPACITY",
-  SHOP_OTHER: "SHOP_OTHER",
-  RIDER_NO_RESPONSE: "RIDER_NO_RESPONSE",
-  RIDER_UNREACHABLE: "RIDER_UNREACHABLE",
-  RIDER_OTHER: "RIDER_OTHER",
-} as const;
-
-const DISPUTE_FALLBACK_REASON: Record<string, string> = {
-  [ACCUSED_KIND.TOWER]: DISPUTE_REASON.TOWER_CANCEL_OTHER,
-  [ACCUSED_KIND.SHOP]: DISPUTE_REASON.SHOP_OTHER,
-  [ACCUSED_KIND.RIDER]: DISPUTE_REASON.RIDER_OTHER,
-};
-
-const DISPUTE_FALLBACK_TYPE: Record<string, string> = {
-  [ACCUSED_KIND.TOWER]: DISPUTE_TYPE.TOWER_CANCEL_MID,
-  [ACCUSED_KIND.SHOP]: DISPUTE_TYPE.SHOP_DECLINE_DROPOFF,
-  [ACCUSED_KIND.RIDER]: DISPUTE_TYPE.RIDER_NO_SHOW,
-};
-
-const RIDER_DISPUTE_ALIASES: Record<string, {
-  accusedKind: string;
-  type: string;
-  reasonCode: string;
-}> = {
-  LATE: {
-    accusedKind: ACCUSED_KIND.SHOP,
-    type: DISPUTE_TYPE.SHOP_DECLINE_DROPOFF,
-    reasonCode: DISPUTE_REASON.SHOP_PART_DELAY,
-  },
-  OVERCHARGE: {
-    accusedKind: ACCUSED_KIND.SHOP,
-    type: DISPUTE_TYPE.SHOP_DECLINE_DROPOFF,
-    reasonCode: DISPUTE_REASON.SHOP_OTHER,
-  },
-  NO_SHOW: {
-    accusedKind: ACCUSED_KIND.TOWER,
-    type: DISPUTE_TYPE.TOWER_CANCEL_MID,
-    reasonCode: DISPUTE_REASON.TOWER_CANCEL_UNREACHABLE,
-  },
-  RUDE: {
-    accusedKind: ACCUSED_KIND.SHOP,
-    type: DISPUTE_TYPE.SHOP_DECLINE_DROPOFF,
-    reasonCode: DISPUTE_REASON.SHOP_OTHER,
-  },
-  WRONG_ROUTE: {
-    accusedKind: ACCUSED_KIND.TOWER,
-    type: DISPUTE_TYPE.TOWER_CANCEL_MID,
-    reasonCode: DISPUTE_REASON.TOWER_CANCEL_OTHER,
-  },
-  OTHER: {
-    accusedKind: ACCUSED_KIND.SHOP,
-    type: DISPUTE_TYPE.SHOP_DECLINE_DROPOFF,
-    reasonCode: DISPUTE_REASON.SHOP_OTHER,
-  },
-};
-
-const DISPUTE_COLLECTION = "disputes";
-const DISPUTE_LIST_LIMIT = 50;
-const DISPUTE_LIST_MAX = 100;
-
 const USER_COLLECTION = "users";
 const PROVIDER_COLLECTION = "providers";
 
@@ -185,12 +98,16 @@ const PLATFORM_CONFIG_DEFAULTS = {
     SOS: 10,
     WALK_IN: 10,
   },
-  towBaseFee: 0,
-  towPerKmFee: 0,
+  towBaseFee: 150000,
+  towPerKmFee: 10000,
+  carBaseFee: 500000,
   carMultiplier: 2.5,
-  nightMultiplier: 1.3,
-  nightWindow: {start: 22, end: 5},
+  nightMultiplier: 1.5,
+  nightWindow: {start: 22, end: 6},
   minimumTowFee: 0,
+  bikeIncludedKm: 3,
+  carIncludedKm: 10,
+  ceilingMultiplier: 1.1,
   waitingRatePer15Min: 0,
   waitingGraceMin: WAITING_GRACE_MIN,
   waitingCapMin: WAITING_CAP_MIN,
@@ -207,10 +124,14 @@ const PLATFORM_CONFIG_UPDATABLE_KEYS: string[] = [
   "commissionRate",
   "towBaseFee",
   "towPerKmFee",
+  "carBaseFee",
   "carMultiplier",
   "nightMultiplier",
   "nightWindow",
   "minimumTowFee",
+  "bikeIncludedKm",
+  "carIncludedKm",
+  "ceilingMultiplier",
   "waitingRatePer15Min",
   "waitingGraceMin",
   "waitingCapMin",
@@ -249,16 +170,6 @@ export {
   BILL_LIST_LIMIT,
   BILL_LIST_MAX,
   REFUND_POLICY,
-  DISPUTE_TYPE,
-  DISPUTE_STATUS,
-  ACCUSED_KIND,
-  DISPUTE_REASON,
-  DISPUTE_FALLBACK_REASON,
-  DISPUTE_FALLBACK_TYPE,
-  RIDER_DISPUTE_ALIASES,
-  DISPUTE_COLLECTION,
-  DISPUTE_LIST_LIMIT,
-  DISPUTE_LIST_MAX,
   USER_COLLECTION,
   PROVIDER_COLLECTION,
   WAITING_GRACE_MIN,
