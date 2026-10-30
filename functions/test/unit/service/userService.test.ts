@@ -1,8 +1,6 @@
 import * as userRepository from "../../../repository/userRepository";
 import * as vehicleProfileRepository from
   "../../../repository/vehicleProfileRepository";
-import * as volunteerLocationRepository from
-  "../../../repository/volunteerLocationRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {
   register,
@@ -12,8 +10,6 @@ import {
   updateTrustScore,
   updateStatus,
   updateProfile,
-  setVolunteerAvailability,
-  volunteerHeartbeat,
   setActiveVehicle,
   setOnboarded,
   updateServices,
@@ -22,7 +18,6 @@ import {
 
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../repository/vehicleProfileRepository");
-jest.mock("../../../repository/volunteerLocationRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -173,104 +168,6 @@ describe("userService.updateStatus", () => {
   });
 });
 
-describe("userService.setVolunteerAvailability", () => {
-  it("throws 404 for an unknown user", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue(null);
-    await expect(
-      setVolunteerAvailability({userId: "ghost", available: true}),
-    ).rejects.toMatchObject({statusCode: 404});
-  });
-
-  it("opts the user in without a location row", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-    } as never);
-    await expect(
-      setVolunteerAvailability({userId: "u1", available: true}),
-    ).resolves.toEqual({updated: 1, available: true});
-    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
-      volunteerAvailable: true,
-    });
-    expect(volunteerLocationRepository.remove).not.toHaveBeenCalled();
-  });
-
-  it("removes the location row on opt-out", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-    } as never);
-    await expect(
-      setVolunteerAvailability({userId: "u1", available: false}),
-    ).resolves.toEqual({updated: 1, available: false});
-    expect(volunteerLocationRepository.remove).toHaveBeenCalledWith(
-      "u1",
-    );
-  });
-
-  it("stores the volunteer capability on opt-in", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-    } as never);
-    await expect(
-      setVolunteerAvailability({
-        userId: "u1",
-        available: true,
-        capability: "CAR",
-      }),
-    ).resolves.toEqual({updated: 1, available: true});
-    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
-      volunteerAvailable: true,
-      capability: "CAR",
-    });
-  });
-});
-
-describe("userService.volunteerHeartbeat", () => {
-  it("throws 404 for an unknown user", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue(null);
-    await expect(
-      volunteerHeartbeat({userId: "ghost", lat: 1, lng: 2}),
-    ).rejects.toMatchObject({statusCode: 404});
-  });
-
-  it("rejects heartbeats without the volunteer license", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      services: ["RIDER"],
-      volunteerAvailable: true,
-    } as never);
-    await expect(
-      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
-    ).rejects.toMatchObject({statusCode: 403});
-    expect(volunteerLocationRepository.upsert).not.toHaveBeenCalled();
-  });
-
-  it("rejects heartbeats with volunteer mode off", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      services: ["VOLUNTEER"],
-      volunteerAvailable: false,
-    } as never);
-    await expect(
-      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
-    ).rejects.toMatchObject({statusCode: 400});
-    expect(volunteerLocationRepository.upsert).not.toHaveBeenCalled();
-  });
-
-  it("refreshes the volunteer location", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      services: ["VOLUNTEER"],
-      volunteerAvailable: true,
-    } as never);
-    jest.mocked(volunteerLocationRepository.upsert).mockResolvedValue({
-      uid: "u1",
-    } as never);
-    await expect(
-      volunteerHeartbeat({userId: "u1", lat: 1, lng: 2}),
-    ).resolves.toEqual({uid: "u1"});
-  });
-});
-
 describe("userService.me", () => {
   it("throws 404 for an unknown user", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue(null);
@@ -328,11 +225,11 @@ describe("userService.me", () => {
       role: "2",
       activeVehicleId: null,
       onboarded: true,
-      services: ["RIDER", "VOLUNTEER", "VOLUNTEER"],
+      services: ["RIDER", "RIDER"],
     } as never);
     jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([]);
     const result = await me("u1");
-    expect(result.user.services).toEqual(["RIDER", "VOLUNTEER"]);
+    expect(result.user.services).toEqual(["RIDER"]);
   });
 });
 
@@ -403,21 +300,6 @@ describe("userService.setOnboarded", () => {
     expect(userRepository.findById).not.toHaveBeenCalled();
   });
 
-  it("self-serves the volunteer license", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      onboarded: true,
-      services: ["RIDER"],
-    } as never);
-    await expect(
-      setOnboarded({userId: "u1", role: "VOLUNTEER"}),
-    ).resolves.toEqual({
-      updated: 1,
-      onboarded: true,
-      services: ["RIDER", "VOLUNTEER"],
-    });
-  });
-
   it("does not duplicate an existing service role", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
@@ -466,10 +348,9 @@ describe("userService.updateServices", () => {
     jest.mocked(userRepository.findById).mockResolvedValue(null);
     await expect(
       updateServices({
-        actorId: "admin",
         isAdmin: true,
         targetUserId: "ghost",
-        grant: ["VOLUNTEER"],
+        grant: ["RIDER"],
       }),
     ).rejects.toMatchObject({statusCode: 404});
   });
@@ -478,74 +359,31 @@ describe("userService.updateServices", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       onboarded: true,
-      services: ["RIDER", "VOLUNTEER"],
+      services: ["RIDER"],
     } as never);
     await expect(
       updateServices({
-        actorId: "admin",
         isAdmin: true,
         targetUserId: "u1",
-        revoke: ["VOLUNTEER"],
+        revoke: ["RIDER"],
       }),
     ).resolves.toEqual({
       updated: 1,
-      services: ["RIDER"],
-      volunteerCleared: true,
+      services: [],
     });
     expect(userRepository.updateOnboarded).toHaveBeenCalledWith("u1", {
       onboarded: true,
-      services: ["RIDER"],
-    });
-    expect(userRepository.updateVolunteer).toHaveBeenCalledWith("u1", {
-      volunteerAvailable: false,
-    });
-    expect(volunteerLocationRepository.remove).toHaveBeenCalledWith("u1");
-  });
-
-  it("lets a user revoke its own volunteer license", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u1",
-      onboarded: true,
-      services: ["RIDER", "VOLUNTEER"],
-    } as never);
-    await expect(
-      updateServices({
-        actorId: "u1",
-        isAdmin: false,
-        targetUserId: "u1",
-        revoke: ["VOLUNTEER"],
-      }),
-    ).resolves.toEqual({
-      updated: 1,
-      services: ["RIDER"],
-      volunteerCleared: true,
+      services: [],
     });
   });
 
-  it("refuses self-service on other users", async () => {
-    jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "u2",
-      services: ["RIDER", "VOLUNTEER"],
-    } as never);
-    await expect(
-      updateServices({
-        actorId: "u1",
-        isAdmin: false,
-        targetUserId: "u2",
-        revoke: ["VOLUNTEER"],
-      }),
-    ).rejects.toMatchObject({statusCode: 403});
-    expect(userRepository.updateOnboarded).not.toHaveBeenCalled();
-  });
-
-  it("refuses self-service on the rider license", async () => {
+  it("refuses non-admin service changes", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
       services: ["RIDER"],
     } as never);
     await expect(
       updateServices({
-        actorId: "u1",
         isAdmin: false,
         targetUserId: "u1",
         revoke: ["RIDER"],
@@ -561,7 +399,6 @@ describe("userService.updateServices", () => {
     } as never);
     await expect(
       updateServices({
-        actorId: "admin",
         isAdmin: true,
         targetUserId: "u1",
         grant: ["SHOP"],
@@ -569,7 +406,6 @@ describe("userService.updateServices", () => {
     ).rejects.toMatchObject({statusCode: 400});
     await expect(
       updateServices({
-        actorId: "admin",
         isAdmin: true,
         targetUserId: "u1",
         grant: ["TOW"],
@@ -584,7 +420,6 @@ describe("userService.updateServices", () => {
     } as never);
     await expect(
       updateServices({
-        actorId: "admin",
         isAdmin: true,
         targetUserId: "u1",
         grant: ["PILOT"],

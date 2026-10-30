@@ -10,7 +10,6 @@ const ALL_COLLECTIONS = [
   "users",
   "roles",
   "statuses",
-  "alley_segments",
   "flags",
   "landmarks",
   "providers",
@@ -21,7 +20,6 @@ const ALL_COLLECTIONS = [
   "payments",
   "payment_guards",
   "payouts",
-  "volunteer_locations",
   "ratings",
   "fcm_tokens",
   "routing_cache",
@@ -132,28 +130,6 @@ const seedRideConfig = async (
     .doc();
   await ref.set({
     configType: "SOLO",
-    createdAt: new Date().toISOString(),
-    ...overrides,
-  });
-  return ref.id;
-};
-
-const seedSegment = async (
-  overrides: Record<string, unknown> = {},
-): Promise<string> => {
-  const ref = db.collection("alley_segments").doc();
-  const lat = (overrides.lat as number) ?? BASE_LAT;
-  const lng = (overrides.lng as number) ?? BASE_LNG;
-  await ref.set({
-    lat,
-    lng,
-    geoHash: encodeGeohash(lat, lng, 9),
-    geoCell: encodeGeohash(lat, lng, 4),
-    baseWidth: 1.2,
-    wireHeight: 2.5,
-    inclinePct: 4,
-    tier: "TIER2",
-    verifiedCount: 0,
     createdAt: new Date().toISOString(),
     ...overrides,
   });
@@ -312,7 +288,6 @@ export {
   seedStatus,
   seedProfile,
   seedRideConfig,
-  seedSegment,
   seedFlag,
   seedLandmark,
   seedProvider,

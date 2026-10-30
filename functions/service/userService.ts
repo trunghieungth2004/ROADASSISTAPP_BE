@@ -1,14 +1,13 @@
 import * as userRepository from "../repository/userRepository";
 import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
-import * as volunteerLocationRepository from
-  "../repository/volunteerLocationRepository";
+import * as providerRepository from "../repository/providerRepository";
+import {normalizeVehicleType} from "../utils/vehicleType";
 import * as providerLocationRepository from
   "../repository/providerLocationRepository";
 import * as cacheManager from "../utils/cacheManager";
 import {ROLE_ADMIN, ROLE_USER} from "../constants/roles";
-import {PROVIDER_FRESH_MS, SERVICE_ROLE, VOLUNTEER_FRESH_MS} from
-  "../constants/status";
+import {PROVIDER_FRESH_MS, SERVICE_ROLE} from "../constants/status";
 import {auth} from "../config/firebase";
 
 import {ForbiddenError, NotFoundError, ValidationError} from
@@ -132,69 +131,67 @@ const updateProfile = async ({
   return {updated: 1};
 };
 
-const setVolunteerAvailability = async ({
-  userId,
-  available,
-  volunteerRadiusKm,
-  capability,
-}: {
-  userId: string;
-  available: boolean;
-  volunteerRadiusKm?: number;
-  capability?: string;
-}) => {
-  const user = await userRepository.findById(userId);
-  if (!user) throw new NotFoundError("User not found");
-  await userRepository.updateVolunteer(userId, {
-    volunteerAvailable: available,
-    ...(volunteerRadiusKm !== undefined ? {volunteerRadiusKm} : {}),
-    ...(capability !== undefined ? {capability} : {}),
-  });
-  if (!available) {
-    await volunteerLocationRepository.remove(userId);
-  }
-  cacheManager.del(USER_NS, userId);
-  return {updated: 1, available};
-};
-
-const volunteerHeartbeat = async ({
-  userId,
-  lat,
-  lng,
-}: {
-  userId: string;
-  lat: number;
-  lng: number;
-}) => {
-  const user = await userRepository.findById(userId);
-  if (!user) throw new NotFoundError("User not found");
-  if (user.role !== ROLE_ADMIN) {
-    const held = Array.isArray(user.services) ? user.services : [];
-    if (!held.includes(SERVICE_ROLE.VOLUNTEER)) {
-      throw new ForbiddenError("Volunteer license required");
-    }
-  }
-  if (user.volunteerAvailable !== true) {
-    throw new ValidationError("Volunteer mode is off");
-  }
-  return volunteerLocationRepository.upsert(userId, lat, lng);
-};
-
-const sweepStaleVolunteers = async (): Promise<number> => {
-  const cutoff = new Date(Date.now() - VOLUNTEER_FRESH_MS).toISOString();
+const sweepStalePresence = async (): Promise<number> => {
   const providerCutoff =
     new Date(Date.now() - PROVIDER_FRESH_MS).toISOString();
-  const [volunteers, providers] = await Promise.all([
-    volunteerLocationRepository.deleteStale(cutoff),
-    providerLocationRepository.deleteStale(providerCutoff),
-  ]);
-  return volunteers + providers;
+  return providerLocationRepository.deleteStale(providerCutoff);
 };
 
 const me = async (userId: string) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   const vehicles = await vehicleProfileRepository.findByUser(userId);
+  for (const vehicle of vehicles) {
+    const normalized = normalizeVehicleType(vehicle.type);
+    if (normalized !== null && normalized !== vehicle.type) {
+      vehicle.type = normalized;
+      try {
+        await vehicleProfileRepository.update(
+          userId,
+          vehicle.id,
+          {type: normalized},
+        );
+      } catch {
+        continue;
+      }
+    }
+  }
+  let operated:
+    Awaited<ReturnType<typeof providerRepository.findByOperator>> = [];
+  try {
+    operated = (await providerRepository.findByOperator(userId)) ?? [];
+  } catch {
+    operated = [];
+  }
+  const linked = new Map<string, Array<{
+    id: string;
+    kind: string;
+    name: string;
+    status: string;
+    plate: string | null;
+    vehicleType: string | null;
+    vehicleWidth: number | null;
+  }>>();
+  for (const provider of operated) {
+    if (typeof provider.vehicleProfileId === "string" &&
+      provider.vehicleProfileId !== "") {
+      const rows = linked.get(provider.vehicleProfileId) ?? [];
+      rows.push({
+        id: provider.id,
+        kind: String(provider.kind),
+        name: String(provider.name),
+        status: String(provider.status),
+        plate: typeof provider.plate === "string" ? provider.plate : null,
+        vehicleType: typeof provider.vehicleType === "string" ?
+          provider.vehicleType :
+          null,
+        vehicleWidth: typeof provider.vehicleWidth === "number" ?
+          provider.vehicleWidth :
+          null,
+      });
+      linked.set(provider.vehicleProfileId, rows);
+    }
+  }
   const activeId =
     typeof user.activeVehicleId === "string" ? user.activeVehicleId : null;
   const activeProfile = activeId ?
@@ -209,9 +206,6 @@ const me = async (userId: string) => {
       status: user.status ?? null,
       trustScore: user.trustScore ?? 0,
       points: user.points ?? 0,
-      volunteerAvailable: user.volunteerAvailable === true,
-      volunteerRadiusKm: user.volunteerRadiusKm ?? 5,
-      capability: user.capability ?? "SOLO_BIKE",
       ratingAvg: user.ratingAvg ?? 0,
       ratingCount: user.ratingCount ?? 0,
       onboarded: user.onboarded === true,
@@ -226,6 +220,7 @@ const me = async (userId: string) => {
       type: v.type,
       baseWidth: v.baseWidth,
       baseHeight: v.baseHeight,
+      ...(linked.get(v.id) ? {providerLinks: linked.get(v.id)} : {}),
     })),
     activeVehicle: activeProfile ?
       {
@@ -273,8 +268,7 @@ const setOnboarded = async ({
   if (!(Object.values(SERVICE_ROLE) as string[]).includes(license)) {
     throw new ValidationError("Unknown service license");
   }
-  if (license !== SERVICE_ROLE.RIDER &&
-    license !== SERVICE_ROLE.VOLUNTEER) {
+  if (license !== SERVICE_ROLE.RIDER) {
     throw new ForbiddenError(
       "Provider access comes from a provider record",
     );
@@ -292,13 +286,11 @@ const setOnboarded = async ({
 };
 
 const updateServices = async ({
-  actorId,
   isAdmin,
   targetUserId,
   grant,
   revoke,
 }: {
-  actorId: string;
   isAdmin: boolean;
   targetUserId: string;
   grant?: string[];
@@ -313,14 +305,7 @@ const updateServices = async ({
     }
   }
   if (!isAdmin) {
-    if (targetUserId !== actorId) {
-      throw new ForbiddenError("Only admins change other users");
-    }
-    for (const license of [...(grant ?? []), ...(revoke ?? [])]) {
-      if (license !== SERVICE_ROLE.VOLUNTEER) {
-        throw new ForbiddenError("Only the volunteer license is self-served");
-      }
-    }
+    throw new ForbiddenError("Only admins change services");
   }
   const current = Array.isArray(target.services) ? target.services : [];
   const granted = current.concat(
@@ -328,24 +313,13 @@ const updateServices = async ({
   );
   const revoked = new Set(revoke ?? []);
   const services = granted.filter((license) => !revoked.has(license));
-  let volunteerCleared = false;
-  if (
-    current.includes(SERVICE_ROLE.VOLUNTEER) &&
-    !services.includes(SERVICE_ROLE.VOLUNTEER)
-  ) {
-    await userRepository.updateVolunteer(targetUserId, {
-      volunteerAvailable: false,
-    });
-    await volunteerLocationRepository.remove(targetUserId);
-    volunteerCleared = true;
-  }
   await userRepository.updateOnboarded(targetUserId, {
     onboarded: target.onboarded === true,
     services,
   });
   cacheManager.del(USER_NS, targetUserId);
   cacheManager.del(USER_NS, "__all__");
-  return {updated: 1, services, volunteerCleared};
+  return {updated: 1, services};
 };
 
 export {
@@ -360,9 +334,7 @@ export {
   updateTrustScore,
   updateStatus,
   updateProfile,
-  setVolunteerAvailability,
-  volunteerHeartbeat,
-  sweepStaleVolunteers,
+  sweepStalePresence,
   ValidationError,
   NotFoundError,
   ForbiddenError,

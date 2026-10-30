@@ -91,50 +91,6 @@ const updateProfile = async (req: Request, res: Response) => {
   }
 };
 
-const setVolunteerAvailability = async (req: Request, res: Response) => {
-  try {
-    const {uid: userId} = req as AuthedRequest;
-    const {available, volunteerRadiusKm, capability} = req.body;
-    const result = await userService.setVolunteerAvailability({
-      userId,
-      available,
-      volunteerRadiusKm,
-      capability,
-    });
-    sendSuccess(res, result, {message: "Volunteer status updated"});
-  } catch (error) {
-    handleServiceError(res, error as Error);
-  }
-};
-
-const volunteerHeartbeat = async (req: Request, res: Response) => {
-  try {
-    const {uid: userId} = req as AuthedRequest;
-    const {lat, lng} = req.body;
-    const result = await userService.volunteerHeartbeat({
-      userId,
-      lat,
-      lng,
-    });
-    sendSuccess(res, result);
-  } catch (error) {
-    handleServiceError(res, error as Error);
-  }
-};
-
-const sweepVolunteers = async (_req: Request, res: Response) => {
-  try {
-    const count = await userService.sweepStaleVolunteers();
-    sendSuccess(
-      res,
-      {swept: count},
-      {message: "Stale volunteer locations removed"},
-    );
-  } catch (error) {
-    handleServiceError(res, error as Error);
-  }
-};
-
 const userRatings = async (req: Request, res: Response) => {
   try {
     const {uid: callerId} = req as AuthedRequest;
@@ -185,10 +141,10 @@ const setOnboarded = async (req: Request, res: Response) => {
 
 const updateServices = async (req: Request, res: Response) => {
   try {
-    const {uid: actorId, userRole} = req as AuthedRequest;
+    const {userRole} = req as AuthedRequest;
     const {targetUserId, grant, revoke} = req.body;
     const result = await userService.updateServices(
-      {actorId, isAdmin: userRole === "1", targetUserId, grant, revoke});
+      {isAdmin: userRole === "1", targetUserId, grant, revoke});
     sendSuccess(res, result, {message: "Service licenses updated"});
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -207,8 +163,5 @@ export {
   updateTrustScore,
   updateStatus,
   updateProfile,
-  setVolunteerAvailability,
-  volunteerHeartbeat,
-  sweepVolunteers,
   userRatings,
 };

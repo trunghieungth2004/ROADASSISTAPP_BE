@@ -15,7 +15,6 @@ import userRoutes from "../../routes/userRoutes";
 import roleRoutes from "../../routes/roleRoutes";
 import statusRoutes from "../../routes/statusRoutes";
 import vehicleProfileRoutes from "../../routes/vehicleProfileRoutes";
-import alleySegmentRoutes from "../../routes/alleySegmentRoutes";
 import flagRoutes from "../../routes/flagRoutes";
 import landmarkRoutes from "../../routes/landmarkRoutes";
 import placesRoutes from "../../routes/placesRoutes";
@@ -40,7 +39,6 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   roleRoutes(app, deps);
   statusRoutes(app, deps);
   vehicleProfileRoutes(app, deps);
-  alleySegmentRoutes(app, deps);
   flagRoutes(app, deps);
   landmarkRoutes(app, deps);
   placesRoutes(app, deps);

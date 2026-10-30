@@ -49,7 +49,7 @@ describe("docs drift guard", () => {
 
   it("licence list matches SERVICE_ROLE", () => {
     expect(Object.values(SERVICE_ROLE).sort()).toEqual(
-      ["RIDER", "VOLUNTEER"],
+      ["RIDER"],
     );
     const api = readDoc("API.md");
     for (const role of Object.values(SERVICE_ROLE)) {

@@ -13,7 +13,7 @@ const TARGET = `${PREFIX}-target`;
 beforeAll(async () => {
   await cleanAll();
   await seedUser(ADMIN, "1");
-  await seedUser(RIDER, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
+  await seedUser(RIDER, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
   await seedUser(TARGET, "2");
 });
 
@@ -137,133 +137,38 @@ describe("user endpoints", () => {
   });
 });
 
-describe("volunteer endpoints", () => {
-  it("PUT /users/volunteer opts in and out", async () => {
-    const on = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: true});
-    expect(on.status).toBe(200);
-    expect(on.body.data).toEqual({updated: 1, available: true});
-    let doc = await db.collection("users").doc(RIDER).get();
-    expect(doc.data()?.volunteerAvailable).toBe(true);
-    const off = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: false});
-    expect(off.status).toBe(200);
-    doc = await db.collection("users").doc(RIDER).get();
-    expect(doc.data()?.volunteerAvailable).toBe(false);
-  });
-
-  it("heartbeat requires volunteer mode", async () => {
-    const res = await request(app)
-      .post("/users/volunteer/heartbeat")
-      .set("Authorization", bearer(RIDER))
-      .send({lat: 10.7626, lng: 106.6602});
-    expect(res.status).toBe(400);
-  });
-
-  it("heartbeat records the volunteer location", async () => {
-    await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: true});
-    const res = await request(app)
-      .post("/users/volunteer/heartbeat")
-      .set("Authorization", bearer(RIDER))
-      .send({lat: 10.7626, lng: 106.6602});
-    expect(res.status).toBe(200);
-    expect(res.body.data.uid).toBe(RIDER);
-    await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: false});
-  });
-});
-
-describe("volunteer capability", () => {
-  it("PUT /users/volunteer stores the capability", async () => {
-    const res = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: true, capability: "CAR"});
-    expect(res.status).toBe(200);
-    const doc = await db.collection("users").doc(RIDER).get();
-    expect(doc.data()?.capability).toBe("CAR");
-    await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: false});
-  });
-});
-
 describe("service licenses", () => {
-  it("PUT /users/volunteer rejects callers without the license", async () => {
-    const res = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(TARGET))
-      .send({available: true});
-    expect(res.status).toBe(403);
-  });
-
   it("PUT /users/services refuses other users without admin role", async () => {
     const res = await request(app)
       .put("/users/services")
       .set("Authorization", bearer(RIDER))
-      .send({targetUserId: TARGET, grant: ["VOLUNTEER"]});
+      .send({targetUserId: TARGET, grant: ["RIDER"]});
     expect(res.status).toBe(403);
   });
 
-  it("a user revokes its own volunteer license", async () => {
+  it("admin grants and revokes licenses", async () => {
     const revoke = await request(app)
       .put("/users/services")
-      .set("Authorization", bearer(RIDER))
-      .send({targetUserId: RIDER, revoke: ["VOLUNTEER"]});
+      .set("Authorization", bearer(ADMIN))
+      .send({targetUserId: TARGET, revoke: ["RIDER"]});
     expect(revoke.status).toBe(200);
-    expect(revoke.body.data.services).not.toContain("VOLUNTEER");
-    const denied = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(RIDER))
-      .send({available: true});
-    expect(denied.status).toBe(403);
-  });
-
-  it("admin grants and revokes licenses", async () => {
+    expect(revoke.body.data.services).not.toContain("RIDER");
     const grant = await request(app)
       .put("/users/services")
       .set("Authorization", bearer(ADMIN))
-      .send({targetUserId: TARGET, grant: ["VOLUNTEER"]});
+      .send({targetUserId: TARGET, grant: ["RIDER"]});
     expect(grant.status).toBe(200);
-    expect(grant.body.data.services).toEqual(
-      expect.arrayContaining(["RIDER", "VOLUNTEER"]),
-    );
-    const toggle = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(TARGET))
-      .send({available: true});
-    expect(toggle.status).toBe(200);
-    const revoke = await request(app)
-      .put("/users/services")
-      .set("Authorization", bearer(ADMIN))
-      .send({targetUserId: TARGET, revoke: ["VOLUNTEER"]});
-    expect(revoke.status).toBe(200);
-    expect(revoke.body.data.services).not.toContain("VOLUNTEER");
-    const denied = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(TARGET))
-      .send({available: false});
-    expect(denied.status).toBe(403);
+    expect(grant.body.data.services).toContain("RIDER");
   });
 
   it("PUT /users/onboard accepts the renamed service field", async () => {
     const res = await request(app)
       .put("/users/onboard")
       .set("Authorization", bearer(TARGET))
-      .send({service: "VOLUNTEER"});
+      .send({service: "RIDER"});
     expect(res.status).toBe(200);
     const doc = await db.collection("users").doc(TARGET).get();
-    expect(doc.data()?.services).toContain("VOLUNTEER");
+    expect(doc.data()?.services).toContain("RIDER");
   });
 
   it("PUT /users/onboard refuses retired provider licenses", async () => {
@@ -287,7 +192,7 @@ describe("me and onboarding endpoints", () => {
     const created = await request(app)
       .post("/vehicleProfiles")
       .set("Authorization", bearer(RIDER))
-      .send({type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1});
+      .send({type: "BIKE", baseWidth: 0.7, baseHeight: 1.1});
     expect(created.status).toBe(201);
     profileId = created.body.data.id as string;
     const res = await request(app)
@@ -321,7 +226,7 @@ describe("me and onboarding endpoints", () => {
       .send({});
     expect(me.body.data.activeVehicle).toMatchObject({
       id: profileId,
-      type: "SCOOTER",
+      type: "BIKE",
     });
     const clear = await request(app)
       .put("/users/activeVehicle")
@@ -345,12 +250,12 @@ describe("me and onboarding endpoints", () => {
     const second = await request(app)
       .put("/users/onboard")
       .set("Authorization", bearer(RIDER))
-      .send({role: "VOLUNTEER"});
+      .send({role: "RIDER"});
     expect(second.status).toBe(200);
     const doc = await db.collection("users").doc(RIDER).get();
     expect(doc.data()?.onboarded).toBe(true);
     expect(doc.data()?.services).toEqual(
-      expect.arrayContaining(["RIDER", "VOLUNTEER"]),
+      expect.arrayContaining(["RIDER"]),
     );
   });
 

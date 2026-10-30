@@ -4,7 +4,6 @@ import {
   cleanAll,
   seedUser,
   seedFlag,
-  seedSegment,
   db,
   PREFIX,
   BASE_LAT,
@@ -163,40 +162,6 @@ describe("routing endpoints", () => {
       .set("Authorization", bearer(USER))
       .send({...body, destLat: 10.79});
     expect(res.status).toBe(500);
-  });
-
-  it("POST /routes 409s on a narrower segment", async () => {
-    const geometry = {
-      type: "LineString",
-      coordinates: [
-        [106.66, 10.76],
-        [106.7, 10.78],
-      ],
-    };
-    jest.mocked(global.fetch).mockImplementation(async () => {
-      return {
-        ok: true,
-        json: async () => valhallaRoute(geometry, 2450, 512),
-      } as unknown as Response;
-    });
-    const segId = await seedSegment({
-      lat: 10.77,
-      lng: 106.68,
-      baseWidth: 0.5,
-    });
-    const res = await request(app)
-      .post("/routes")
-      .set("Authorization", bearer(USER))
-      .send({...body, width: 0.9, destLat: 10.796, destLng: 106.711});
-    expect(res.status).toBe(409);
-    expect(res.body.message).toBe(
-      "Route is impassable for this vehicle width",
-    );
-    expect(res.body.errors[0]).toMatchObject({
-      segmentId: segId,
-      baseWidth: 0.5,
-    });
-    await db.collection("alley_segments").doc(segId).delete();
   });
 });
 

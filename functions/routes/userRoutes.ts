@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import * as userController from "../controller/userController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/users/register",
+    writeLimited,
     validate({body: schemas.register}),
     userController.register,
   );
@@ -26,6 +28,7 @@ export default (
   );
   app.put(
     "/users/activeVehicle",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.setActiveVehicle}),
@@ -33,6 +36,7 @@ export default (
   );
   app.put(
     "/users/onboard",
+    writeLimited,
     requireAuth,
     validate({body: schemas.setOnboarded}),
     userController.setOnboarded,
@@ -45,6 +49,7 @@ export default (
   );
   app.put(
     "/users/role",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.updateUserRole}),
@@ -52,6 +57,7 @@ export default (
   );
   app.put(
     "/users/trust",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.updateUserTrust}),
@@ -59,6 +65,7 @@ export default (
   );
   app.put(
     "/users/status",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.updateUserStatus}),
@@ -66,39 +73,22 @@ export default (
   );
   app.put(
     "/users/services",
+    writeLimited,
     requireAuth,
     validate({body: schemas.updateUserServices}),
     userController.updateServices,
   );
   app.put(
     "/users/profile",
+    writeLimited,
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),
     validate({body: schemas.updateProfile}),
     userController.updateProfile,
   );
-  app.put(
-    "/users/volunteer",
-    requireAuth,
-    requireService(SERVICE_ROLE.VOLUNTEER),
-    validate({body: schemas.volunteerToggle}),
-    userController.setVolunteerAvailability,
-  );
-  app.post(
-    "/users/volunteer/heartbeat",
-    requireAuth,
-    requireService(SERVICE_ROLE.VOLUNTEER),
-    validate({body: schemas.volunteerHeartbeat}),
-    userController.volunteerHeartbeat,
-  );
-  app.post(
-    "/users/volunteers/sweep",
-    requireAuth,
-    requireRole("1"),
-    userController.sweepVolunteers,
-  );
   app.post(
     "/users/ratings",
+    writeLimited,
     requireAuth,
     validate({body: schemas.userRatings}),
     userController.userRatings,

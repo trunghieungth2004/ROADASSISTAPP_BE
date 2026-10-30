@@ -13,17 +13,12 @@ const valid: Record<string, unknown> = {
   updateUserRole: {targetUserId: "u1", role: "1"},
   updateUserTrust: {targetUserId: "u1", trustScore: 60},
   updateUserStatus: {targetUserId: "u1", status: "0"},
-  setOnboarded: {service: "VOLUNTEER"},
-  updateUserServices: {targetUserId: "u1", grant: ["VOLUNTEER"]},
+  setOnboarded: {service: "RIDER"},
+  updateUserServices: {targetUserId: "u1", grant: ["RIDER"]},
   updateProfile: {displayName: "New Name"},
-  createVehicleProfile: {type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1},
+  createVehicleProfile: {type: "BIKE", baseWidth: 0.7, baseHeight: 1.1},
   addRideConfig: {profileId: "p1", configType: "CARGO"},
   getAllVehicleProfiles: {},
-  getAlleySegment: {segmentId: "s1"},
-  searchAlleysNear: {lat: 10.7626, lng: 106.6602},
-  createAlleySegment: {lat: 10.7626, lng: 106.6602, tier: "TIER2"},
-  setPassability: {segmentId: "s1", tier: "TIER1"},
-  moderateSegment: {segmentId: "s1"},
   createFlag: {type: "FLOOD", lat: 10.7626, lng: 106.6602},
   moderateFlag: {flagId: "f1", status: "3"},
   getFlagsNear: {lat: 10.7626, lng: 106.6602},
@@ -61,11 +56,9 @@ const valid: Record<string, unknown> = {
   refreshTowEta: {ticketId: "t1"},
   nearDispatch: {lat: 10.7, lng: 106.6},
   dispatchOffers: {lat: 10.7, lng: 106.6, kind: "TOW"},
-  volunteerToggle: {available: true},
-  volunteerHeartbeat: {lat: 10.7, lng: 106.6},
   submitRating: {
     targetId: "vol1",
-    targetKind: "VOLUNTEER",
+    targetKind: "SHOP",
     ticketId: "t1",
     score: 5,
   },
@@ -120,10 +113,10 @@ describe("schemas reject invalid input", () => {
 
   it("setOnboarded accepts service or legacy role, not neither", () => {
     expect(
-      table.setOnboarded.validate({service: "VOLUNTEER"}).error,
+      table.setOnboarded.validate({service: "RIDER"}).error,
     ).toBeUndefined();
     expect(
-      table.setOnboarded.validate({role: "VOLUNTEER"}).error,
+      table.setOnboarded.validate({role: "RIDER"}).error,
     ).toBeUndefined();
     expect(
       table.setOnboarded.validate({service: "TOW"}).error,
@@ -142,7 +135,7 @@ describe("schemas reject invalid input", () => {
       table.updateUserServices.validate({targetUserId: "u1"}).error,
     ).toBeDefined();
     expect(
-      table.updateUserServices.validate({grant: ["VOLUNTEER"]}).error,
+      table.updateUserServices.validate({grant: ["RIDER"]}).error,
     ).toBeDefined();
     expect(
       table.updateUserServices.validate(
@@ -154,12 +147,12 @@ describe("schemas reject invalid input", () => {
   it("updateUserServices rejects duplicated licenses", () => {
     expect(
       table.updateUserServices.validate(
-        {targetUserId: "u1", grant: ["VOLUNTEER", "VOLUNTEER"]},
+        {targetUserId: "u1", grant: ["RIDER", "RIDER"]},
       ).error,
     ).toBeDefined();
     expect(
       table.updateUserServices.validate(
-        {targetUserId: "u1", revoke: ["VOLUNTEER", "VOLUNTEER"]},
+        {targetUserId: "u1", revoke: ["RIDER", "RIDER"]},
       ).error,
     ).toBeDefined();
   });
@@ -186,34 +179,6 @@ describe("schemas reject invalid input", () => {
       configType: "DUO",
     });
     expect(error).toBeDefined();
-  });
-
-  it("createAlleySegment rejects bad tier and out-of-range coords", () => {
-    const base = {lat: 10.7, lng: 106.6, tier: "TIER1"};
-    expect(
-      table.createAlleySegment.validate({...base, tier: "T9"}).error,
-    ).toBeDefined();
-    expect(
-      table.createAlleySegment.validate({...base, lat: 91}).error,
-    ).toBeDefined();
-    expect(
-      table.createAlleySegment.validate({...base, lng: 181}).error,
-    ).toBeDefined();
-    expect(
-      table.createAlleySegment.validate({...base, tier: undefined}).error,
-    ).toBeDefined();
-  });
-
-  it("setPassability requires segment and tier", () => {
-    expect(table.setPassability.validate({tier: "TIER1"}).error).toBeDefined();
-    expect(
-      table.setPassability.validate({segmentId: "s1"}).error,
-    ).toBeDefined();
-  });
-
-  it("moderateSegment allows tier and verifiedCount to be omitted", () => {
-    const {error} = table.moderateSegment.validate({segmentId: "s1"});
-    expect(error).toBeUndefined();
   });
 
   it("createFlag rejects bad type", () => {
@@ -376,7 +341,7 @@ describe("schemas reject invalid input", () => {
         name: "S",
         kind: "TOW",
         plate: "30A12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         vehicleWidth: 2.0,
       }).error,
     ).toBeUndefined();
@@ -385,7 +350,7 @@ describe("schemas reject invalid input", () => {
         ...base,
         name: "S",
         kind: "TOW",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
       }).error,
     ).toBeDefined();
     expect(
@@ -476,23 +441,10 @@ describe("schemas reject invalid input", () => {
       }).error,
     ).toBeUndefined();
     expect(
-      table.volunteerToggle.validate({
-        available: true,
-        capability: "CAR",
-      }).error,
-    ).toBeUndefined();
-    expect(
-      table.volunteerToggle.validate({
-        available: true,
-        capability: "PLANE",
-      }).error,
-    ).toBeDefined();
-    expect(
       table.dispatchOffers.validate({
         lat: 10.7,
         lng: 106.6,
         kind: "TOW",
-        accessWidthMeters: 2.5,
       }).error,
     ).toBeUndefined();
     expect(
@@ -518,9 +470,6 @@ describe("schemas reject invalid input", () => {
         ticketId: "t",
         score: 9,
       }).error,
-    ).toBeDefined();
-    expect(
-      table.volunteerToggle.validate({}).error,
     ).toBeDefined();
   });
 
@@ -562,7 +511,7 @@ describe("schemas reject invalid input", () => {
   });
 
   it("strips unknown fields when requested", () => {
-    const {error, value} = table.searchAlleysNear.validate(
+    const {error, value} = table.nearProviders.validate(
       {lat: 10.7, lng: 106.6, hacker: true},
       {stripUnknown: true},
     );
@@ -614,7 +563,7 @@ describe("phase 2 provider schemas", () => {
         name: "S",
         kind: "TOW",
         plate: "30A12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         vehicleClasses: ["CAR"],
       }).error,
     ).toBeDefined();
@@ -693,7 +642,7 @@ describe("phase 6 fee schemas", () => {
         name: "T",
         kind: "TOW",
         plate: "30A12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         towBaseFee: 500000,
         towPerKmFee: 20000,
       }).error,
@@ -704,7 +653,7 @@ describe("phase 6 fee schemas", () => {
         name: "T",
         kind: "TOW",
         plate: "30A12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         serviceFee: 1,
       }).error,
     ).toBeDefined();
