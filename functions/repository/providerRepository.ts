@@ -27,6 +27,7 @@ interface Provider {
   plateRaw?: string | null;
   vehicleType?: string | null;
   vehicleWidth?: number | null;
+  vehicleProfileId?: string | null;
   towBaseFee?: number | null;
   towPerKmFee?: number | null;
   status: string;
@@ -73,7 +74,7 @@ const createShop = async (data: {
     vehicleClasses: data.vehicleClasses ?? null,
     services: data.services ?? [],
     serviceFee: data.serviceFee ?? null,
-    accepting: true,
+    accepting: false,
     plate: null,
     plateRaw: null,
     vehicleType: null,
@@ -106,6 +107,11 @@ const createMobileShop = async (data: {
   vehicleClasses: string[];
   licenseNumber: string;
   licensePhotoUrl?: string;
+  plate: string;
+  plateRaw: string;
+  vehicleType: string;
+  vehicleWidth?: number | null;
+  vehicleProfileId?: string | null;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc();
   const doc = {
@@ -121,11 +127,12 @@ const createMobileShop = async (data: {
     vehicleClasses: data.vehicleClasses,
     services: [],
     serviceFee: null,
-    accepting: true,
-    plate: null,
-    plateRaw: null,
-    vehicleType: null,
-    vehicleWidth: null,
+    accepting: false,
+    plate: data.plate,
+    plateRaw: data.plateRaw,
+    vehicleType: data.vehicleType,
+    vehicleWidth: data.vehicleWidth ?? null,
+    vehicleProfileId: data.vehicleProfileId ?? null,
     licenseNumber: data.licenseNumber,
     licensePhotoUrl: data.licensePhotoUrl ?? null,
     status: PROVIDER_STATUS.PENDING,
@@ -157,6 +164,7 @@ const createTow = async (data: {
   plateRaw: string;
   vehicleType: string;
   vehicleWidth?: number | null;
+  vehicleProfileId?: string | null;
   towBaseFee?: number;
   towPerKmFee?: number;
 }): Promise<Provider> => {
@@ -171,11 +179,12 @@ const createTow = async (data: {
     lng: data.lng,
     label: data.label ?? null,
     openHours: null,
-    accepting: true,
+    accepting: false,
     plate: data.plate,
     plateRaw: data.plateRaw,
     vehicleType: data.vehicleType,
     vehicleWidth: data.vehicleWidth ?? null,
+    vehicleProfileId: data.vehicleProfileId ?? null,
     towBaseFee: data.towBaseFee ?? null,
     towPerKmFee: data.towPerKmFee ?? null,
     status: PROVIDER_STATUS.PENDING,
@@ -215,6 +224,20 @@ const findByOperator = async (operatorUid: string): Promise<Provider[]> => {
   return results;
 };
 
+const findByVehicleProfileId = async (
+  vehicleProfileId: string,
+): Promise<Provider[]> => {
+  const snapshot = await db
+    .collection("providers")
+    .where("vehicleProfileId", "==", vehicleProfileId)
+    .get();
+  const results: Provider[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Provider),
+  );
+  return results;
+};
+
 const findPending = async (): Promise<Provider[]> => {
   const snapshot = await db
     .collection("providers")
@@ -229,8 +252,14 @@ const findPending = async (): Promise<Provider[]> => {
 
 const findByPlate = async (plate: string): Promise<Provider | null> => {
   const doc = await db.collection("providers").doc(plate).get();
-  if (!doc.exists) return null;
-  return {id: doc.id, ...doc.data()} as Provider;
+  if (doc.exists) return {id: doc.id, ...doc.data()} as Provider;
+  const snap = await db.collection("providers")
+    .where("plate", "==", plate)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const row = snap.docs[0];
+  return {id: row.id, ...row.data()} as Provider;
 };
 
 const update = async (
@@ -323,6 +352,7 @@ export {
   findById,
   findByOperator,
   findPending,
+  findByVehicleProfileId,
   findByPlate,
   update,
   decide,

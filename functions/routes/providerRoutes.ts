@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import * as providerController from "../controller/providerController";
 
 export default (
@@ -8,12 +9,14 @@ export default (
 ) => {
   app.post(
     "/providers",
+    writeLimited,
     requireAuth,
     validate({body: schemas.createProvider}),
     providerController.createProvider,
   );
   app.put(
     "/providers",
+    writeLimited,
     requireAuth,
     validate({body: schemas.updateProvider}),
     providerController.updateProvider,
@@ -50,13 +53,22 @@ export default (
   );
   app.post(
     "/providers/review",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.reviewProvider}),
     providerController.reviewProvider,
   );
   app.post(
+    "/providers/revoke",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.revokeProvider}),
+    providerController.revokeProvider,
+  );
+  app.post(
     "/providers/report",
+    writeLimited,
     requireAuth,
     validate({body: schemas.reportProvider}),
     providerController.reportProvider,
@@ -70,6 +82,7 @@ export default (
   );
   app.post(
     "/providers/reports/dismiss",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.dismissReport}),
@@ -77,6 +90,7 @@ export default (
   );
   app.post(
     "/providers/suspend",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.suspendProvider}),
@@ -84,6 +98,7 @@ export default (
   );
   app.post(
     "/providers/restore",
+    writeLimited,
     requireAuth,
     requireRole("1"),
     validate({body: schemas.restoreProvider}),
@@ -91,6 +106,7 @@ export default (
   );
   app.post(
     "/providers/location",
+    writeLimited,
     requireAuth,
     validate({body: schemas.updateProviderLocation}),
     providerController.updateProviderLocation,

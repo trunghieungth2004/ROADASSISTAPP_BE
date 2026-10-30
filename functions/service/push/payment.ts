@@ -1,21 +1,21 @@
-import {messaging} from "../config/firebase";
+import {messaging} from "../../config/firebase";
 import {
   DEAD_TOKEN_CODES,
   SEND_CHUNK,
-} from "./dispatch/constants";
-import * as fcmTokenRepository from "../repository/fcmTokenRepository";
-import * as userRepository from "../repository/userRepository";
+} from "../dispatch/constants";
+import * as fcmTokenRepository from "../../repository/fcmTokenRepository";
+import * as userRepository from "../../repository/userRepository";
 import {
   NOTIFICATION_CHANNEL,
   NOTIFICATION_PREFS_FIELD,
   PAYMENT_PUSH_EVENT,
-} from "../constants/notifications";
+} from "../../constants/notifications";
 import {
   PAYMENT_CURRENCY,
   PAYMENT_METHOD,
-} from "../constants/payments";
-import {fcmEnabled} from "./pushService";
-import {prefsFor} from "./notificationService";
+} from "../../constants/payments";
+import {fcmEnabled} from "./service";
+import {prefsFor} from "../notificationService";
 
 type PushResult = {delivered: number; skipped: boolean};
 

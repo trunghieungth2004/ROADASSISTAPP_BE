@@ -1,5 +1,5 @@
 import {Request, Response} from "express";
-import * as pushService from "../service/pushService";
+import * as pushService from "../service/push/service";
 import {QUEUE_NAME} from "../service/taskQueueService";
 import {sendError, sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";

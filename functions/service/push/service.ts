@@ -1,14 +1,14 @@
-import {messaging} from "../config/firebase";
-import {STATUS_FLAGS} from "../constants/status";
-import * as flagRepository from "../repository/flagRepository";
-import * as activeRouteRepository from "../repository/activeRouteRepository";
-import * as fcmTokenRepository from "../repository/fcmTokenRepository";
+import {messaging} from "../../config/firebase";
+import {STATUS_FLAGS} from "../../constants/status";
+import * as flagRepository from "../../repository/flagRepository";
+import * as activeRouteRepository from "../../repository/activeRouteRepository";
+import * as fcmTokenRepository from "../../repository/fcmTokenRepository";
 import {
   BLOCKING_STATUSES,
   BLOCKING_TYPES,
   effectiveRadiusMeters,
-} from "./closureService";
-import {lineStringHitsCircles} from "../utils/geo";
+} from "../closureService";
+import {lineStringHitsCircles} from "../../utils/geo";
 
 const SEND_CHUNK = 500;
 const DEAD_TOKEN_CODES = new Set([

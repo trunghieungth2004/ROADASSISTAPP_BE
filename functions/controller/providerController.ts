@@ -30,7 +30,8 @@ const createProvider = async (req: Request, res: Response) => {
           lat,
           lng,
           label,
-          vehicleClasses,
+          plate,
+          vehicleType,
           licenseNumber,
           licensePhotoUrl,
         }) :
@@ -55,8 +56,8 @@ const updateProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {providerId, name, label, openHours, vehicleClasses, services,
-      serviceFee, licenseNumber, licensePhotoUrl, towBaseFee, towPerKmFee,
-      accepting, lat, lng} = req.body;
+      serviceFee, licenseNumber, licensePhotoUrl, plate, vehicleType,
+      vehicleWidth, towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
@@ -69,6 +70,9 @@ const updateProvider = async (req: Request, res: Response) => {
         serviceFee,
         licenseNumber,
         licensePhotoUrl,
+        plate,
+        vehicleType,
+        vehicleWidth,
         towBaseFee,
         towPerKmFee,
         accepting,
@@ -85,7 +89,7 @@ const updateProvider = async (req: Request, res: Response) => {
 const myProviders = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const result = await providerService.myProviders({userId});
+    const result = await providerService.getMyProviders({userId});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -96,7 +100,7 @@ const nearProviders = async (req: Request, res: Response) => {
   try {
     const {lat, lng, kind, radiusMeters, acceptingOnly, openOnly,
       vehicleClass, limit, minRating, sortBy, ticketId} = req.body;
-    const result = await providerService.nearProviders({
+    const result = await providerService.getNearbyProviders({
       lat,
       lng,
       kind,
@@ -136,6 +140,17 @@ const reviewProvider = async (req: Request, res: Response) => {
       reviewNote,
     });
     sendSuccess(res, result, {message: "Provider reviewed"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const revokeProvider = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {providerId} = req.body;
+    const result = await providerService.revokeProvider({userId, providerId});
+    sendSuccess(res, result, {message: "Provider licence revoked"});
   } catch (error) {
     handleServiceError(res, error as Error);
   }
@@ -266,4 +281,4 @@ const providerRatings = async (req: Request, res: Response) => {
 export {createProvider, updateProvider, myProviders, nearProviders,
   searchProviders, providerRatings,
   listPending, reviewProvider, reportProvider, listReports, dismissReport,
-  suspendProvider, restoreProvider, updateProviderLocation};
+  suspendProvider, restoreProvider, revokeProvider, updateProviderLocation};

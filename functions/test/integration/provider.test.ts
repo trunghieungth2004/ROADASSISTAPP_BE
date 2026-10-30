@@ -76,7 +76,7 @@ describe("provider endpoints", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         plate: "30A-12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         vehicleWidth: 2.0,
       });
     expect(tow.status).toBe(201);
@@ -184,7 +184,7 @@ describe("provider moderation flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         plate: "77X-11111",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
       });
     expect(tow.status).toBe(201);
     const review = await request(app)
@@ -267,7 +267,17 @@ describe("provider moderation flow", () => {
       .send({lat: BASE_LAT, lng: BASE_LNG, kind: "TOW"});
     expect(back.status).toBe(200);
     const backIds = (back.body.data as {id: string}[]).map((s) => s.id);
-    expect(backIds).toContain(towId);
+    expect(backIds).not.toContain(towId);
+    await request(app)
+      .put("/providers")
+      .set("Authorization", bearer(TOWOP))
+      .send({providerId: towId, accepting: true});
+    const on = await request(app)
+      .post("/dispatch/offers")
+      .set("Authorization", bearer(RIDER))
+      .send({lat: BASE_LAT, lng: BASE_LNG, kind: "TOW"});
+    const onIds = (on.body.data as {id: string}[]).map((s) => s.id);
+    expect(onIds).toContain(towId);
   });
 
   it("POST /providers/location tracks only on-duty tow providers", async () => {

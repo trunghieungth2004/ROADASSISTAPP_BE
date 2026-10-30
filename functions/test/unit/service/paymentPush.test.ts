@@ -1,16 +1,16 @@
 import {messaging} from "../../../config/firebase";
 import * as fcmTokenRepository from "../../../repository/fcmTokenRepository";
 import * as userRepository from "../../../repository/userRepository";
-import * as pushService from "../../../service/pushService";
+import * as pushService from "../../../service/push/service";
 import {
   deliverOpened,
   deliverPayout,
   deliverReceived,
-} from "../../../service/paymentPush";
+} from "../../../service/push/payment";
 
 jest.mock("../../../repository/fcmTokenRepository");
 jest.mock("../../../repository/userRepository");
-jest.mock("../../../service/pushService", () => ({fcmEnabled: jest.fn()}));
+jest.mock("../../../service/push/service", () => ({fcmEnabled: jest.fn()}));
 
 const payment = {
   id: "pay1",

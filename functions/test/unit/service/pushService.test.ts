@@ -3,7 +3,7 @@ import * as activeRouteRepository from
   "../../../repository/activeRouteRepository";
 import * as fcmTokenRepository from "../../../repository/fcmTokenRepository";
 import {messaging} from "../../../config/firebase";
-import {deliverHazardPush, pingOwnPush} from "../../../service/pushService";
+import {deliverHazardPush, pingOwnPush} from "../../../service/push/service";
 
 jest.mock("../../../repository/flagRepository");
 jest.mock("../../../repository/activeRouteRepository");
