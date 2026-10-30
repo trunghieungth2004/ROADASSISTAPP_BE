@@ -24,7 +24,7 @@ describe("vehicle profile endpoints", () => {
     const res = await request(app)
       .post("/vehicleProfiles")
       .set("Authorization", bearer(USER))
-      .send({type: "SCOOTER", baseWidth: 0.7, baseHeight: 1.1});
+      .send({type: "BIKE", baseWidth: 0.7, baseHeight: 1.1});
     expect(res.status).toBe(201);
     expect(res.body.data.id).toBeDefined();
     profileId = res.body.data.id as string;

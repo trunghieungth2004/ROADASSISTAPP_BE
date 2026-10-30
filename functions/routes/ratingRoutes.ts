@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import * as ratingController from "../controller/ratingController";
 
 export default (
@@ -8,12 +9,14 @@ export default (
 ) => {
   app.post(
     "/ratings",
+    writeLimited,
     requireAuth,
     validate({body: schemas.submitRating}),
     ratingController.submitRating,
   );
   app.post(
     "/ratings/reply",
+    writeLimited,
     requireAuth,
     validate({body: schemas.replyRating}),
     ratingController.replyRating,

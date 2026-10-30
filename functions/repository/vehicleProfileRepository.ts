@@ -70,6 +70,19 @@ const update = async (
     .update(data);
 };
 
+const remove = async (userId: string, profileId: string): Promise<void> => {
+  const ref = db
+    .collection("users")
+    .doc(userId)
+    .collection("vehicle_profiles")
+    .doc(profileId);
+  const configs = await ref.collection("ride_configs").get();
+  const batch = db.batch();
+  configs.forEach((doc) => batch.delete(doc.ref));
+  batch.delete(ref);
+  await batch.commit();
+};
+
 const addRideConfig = async (
   userId: string,
   profileId: string,
@@ -115,4 +128,12 @@ const findRideConfigs = async (
   return results;
 };
 
-export {findById, findByUser, create, update, addRideConfig, findRideConfigs};
+export {
+  findById,
+  findByUser,
+  create,
+  update,
+  remove,
+  addRideConfig,
+  findRideConfigs,
+};

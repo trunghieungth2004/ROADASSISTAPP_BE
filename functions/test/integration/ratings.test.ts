@@ -1,24 +1,46 @@
 import request from "supertest";
 import {buildIntegrationApp} from "../utils/app";
-import {STATUS_USER} from "../../constants/status";
 import {
   cleanAll,
   seedUser,
   PREFIX,
   BASE_LAT,
   BASE_LNG,
+  db,
 } from "../utils/seed";
 
 const app = buildIntegrationApp();
 const bearer = (uid: string) => `Bearer ${uid}`;
 
 const RIDER = `${PREFIX}-rider`;
-const VOL = `${PREFIX}-volunteer`;
+const TOWOP = `${PREFIX}-towop`;
+const TOW = `${PREFIX}-tow`;
+const PROFILE = `${PREFIX}-vehicle`;
 
 beforeAll(async () => {
   await cleanAll();
   await seedUser(RIDER, "2");
-  await seedUser(VOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
+  await seedUser(TOWOP, "2");
+  await db.collection("users").doc(RIDER).collection("vehicle_profiles")
+    .doc(PROFILE).set({
+      id: PROFILE,
+      type: "BIKE",
+      baseWidth: 0.7,
+      baseHeight: 1.1,
+      createdAt: new Date().toISOString(),
+    });
+  await db.collection("providers").doc(TOW).set({
+    id: TOW,
+    kind: "TOW",
+    name: "Tow Co",
+    status: "ACTIVE",
+    accepting: true,
+    operatorUid: TOWOP,
+    plate: "51A12345",
+    lat: BASE_LAT,
+    lng: BASE_LNG,
+    createdAt: new Date().toISOString(),
+  });
 });
 
 afterAll(async () => {
@@ -28,22 +50,25 @@ afterAll(async () => {
 describe("ratings endpoints", () => {
   let ticketId = "";
 
-  it("runs an SOS ticket to resolved", async () => {
-    const toggle = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(VOL))
-      .send({available: true});
-    expect(toggle.status).toBe(200);
+  it("runs a TOW ticket to resolved", async () => {
     const opened = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(RIDER))
-      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG});
+      .send({
+        ticketType: "TOW",
+        lat: BASE_LAT,
+        lng: BASE_LNG,
+        vehicleId: PROFILE,
+        vehicleType: "BIKE",
+        vehicleWidth: 0.7,
+        destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
+      });
     expect(opened.status).toBe(201);
     ticketId = opened.body.data.id as string;
     const accepted = await request(app)
       .post("/dispatch/accept")
-      .set("Authorization", bearer(VOL))
-      .send({ticketId});
+      .set("Authorization", bearer(TOWOP))
+      .send({ticketId, shopId: TOW});
     expect(accepted.status).toBe(200);
     const arrived = await request(app)
       .put("/dispatch/status")
@@ -62,8 +87,8 @@ describe("ratings endpoints", () => {
       .post("/ratings")
       .set("Authorization", bearer(RIDER))
       .send({
-        targetId: VOL,
-        targetKind: "VOLUNTEER",
+        targetId: TOW,
+        targetKind: "SHOP",
         ticketId: "ghost",
         score: 5,
       });
@@ -75,8 +100,8 @@ describe("ratings endpoints", () => {
       .post("/ratings")
       .set("Authorization", bearer(RIDER))
       .send({
-        targetId: VOL,
-        targetKind: "VOLUNTEER",
+        targetId: TOW,
+        targetKind: "SHOP",
         ticketId,
         score: 5,
       });
@@ -87,7 +112,7 @@ describe("ratings endpoints", () => {
   it("POST /ratings records helper to rider", async () => {
     const res = await request(app)
       .post("/ratings")
-      .set("Authorization", bearer(VOL))
+      .set("Authorization", bearer(TOWOP))
       .send({
         targetId: RIDER,
         targetKind: "RIDER",
@@ -103,8 +128,8 @@ describe("ratings endpoints", () => {
       .post("/ratings")
       .set("Authorization", bearer(RIDER))
       .send({
-        targetId: VOL,
-        targetKind: "VOLUNTEER",
+        targetId: TOW,
+        targetKind: "SHOP",
         ticketId,
         score: 9,
       });

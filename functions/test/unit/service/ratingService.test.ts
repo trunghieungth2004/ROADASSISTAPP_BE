@@ -23,12 +23,12 @@ beforeEach(() => {
   jest.spyOn(cacheManager, "del").mockImplementation(() => undefined);
 });
 
-const resolvedVolunteerTicket = {
+const resolvedTicket = {
   id: "t1",
   userId: "rider1",
   status: "4",
-  assignedUid: "vol1",
-  assignedShopId: null,
+  assignedUid: null,
+  assignedShopId: "shop1",
   destinationShopId: null,
 };
 
@@ -37,7 +37,7 @@ describe("ratingService.submitRating", () => {
     await expect(
       submitRating({
         byUserId: "rider1",
-        targetId: "vol1",
+        targetId: "shop1",
         targetKind: "ALIEN",
         ticketId: "t1",
         score: 5,
@@ -50,8 +50,8 @@ describe("ratingService.submitRating", () => {
       await expect(
         submitRating({
           byUserId: "rider1",
-          targetId: "vol1",
-          targetKind: "VOLUNTEER",
+          targetId: "shop1",
+          targetKind: "SHOP",
           ticketId: "t1",
           score,
         }),
@@ -64,8 +64,8 @@ describe("ratingService.submitRating", () => {
     await expect(
       submitRating({
         byUserId: "rider1",
-        targetId: "vol1",
-        targetKind: "VOLUNTEER",
+        targetId: "shop1",
+        targetKind: "SHOP",
         ticketId: "ghost",
         score: 5,
       }),
@@ -74,23 +74,23 @@ describe("ratingService.submitRating", () => {
 
   it("rejects ratings on unresolved tickets", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
-      ...resolvedVolunteerTicket,
+      ...resolvedTicket,
       status: "2",
     } as never);
     await expect(
       submitRating({
         byUserId: "rider1",
-        targetId: "vol1",
-        targetKind: "VOLUNTEER",
+        targetId: "shop1",
+        targetKind: "SHOP",
         ticketId: "t1",
         score: 5,
       }),
     ).rejects.toMatchObject({statusCode: 400});
   });
 
-  it("records a rider to volunteer rating", async () => {
+  it("records a rider to assigned shop rating", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
-      resolvedVolunteerTicket as never,
+      resolvedTicket as never,
     );
     jest.mocked(ratingRepository.findExisting).mockResolvedValue(null);
     jest.mocked(ratingRepository.create).mockResolvedValue({
@@ -103,21 +103,21 @@ describe("ratingService.submitRating", () => {
     await expect(
       submitRating({
         byUserId: "rider1",
-        targetId: "vol1",
-        targetKind: "VOLUNTEER",
+        targetId: "shop1",
+        targetKind: "SHOP",
         ticketId: "t1",
         score: 5,
       }),
     ).resolves.toEqual({avg: 5, count: 1, updated: 1});
     expect(ratingRepository.create).toHaveBeenCalledWith({
-      targetId: "vol1",
-      targetKind: "VOLUNTEER",
+      targetId: "shop1",
+      targetKind: "SHOP",
       byUserId: "rider1",
       ticketId: "t1",
       score: 5,
     });
-    expect(userRepository.updateRating).toHaveBeenCalledWith(
-      "vol1",
+    expect(providerRepository.updateRating).toHaveBeenCalledWith(
+      "shop1",
       5,
       1,
     );
@@ -128,7 +128,7 @@ describe("ratingService.submitRating", () => {
 
   it("updates an existing rating instead of duplicating", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
-      resolvedVolunteerTicket as never,
+      resolvedTicket as never,
     );
     jest.mocked(ratingRepository.findExisting).mockResolvedValue({
       id: "rate1",
@@ -139,8 +139,8 @@ describe("ratingService.submitRating", () => {
     });
     await submitRating({
       byUserId: "rider1",
-      targetId: "vol1",
-      targetKind: "VOLUNTEER",
+      targetId: "shop1",
+      targetKind: "SHOP",
       ticketId: "t1",
       score: 3,
       text: "Slow but solid",
@@ -155,13 +155,13 @@ describe("ratingService.submitRating", () => {
 
   it("rejects helpers not on the ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
-      resolvedVolunteerTicket as never,
+      resolvedTicket as never,
     );
     await expect(
       submitRating({
         byUserId: "rider1",
         targetId: "stranger",
-        targetKind: "VOLUNTEER",
+        targetKind: "SHOP",
         ticketId: "t1",
         score: 5,
       }),
@@ -170,7 +170,7 @@ describe("ratingService.submitRating", () => {
 
   it("records a rider to destination shop rating", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
-      ...resolvedVolunteerTicket,
+      ...resolvedTicket,
       destinationShopId: "shop9",
       fulfilledByShopId: "shop9",
     } as never);
@@ -198,10 +198,14 @@ describe("ratingService.submitRating", () => {
     );
   });
 
-  it("records a volunteer to rider rating", async () => {
+  it("records a shop operator to rider rating", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
-      resolvedVolunteerTicket as never,
+      resolvedTicket as never,
     );
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      operatorUid: "op1",
+    } as never);
     jest.mocked(ratingRepository.findExisting).mockResolvedValue(null);
     jest.mocked(ratingRepository.create).mockResolvedValue({
       id: "rate3",
@@ -212,7 +216,7 @@ describe("ratingService.submitRating", () => {
     });
     await expect(
       submitRating({
-        byUserId: "vol1",
+        byUserId: "op1",
         targetId: "rider1",
         targetKind: "RIDER",
         ticketId: "t1",
@@ -263,7 +267,7 @@ describe("ratingService.submitRating", () => {
 
   it("rejects strangers rating the rider", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
-      resolvedVolunteerTicket as never,
+      resolvedTicket as never,
     );
     await expect(
       submitRating({
@@ -344,15 +348,15 @@ describe("ratingService.replyToRating", () => {
   it("lets a rated user reply to their own rating", async () => {
     jest.mocked(ratingRepository.findById).mockResolvedValue({
       id: "r1",
-      targetId: "vol1",
-      targetKind: "VOLUNTEER",
+      targetId: "rider1",
+      targetKind: "RIDER",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "vol1",
+      id: "rider1",
       role: "2",
     } as never);
     await expect(
-      replyToRating({userId: "vol1", ratingId: "r1", reply: "Noted"}),
+      replyToRating({userId: "rider1", ratingId: "r1", reply: "Noted"}),
     ).resolves.toEqual({replied: true});
   });
   it("throws 404 for an unknown rating", async () => {
@@ -410,13 +414,13 @@ describe("ratingService.ratingsByTicket", () => {
       role: "2",
     } as never);
     jest.mocked(ratingRepository.listByTicket).mockResolvedValue([
-      {id: "r1", targetId: "vol1", targetKind: "VOLUNTEER", score: 5,
+      {id: "r1", targetId: "shop1", targetKind: "SHOP", score: 5,
         createdAt: "2026-01-01"},
     ] as never);
     await expect(
       ratingsByTicket({userId: "rider1", ticketId: "t1"}),
     ).resolves.toEqual([
-      {id: "r1", targetId: "vol1", targetKind: "VOLUNTEER", score: 5,
+      {id: "r1", targetId: "shop1", targetKind: "SHOP", score: 5,
         text: null, byUserName: null, repliedByName: null, reply: null,
         repliedAt: null, createdAt: "2026-01-01"},
     ]);
@@ -491,16 +495,20 @@ describe("ratingService.userRatings", () => {
   const ticket = {
     id: "t1",
     userId: "rider1",
-    assignedUid: "vol1",
+    assignedShopId: "shop1",
   };
-  it("returns a co-worker's ratings to a participant", async () => {
+  it("returns a rider's ratings to a shop operator", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "rider1",
+      id: "op1",
       role: "2",
     } as never);
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       ticket as never,
     );
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      operatorUid: "op1",
+    } as never);
     jest.mocked(ratingRepository.listByTarget).mockResolvedValue([
       {id: "r1", score: 5, ticketId: "t1", createdAt: "2026-01-01"},
     ] as never);
@@ -508,11 +516,12 @@ describe("ratingService.userRatings", () => {
       avg: 5,
       count: 1,
     });
+    jest.mocked(userRepository.findByIds).mockResolvedValue(new Map());
     await expect(
       userRatings({
-        callerId: "rider1",
-        userId: "vol1",
-        targetKind: "VOLUNTEER",
+        callerId: "op1",
+        userId: "rider1",
+        targetKind: "RIDER",
         ticketId: "t1",
       }),
     ).resolves.toEqual({
@@ -535,8 +544,8 @@ describe("ratingService.userRatings", () => {
     await expect(
       userRatings({
         callerId: "stranger",
-        userId: "vol1",
-        targetKind: "VOLUNTEER",
+        userId: "rider1",
+        targetKind: "RIDER",
         ticketId: "t1",
       }),
     ).rejects.toMatchObject({statusCode: 403});
@@ -565,11 +574,12 @@ describe("ratingService.userRatings", () => {
       avg: 0,
       count: 0,
     });
+    jest.mocked(userRepository.findByIds).mockResolvedValue(new Map());
     await expect(
       userRatings({
         callerId: "admin",
-        userId: "vol1",
-        targetKind: "VOLUNTEER",
+        userId: "rider1",
+        targetKind: "RIDER",
       }),
     ).resolves.toEqual({ratings: [], avg: 0, count: 0});
     expect(dispatchRepository.findById).not.toHaveBeenCalled();

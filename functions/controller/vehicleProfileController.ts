@@ -32,6 +32,20 @@ const createProfile = async (req: Request, res: Response) => {
   }
 };
 
+const removeProfile = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {profileId} = req.body;
+    const result = await vehicleProfileService.removeProfile({
+      userId,
+      profileId,
+    });
+    sendSuccess(res, result, {message: "Vehicle removed"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const addRideConfig = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -50,4 +64,4 @@ const addRideConfig = async (req: Request, res: Response) => {
 };
 
 
-export {getAllProfiles, createProfile, addRideConfig};
+export {getAllProfiles, createProfile, removeProfile, addRideConfig};
