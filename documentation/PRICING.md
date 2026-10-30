@@ -1,46 +1,43 @@
 # Tow Pricing & Fee Rules
 
-Tower billing is formula-driven from platform constants. Shop billing stays
-operator-driven (two-stage quotes below) — the two tiers never share a field
-name, so a shop bill and a tow fare can sit on one ticket without colliding.
-Charges are collected through the payment rails (`PAYMENTS.md`): `CASH`
-confirmed by the operator, `SEPAY` held via the VietQR checkout.
+Tower billing is formula-driven from `platform_config/global`. Shop billing
+stays operator-driven (one binding quote below) — the two tiers never share a
+field name, so a shop bill and a tow fare can sit on one ticket without
+colliding. Charges are collected through the payment rails (`PAYMENTS.md`):
+`CASH` confirmed by the operator, `SEPAY` held via the VietQR checkout.
 
 ## Rate card
 
-| Class | Base (VND) | Per km (VND) | Included km | Class mult |
-|---|---|---|---|---|
-| Bike (`SOLO_BIKE`) | 150,000 | 10,000 | 3 | 1× |
-| Car (`CAR`) | 500,000 | 25,000 | 10 | 2.5× |
+The card is read from `platform_config/global` at quote time; the defaults are:
 
-Night 1.5×, 22:00–06:00 Asia/Ho_Chi_Minh (same +7 shift as shop hours).
-Ceiling = estimate × 1.1, bound at accept and never moved by later restamps.
-Rounding is to the nearest 1,000 VND (cash practice). There is no minimum-fare
-floor in the implementation — a zero-distance completion settles at the
-rounded base × class × night only.
-Seeded from August-2026 VN listings (bike rescue 150–300k typical, car
-inner-city day 450–750k, heavy-truck +25k/km beyond 10 km). The constants in
-`service/dispatch/constants.ts` drive the stamped formula today; the
-`platform_config/global` tow card (`towBaseFee`, `towPerKmFee`,
-`carMultiplier`, `nightMultiplier`, `nightWindow`, `minimumTowFee`,
-`deadheadPayable`) is stored and admin-editable via `PUT /admin/config` but
-is not yet read by `fare.ts`, so retuning means editing the seeded constants.
-The near-board preview separately quotes the tower's own declared
-`towBaseFee`/`towPerKmFee` (legacy path, below).
+| Class | Base (VND) | Per km (VND) | Included km |
+|---|---|---|---|
+| Bike (`SOLO_BIKE`) | `towBaseFee` = 150,000 | `towPerKmFee` = 10,000 | `bikeIncludedKm` = 3 |
+| Car (`CAR`) | `carBaseFee` = 500,000 | `towPerKmFee × carMultiplier` = 25,000 | `carIncludedKm` = 10 |
+
+Night `nightMultiplier` = 1.5 over `nightWindow` = 22:00–06:00
+Asia/Ho_Chi_Minh (same +7 shift as shop hours). Ceiling =
+estimate × `ceilingMultiplier` (1.1), bound at accept and never moved by later
+restamps. `minimumTowFee` defaults to 0. Rounding is to the nearest 1,000 VND
+(cash practice). The admin card is live: `PUT /admin/config` retunes these
+values and the next quote uses them. A failed route call falls back to
+haversine distance for both deadhead and loaded legs.
 
 ## Formula
 
-`fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))`
+`fare = round1k(max(minimumFee, night × (base + perKm × max(0, loadedKm − includedKm))))`
 
 - **Loaded km** is the haul (pickup → destination), frozen from route
-  distance at accept. Detour risk sits with the tower — the rider never pays
-  for the tower getting lost.
+  distance at accept. At resolve it is the GPS-measured haul, capped at the
+  quoted km × 1.15; without GPS points it stays at the quoted distance.
 - **Deadhead** (tower → pickup) is tracked in `towLegs` with per-leg `actual`
   flags and bills **only** on cancel partials, from `actual` legs. Completed
   jobs never bill deadhead.
-- **Ceiling** = estimate × 1.1 at accept, binding later restamps. Final at
-  resolve = min(estimate, ceiling). Cancel partial = deadhead actuals × perKm
-  (class/night applied, no base, no threshold).
+- **Ceiling** = estimate × `ceilingMultiplier` at accept, binding later
+  restamps. Final at resolve = min(estimate, ceiling). Cancel partial =
+  `round1k(night × perKm × actualDeadheadKm)` (class/night applied, no base,
+  no included-km threshold, no call-out).
+- **Minimum** is applied before the final rounding and is not night-scaled.
 - Rounding is to the nearest 1,000 VND (cash practice).
 
 ## Lifecycle on the ticket (`towFare`)
@@ -104,10 +101,29 @@ a walk-in is refused (`400`).
 `UNFIXABLE`: when the shop finds the vehicle unfixable it closes via
 `POST /dispatch/unfixable` (`"15"` Unfixable) with a reason and evidence
 photo Storage paths instead of a final — allowed from
-`MATCHED`/`ARRIVED`/`IN_PROGRESS`/`IN_SHOP`/`QUOTED`/`FINAL_QUOTED`.
-Pending charges are cancelled (their QR stops being payable) and every
-`HELD` SePay charge refunds in full programmatically; the ticket resolves
-with no `final` and the shop's `completedJobs` does not increment.
+`MATCHED`/`ARRIVED`/`IN_PROGRESS`/`IN_SHOP`/`QUOTED`/`FINAL_QUOTED`
+(SOS only from `ARRIVED`). Shop tickets cancel pending charges and refund
+every `HELD` SePay charge in full; the ticket resolves with no `final` and
+the shop's `completedJobs` does not increment. SOS keeps a call-out-only
+charge: travel and repair are not charged. If the assigned mobile shop was
+within 1 km of the pickup at accept, the call-out is waived. The rider may
+continue to another mobile shop; each attempt keeps its own call-out and
+prior shops are excluded. If a direct same-vehicle TOW or a network TOW is
+available, the ticket gets a 2-minute grace for the mobile shop to offer or
+release; otherwise it auto-continues immediately. Attempt 3 onward requires
+explicit rider confirmation.
+
+## Network tow handoff
+
+When the assigned mobile shop cannot fix the vehicle and has no usable
+same-vehicle TOW (none linked, off duty, or busy), it can request a **network
+tow**. The offer is sent to the rider; on confirmation the rider picks a
+drop-off, a normal pending TOW is created with `sourceTicketId` pointing at
+the SOS, no `providerId`, `addressedTow: false`, and the usual nearby-tower
+broadcast. No tower is auto-accepted. The SOS call-out stays on the SOS; the
+accepting network tower bills the normal TOW fare. There is no mobile-shop
+referral fee. If the mobile shop has a usable same-vehicle TOW, the offer is
+`DIRECT` and the linked tower is assigned directly instead.
 
 ## Waiting-time billing
 
@@ -126,7 +142,7 @@ with a tower engaged, and stops on `"6"`/`"7"`/`"4"`/`"5"`, on unfixable, and
 on a mid-tow re-match. The window lives on the ticket
 (`waiting.{active, startedAt, endedAt, fee, withinRadius, accruedAt}`); tow
 tickets mirror it into `towFare.waitingFee`, which is part of the tow item on
-the journey bill. Volunteer rescues never accrue waiting.
+the journey bill. SOS mobile-shop visits never accrue waiting.
 
 ## Platform commission
 
@@ -140,7 +156,7 @@ and `payoutAmount = amount − commissionAmount`.
 |---|---|
 | `TOW` | rate on `towFare.final` (+ `waitingFee`) |
 | `MECHANIC` / `WALK_IN` | rate on shop `shopQuotedAmount` (legacy `finalAmount`) |
-| `SOS` (volunteer) | none — no payable amount, charges are refused |
+| `SOS` | rate on the SOS call-out + travel + fix (`finalAmount`); call-out only when unfixable |
 
 Cash settles as a receivable recorded on the charge — the operator marks it
 paid out via `POST /admin/payouts` (`payoutRef`/`payoutAt`/`payoutBy`).
@@ -149,33 +165,33 @@ paid out via `POST /admin/payouts` (`payoutRef`/`payoutAt`/`payoutBy`).
 ## Mid-tow cancel partial
 
 A mid-tow cancel settles a deadhead partial from `actual` legs only:
-`partial = round1k(night × class × perKm × actualDeadheadKm)` — no base, no
-included-km threshold. `POST /dispatch/tower/cancel` (and the legacy
-`PUT /dispatch/status` cancel path, tower or rider) freezes the leg, records
-`towFare.final` with `partial: true` plus a matching `towActual`
+`partial = round1k(night × perKm × actualDeadheadKm)` — no base, no
+included-km threshold, no call-out. `POST /dispatch/tower/cancel` (and the
+legacy `PUT /dispatch/status` cancel path, tower or rider) freezes the leg,
+records `towFare.final` with `partial: true` plus a matching `towActual`
 (`cappedKm = round(deadheadKm × 10) / 10`), and — on a tower re-match —
 returns the ticket to `"1"` with `towerSearch: "ACTIVE"`. A rider cancel
 mid-tow settles the partial too (the tower drove out) and closes the ticket
-`"5"`. A destination decline freezes its leg into `towDistanceMeters`
-without touching `towFare` — the tower stays engaged and any partial lands
-only if the tow is later re-matched. Completed jobs never bill deadhead.
+`"5"`. A rider cancel after a tower cancelled, before a new tower accepts,
+keeps the tower as canceller and is not charged. A destination decline freezes
+its leg into `towDistanceMeters` without touching `towFare` — the tower stays
+engaged and any partial lands only if the tow is later re-matched. Completed
+jobs never bill deadhead.
 
 ## Full-refund rule
 
-`UNFIXABLE` (status `"15"`, `POST /dispatch/unfixable`) refunds every `HELD`
-SePay charge **in full** and cancels every `PENDING` charge (the QR stops
-being payable) — no partial, no fee retained, no commission collected.
-Cash is not auto-refunded (a `PENDING` cash charge is cancelled; a confirmed
-one is settled by an admin out of band). Outside the unfixable flow refunds
-are admin-initiated only (`paymentService.refundPayment`); a rider cancel
-does not auto-refund a held charge. The ticket resolves with no `final` and
-the shop's `completedJobs` does not increment. See `PAYMENTS.md` for the
-charge lifecycle.
+`UNFIXABLE` (status `"15"`, `POST /dispatch/unfixable`) refunds every
+`HELD` SePay charge **in full** and cancels every `PENDING` charge for shop
+tickets — no partial, no fee retained, no commission collected. SOS is the
+exception: the call-out remains payable, travel and repair are waived. Cash is
+not auto-refunded: a `PENDING` cash charge is cancelled; a confirmed one is
+handled by an admin out of band. A rider cancel cancels pending charges and
+refunds held/confirmed charges in full. Outside those flows refunds are
+admin-initiated only (`paymentService.refundPayment`). See `PAYMENTS.md` for
+the charge lifecycle.
 
 ## Parked
 
-Holiday extras, heavy-load extras, combined tow + shop checkout, wiring the
-`platform_config` tow card into `fare.ts` (the card is stored and editable
-today; the stamped formula still reads the seeded constants), and the admin
+Holiday extras, heavy-load extras, combined tow + shop checkout, and the admin
 console UI (BE endpoints `POST /admin/config`, `POST /admin/payouts` are
-live).
+live). The `platform_config` tow card is wired into `fare.ts`.

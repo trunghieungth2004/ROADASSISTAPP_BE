@@ -86,8 +86,18 @@ do_storage() {
 }
 
 do_functions() {
-  echo "[deploy] functions + indexes"
-  firebase deploy --only functions,firestore:indexes --project="$PROJECT"
+  echo "[deploy] functions"
+  firebase deploy --only functions --project="$PROJECT"
+}
+
+do_indexes() {
+  echo "[deploy] firestore indexes"
+  if firebase deploy --only firestore:indexes --project="$PROJECT"; then
+    echo "[deploy] indexes ready"
+  else
+    echo "[deploy] WARNING: index deploy failed; functions deployment was not blocked." >&2
+    echo "  firebase deploy --only firestore:indexes --project=$PROJECT" >&2
+  fi
 }
 
 do_seeds() {
@@ -95,8 +105,8 @@ do_seeds() {
   npm --prefix "$ROOT/functions" run db:init
 }
 
-STEPS=("engine" "push" "storage" "functions" "seeds")
-LABELS=("Engine (local build, cloud deploy)" "Push queues + IAM" "Storage bucket + rules" "Functions + indexes" "Role/status seeds")
+STEPS=("engine" "push" "storage" "functions" "indexes" "seeds")
+LABELS=("Engine (local build, cloud deploy)" "Push queues + IAM" "Storage bucket + rules" "Functions" "Firestore indexes" "Role/status seeds")
 
 WANT=""
 while [ "$#" -gt 0 ]; do
@@ -104,21 +114,21 @@ while [ "$#" -gt 0 ]; do
     --only)
       shift
       case "${1:-}" in
-        engine|push|storage|functions|seeds) WANT="$WANT $1" ;;
+        engine|push|storage|functions|indexes|seeds) WANT="$WANT $1" ;;
         *)
-          echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
+          echo "usage: deploy.sh [--only engine|push|storage|functions|indexes|seeds]..." >&2
           exit 1
           ;;
       esac
       ;;
     -h|--help)
-      echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
+      echo "usage: deploy.sh [--only engine|push|storage|functions|indexes|seeds]..." >&2
       echo "  no flags + terminal: numbered menu" >&2
       echo "  no flags + no terminal: full flow" >&2
       exit 0
       ;;
     *)
-      echo "usage: deploy.sh [--only engine|push|storage|functions|seeds]..." >&2
+      echo "usage: deploy.sh [--only engine|push|storage|functions|indexes|seeds]..." >&2
       exit 1
       ;;
   esac
@@ -135,14 +145,14 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
   printf 'Select [default: all]: '
   read -r choice || choice=""
   if [ -z "$choice" ] || [ "$choice" = "all" ] || [ "$choice" = "a" ]; then
-    WANT=" engine push storage functions seeds"
+    WANT=" engine push storage functions indexes seeds"
   else
     WANT=""
     # shellcheck disable=SC2206
     toks=(${choice//,/ })
     for tok in "${toks[@]}"; do
       case "$tok" in
-        [1-5]-[1-5])
+        [1-6]-[1-6])
           lo="${tok%-*}"
           hi="${tok#*-}"
           if [ "$lo" -gt "$hi" ]; then
@@ -154,7 +164,7 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
             n=$((n + 1))
           done
           ;;
-        [1-5]) WANT="$WANT ${STEPS[$((tok - 1))]}" ;;
+        [1-6]) WANT="$WANT ${STEPS[$((tok - 1))]}" ;;
         *)
           echo "[deploy] invalid selection: $tok" >&2
           exit 1
@@ -169,19 +179,20 @@ if [ -z "$WANT" ] && [ -t 0 ]; then
 fi
 
 if [ -z "$WANT" ]; then
-  WANT=" engine push storage functions seeds"
+  WANT=" engine push storage functions indexes seeds"
 fi
 
 case "$WANT" in
   *" functions"*)
-    echo "[deploy] env (secrets + check)"
+    echo "[deploy] env (origins + secrets + check)"
+    bash "$ROOT/scripts/lib/sync-allowed-origins.sh" || exit 1
     bash "$ROOT/scripts/lib/setup-secrets.sh" || exit 1
     bash "$ROOT/scripts/lib/check-env.sh" || exit 1
     ;;
 esac
 
 ORDERED=""
-for step in engine push storage functions seeds; do
+for step in engine push storage functions indexes seeds; do
   case "$WANT" in
     *" $step"*) ORDERED="$ORDERED $step" ;;
   esac

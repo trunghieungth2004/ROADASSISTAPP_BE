@@ -14,10 +14,13 @@ Cloud Run deploy, smoke test) → push queues + IAM (`push:setup`, both
 queues; warn-and-continue) → storage bucket + rules
 (`scripts/lib/setup-storage.sh`: enable APIs, verify/create the default
 bucket, `firebase deploy --only storage`; warn-and-continue) →
-`firebase deploy --only functions, firestore:indexes` → `db:init`
-(role/status seeds). The push step also
+`firebase deploy --only functions` → `firebase deploy --only
+firestore:indexes` (warn-and-continue, so an index API failure cannot block
+the function deploy) → `db:init` (role/status seeds). The push step also
 writes `PUSH_DELIVER_URL` / `DISPATCH_DELIVER_URL` into `functions/.env`
-when absent (never overwrites). `npm run valhalla:remove` remains the only
+when absent (never overwrites). Before the functions step it also syncs
+`functions/config/allowedOrigins.json` into `ALLOWED_ORIGINS` and validates
+the env. `npm run valhalla:remove` remains the only
 manual op (engine teardown). Every script that shells out to
 `gcloud` (`deploy.sh`, `infra/valhalla/setup.sh`, `infra/valhalla/remove.sh`,
 `push:setup`, `setup-storage.sh`) first proves the credential works via
@@ -30,14 +33,17 @@ engine:remove` (`infra/valhalla/remove.sh`; `valhalla:remove` alias).
 Partial runs: `bash scripts/deploy.sh --only engine --only push`
 (repeatable flags, canonical order kept), or bare `scripts/deploy.sh` on a
 terminal for a numbered multi-select menu (`1 3`, `2-4`, `all`, empty =
-all). Headless without flags runs everything.
+all). Headless without flags runs everything. Use `--only functions` to
+deploy functions without touching Firestore indexes, or `--only indexes`
+to retry indexes alone.
 
 The script snapshots your local `VALHALLA_URL` from `functions/.env`
 first and restores it afterwards (trap-guarded, so even a failed deploy
 can't leave it behind) — otherwise the deploy would repoint your next
 emulator run at Cloud Run. Fast path for function-only changes:
 `npm run deploy` (the `firebase.json` predeploy hook no longer touches
-the engine — gates only: `lint`, `build`, `test:all`). Engine only:
+the engine — gates only: origins sync, `env:check`, `lint`, `build`,
+`test:all`). Engine only:
 `npm run engine:deploy` (`-cl`); local engine for emulator work:
 `npm run engine:dev` (`-ll`, writes `VALHALLA_URL=http://localhost:8002`).
 Raw `firebase deploy` likewise skips engine provisioning: run `npm run
@@ -161,11 +167,17 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:setup   # both push queues + IAM
 ```
 
 Then set the remaining `functions/.env` vars (see `functions/.env.example`):
-`ALLOWED_ORIGINS`, `ROUTING_CACHE_TTL_SECONDS=7776000`,
-`FCM_ENABLED` / `CLOUD_TASKS_ENABLED` / `PUSH_DELIVER_URL` /
-`DISPATCH_DELIVER_URL` / `TASK_INVOKER_EMAIL` for push — and redeploy
-functions once more so the env takes effect. Verify with
-`npm run push:check` and one `POST /routes` round-trip.
+`ROUTING_CACHE_TTL_SECONDS=7776000`, `FCM_ENABLED` /
+`CLOUD_TASKS_ENABLED` / `PUSH_DELIVER_URL` / `DISPATCH_DELIVER_URL` /
+`TASK_INVOKER_EMAIL` for push — and redeploy functions once more so the
+env takes effect. Verify with `npm run push:check` and one `POST /routes`
+round-trip.
+
+Browser origins are not edited by hand: list them in
+`functions/config/allowedOrigins.json`, then run `npm run env:sync-origins`
+from `functions/` (or any deploy path, which runs it automatically). The
+script writes a comma-separated `ALLOWED_ORIGINS` line into `functions/.env`;
+`env:check` rejects malformed entries and trailing slashes.
 
 ## Troubleshooting
 

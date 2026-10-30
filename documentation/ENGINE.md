@@ -13,7 +13,7 @@ and what the new limits are.
 1. Cache lookup by `origin:stops:dest:widthBucket` (unchanged).
 2. One `POST /route` to Valhalla (`motor_scooter`, no width params).
 3. The geometry is checked against blocking hazard flags and measured
-   alley widths (unchanged hit-testing).
+   hazard zones (unchanged hit-testing).
 4. On a hit, re-solves carry every blocking circle as `exclude_polygons`,
    so the detour grows natively around the closure. The detour is
    **closure-aware**: each failed attempt merges the zones the re-solve
@@ -87,8 +87,8 @@ path.
 | Detour `via` | `{lat, lng}` waypoint clients could display | always absent (`null`) — there is no waypoint; FE already guards on it |
 | Detour `hazards` | blocking zones of the base route | same |
 | `distanceMeters` / `durationSeconds` | OSRM MLD + Lua scooter speeds | Valhalla `motor_scooter` costing — expect small differences for the same OD |
-| Width shaping | engine-side: OSM `width`/`maxwidth` classes excluded per bucket (`exclude=narrowonly[,mediumonly]`) | engine is width-agnostic; **only** app-measured `alley_segments` gate, as 20 m avoidance polygons |
-| Untagged narrow OSM ways | avoided for MEDIUM/WIDE buckets | routable unless an alley segment blocks them |
+| Width shaping | engine-side: OSM `width`/`maxwidth` classes excluded per bucket (`exclude=narrowonly[,mediumonly]`) | engine is width-agnostic; no app-side width gate |
+| Untagged narrow OSM ways | avoided for MEDIUM/WIDE buckets | routable |
 | No-route mapping | `code: NoRoute` → `404` | `error 442` → `404` (same app behavior) |
 | Endpoint inside a closure | `409` after the probe loop burned calls | `409` naming the control point + flag (`EndpointBlockedError`), no detour attempted |
 | Stops | up to 10, one call | up to 10, one call (`locations` in order) |

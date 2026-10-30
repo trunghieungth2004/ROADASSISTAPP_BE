@@ -48,7 +48,6 @@ functions/
     │       ├── userService.test.ts
     │       ├── roleService.test.ts
     │       ├── vehicleProfileService.test.ts
-    │       ├── alleySegmentService.test.ts
     │       ├── flagService.test.ts
     │       ├── landmarkService.test.ts
     │       ├── placesService.test.ts
@@ -64,7 +63,7 @@ functions/
     │       ├── providerService.test.ts
     │       ├── docs.test.ts
     │       ├── diagnosticService.test.ts
-    │       ├── dispatchService.test.ts
+    │       ├── dispatch/            ← create/read/transition/destination/tow/accept/board/shop/push suites
     │       ├── ratingService.test.ts
     │       └── taskQueueService.test.ts
     │   └── repository/
@@ -74,14 +73,16 @@ functions/
     │       ├── routingCacheRepository.test.ts
     │       └── userRepository.test.ts
     │   └── index/
-    │       └── clientIpKey.test.ts
+    │       ├── clientIpKey.test.ts
+    │       └── cors.test.ts
     ├── integration/
     │   ├── auth.test.ts
+    │   ├── cors.test.ts
+    │   ├── rateLimit.test.ts
     │   ├── user.test.ts
     │   ├── role.test.ts
     │   ├── status.test.ts
     │   ├── vehicleProfile.test.ts
-    │   ├── alleySegment.test.ts
     │   ├── flag.test.ts
     │   ├── landmark.test.ts
     │   ├── places.test.ts
@@ -105,7 +106,7 @@ functions/
 | File | Purpose |
 |------|---------|
 | `unit.ts` | `jest.mock('../../config/firebase')` — chainable Firestore stub (`db` proxy, `auth` with `createUser`/`updateUser`/`verifyIdToken`, `Timestamp`, `FieldValue`). Sets `GCLOUD_PROJECT`, `ALLOWED_ORIGINS`, `VALHALLA_URL`, and `CACHE_ENABLED=false` (disables the in-memory cache so mock-call assertions stay deterministic). Loaded as `setupFiles` by the unit Jest config. |
-| `integration.ts` | Sets `FIRESTORE_EMULATOR_HOST=localhost:8080`, `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099` (**bare host, no scheme** — the Admin SDK misparses a full URL), `STORAGE_EMULATOR_HOST`, `GCLOUD_PROJECT=test-project`, and `CACHE_ENABLED=false` (fresh seeded data must never be served from cache) so `firebase-admin` connects to the local emulators instead of production. Loaded as `setupFiles` by the integration Jest config. |
+| `integration.ts` | Sets `WRITE_LIMIT_DISABLED=true` (rate-limit tests re-enable it), `FIRESTORE_EMULATOR_HOST=localhost:8080`, `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099` (**bare host, no scheme** — the Admin SDK misparses a full URL), `STORAGE_EMULATOR_HOST`, `GCLOUD_PROJECT=test-project`, `ALLOWED_ORIGINS=https://roadassistapp-c2e37.web.app` (for the CORS preflight suite), and `CACHE_ENABLED=false` (fresh seeded data must never be served from cache) so `firebase-admin` connects to the local emulators instead of production. Loaded as `setupFiles` by the integration Jest config. |
 
 ### test/utils/
 
@@ -121,14 +122,13 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 
 | File | What it asserts |
 |------|-----------------|
-| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords) + `vehicleType`; dispatch assist flow samples (vehicle, free-form destination, capability); rating/volunteer samples; provider create kind-conditionals (TOW needs plate+type, SHOP forbids them), report/suspend/restore/location samples. |
+| `validation/schemas.test.ts` | Every endpoint schema: valid sample passes; missing required field fails; lat/lng ranges enforced; enums enforced; unknown fields stripped; `getRoute` stops (≤10, valid coords) + `vehicleType`; dispatch assist flow samples (vehicle, free-form destination); rating samples; provider create kind-conditionals (TOW needs plate+type, SHOP forbids them), report/suspend/restore/location samples. |
 | `utils/cache.test.ts` | `createCache` get/set/del/clear/TTL-expiry, `sizeOf` measurements, `parseTtl` fallbacks. |
 | `utils/cacheManager.test.ts` | Passthrough when disabled; hit/invalidate/invalidateAll when enabled. |
 | `utils/sanitize.test.ts` | Trims strings, strips control chars, recurses into arrays/objects. |
-| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, volunteer opt in/out (+ location-row cleanup, capability), heartbeat 404/off-400/refresh, self-service `updateServices` (own VOLUNTEER revoke, stranger 403, RIDER revoke 403). |
+| `service/userService.test.ts` | Self role/status change 400, unknown target 404, register defaults (role `"2"`, status `"1"`), cache invalidation, Auth disable sync, active-vehicle persistence, admin `updateServices` grant/revoke, non-admin 403. |
 | `service/roleService.test.ts` | Role list passthrough, user mapping resolution, unseeded-collection fallback. |
 | `service/vehicleProfileService.test.ts` | Unknown user/profile 404 paths, create (incl. `CAR`/`VAN`/`TRUCK`) and ride-config writes. |
-| `service/alleySegmentService.test.ts` | Passability scoring branches (unknown/incompatible/wide/tight/very-tight), unknown segment 404, partial-patch writes. |
 | `service/flagService.test.ts` | Signed net-score voting (one switchable vote per rider, `voteDirection` in responses): confirm flip to `"2"` at +3, trust-weighted votes, deny reject to `"5"` at −3, confirmed demote to `"1"` at −3, no push on reject/demote, `"3"` short-circuit, TTL selection per type, near-search code filter, radius passthrough, flag covering an own saved-route destination/place → 409 (no create), far-away flag allowed, unflag owner/403/`"3"`-400/gone-404, expiry, push enqueue on consensus flip + admin confirm (skipped below threshold / on reject). |
 | `utils/geo.test.ts` | Geohash round-trip, haversine, bounds, radius/segment math, Turf hit-test (centered hit, far miss, boundary + sorting, fully-contained route, malformed coords/zones, single-point/empty/null), cell coverage. |
 | `service/landmarkService.test.ts` | 0.7 cosine threshold accept/reject, dimension mismatch, empty-embedding skip. |
@@ -144,11 +144,10 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `utils/valhalla.test.ts` | `postRoutes` defaults to `motor_scooter` and sends `auto` when requested (`400` beyond `VALHALLA_AUTO_MAX_DISTANCE`), sends `alternates: 2` for 3-option stop-less requests and omits it for multi-point requests, skips alternates without a usable shape, drops alternates with geometry identical to the primary, `costingForVehicle`/`isCarVehicle` mapping, `dedupeRoutes` keeps first/preserves order/tolerates unparseable geometry, `postRoute`/`decodePolyline6`/`circleToRing` behavior. |
 | `service/providerService.test.ts` | Unknown user 404, shop create (no license needed, `PENDING` review) + one-per-kind 409, tow create (plate shape, duplicate plate 409, `ref.create` race guard), DENIED re-apply allowed (both kinds), operator-only update + stranger 403, location move (lat+lng together), near hides non-active/suspended, review approve/deny + lost-race no-op + non-admin 403, report dedupe 409 + non-active 400, suspend/restore + live-row clear, live-location ping (on-duty only). |
 | `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open, dispatch queue targeting + body. |
-| `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→volunteer/SHOP + ticket `helperRating`, rider→destination shop, volunteer/operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating, by-ticket read (rider/operator pass, stranger 403). |
+| `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→assigned SHOP + ticket `helperRating`, rider→destination shop, operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating, by-ticket read (rider/operator pass, stranger 403). |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune, own-push ping (disabled/missing/send+prune). |
 | `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchEta.test.ts` | Estimator secure-plus-drive math (minute rounding, five-blocks, loaded leg, routing failure), ETA refresh endpoint (restamp, stranger 403, disengaged 400). |
-| `service/dispatchService.test.ts` | History actors (status/claim/sweep), terminal ETA wipe (resolve + cancel), same-type live-ticket guard (409 with details, force escape, terminal/cross-type pass) + forced system spawn, feed `otherParty` join + shop enrichment (label/openNow/rating) + phone sharing rules, pending-tow counterparty stays unassigned with shop drop-off intact, quote send/approve/matrix gates (operator-only work states, shop-ticket quotes, raw-`9` refusal), tow candidates (fresh/plated/class fit) + tow fan-out, destination-shop push on tow creation/retarget (shop-suffixed tasks) + move-away + cancel + sweep-expiry notices, declined-shop re-pick refused (fresh shops pass), carried-`shopId` beats the doc value, rider-audience delivery at pending, pending destination decline without a travel leg + terminal refusal, ETA restamp on matched retargets (skipped at pending), deliver with override copy + skip without a shop, decline-destination (leg freeze, stranger/terminal refusal), late-tow sweep (once-only), linked shop spawn on tow resolve, tow drop-off policy (off-duty rejection, unchanged committed allowance, forced walk-in + urgent push, suspended/inactive destination preflight), cancel-operator audience, illegal status 400, unknown ticket 404, tow-availability restore on resolve, alley-clearance resolution, destination snapshot (ACTIVE SHOP only) + free-form point, rider vehicle stored, SOS candidate matching + non-SOS skip, car SOS excludes bike-only volunteers, volunteer accept (mode-off 403, busy 400, car-gate 403, match), provider accept (stranger 403, kind↔ticket match enforced, SOS takes no provider, tow auto-busy), near radius filter + sort, offers accepting filter + live-position override + `fitsAlley` labels, deliver fallback SOS-only, FCM fan-out skip/deliver, feed in/out stamping + dedupe, expiry-cancel push with full payload. |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
 ### test/integration/
@@ -160,11 +159,10 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | File | Tests |
 |------|-------|
 | `auth.test.ts` | Real middleware + emulator-minted ID tokens: missing/forged 401, inactive 403, rider/admin matrix |
-| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, volunteer opt in/out + doc flags (+ capability), heartbeat off-400/record, services self-revoke (own VOLUNTEER) + stranger 403 |
+| `user.test.ts` | POST register 201 + defaults, POST one, unknown 404, POST all (admin), PUT role/trust/status, self-change 400, admin service grant/revoke, non-admin 403 |
 | `role.test.ts` | POST all (seeded mapping), POST user (caller mapping), unknown 404, missing token 401 |
 | `status.test.ts` | POST /statuses returns groups sorted by order, missing token 401 |
 | `vehicleProfile.test.ts` | POST create 201, POST all, POST rideConfig 201, unknown profile 404 |
-| `alleySegment.test.ts` | POST create 201, POST segment, unknown 404, POST near, PUT passability, PUT moderate (admin) |
 | `flag.test.ts` | POST create 201 + code `"1"` (+ `radiusMeters` roundtrip), POST confirm ×3 → code `"2"`, POST deny ×3 → code `"5"` (dropped from near), confirm→deny switch applies the double-weight delta, confirmed flag demoted to `"1"` at −3, POST near excludes codes `"4"`/`"5"`, PUT moderate (admin), POST expire, POST unflag (owner removes, non-owner 403, `"3"` 400, unknown 404) |
 | `landmark.test.ts` | POST create 201, POST near with distance, POST match accept/reject |
 | `places.test.ts` | POST search merges providers before landmarks, prefix-scoped, short query 400, missing token 401 |
@@ -176,8 +174,7 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, cross-owner steal, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /push/ping disabled report, POST /routes writes the `active_routes` doc |
 | `provider.test.ts` | POST create 201 (SHOP and TOW both pending review), duplicate-kind 409, plate normalization, near + kind filter + pending hidden, pending list + review approve/deny + lost-race no-op, availability toggle + accepting-only exclusion, report file 201 + dedupe 409 + bad reason 400, suspend hides from offers/search + restore, live-location ping (on-duty only) + off-duty 403, kind-conditionals 400, non-admin 403, unauthenticated 401 |
 | `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
-| `dispatch.test.ts` | History order/actors, feed counterparty names, POST create 201 + code `"1"`, POST one, PUT status advance, illegal status 400, note + destination snapshot (ACTIVE SHOP), offers list, rider select (kind-matched), provider accept + tow busy, resolve restores availability, unapproved tow accept 403, near radar, volunteer SOS accept, rider vehicle + free-form destination, car SOS matches only car-capable volunteers (bike 403), offers `fitsAlley` labels, feed in/out directions |
-| `ratings.test.ts` | SOS→accept→resolve flow, unknown ticket 404, rider→volunteer + helper→rider ratings, out-of-range 400 |
+| `ratings.test.ts` | TOW→accept→resolve flow, unknown ticket 404, rider→SHOP + operator→rider ratings, out-of-range 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 
 ## How the mock works

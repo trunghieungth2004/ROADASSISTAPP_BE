@@ -91,7 +91,7 @@ No Tasks/FCM emulators exist — integration tests cover the routes with the gat
 
 ## Ops
 
-`functions/.env` (gitignored, see `functions/.env.example`) must define `VALHALLA_URL` plus all five push vars above. `npm run env:check` validates presence, non-emptiness, and the deliver-URL shape, and runs first in every `firebase deploy` predeploy — a revision can never ship push-dead. Engine scripts (`setup.sh`, `deploy.sh`) only ever rewrite the `VALHALLA_URL` line.
+`functions/.env` (gitignored, see `functions/.env.example`) must define `VALHALLA_URL`, `ALLOWED_ORIGINS`, plus all five push vars above. `npm run env:sync-origins` copies `functions/config/allowedOrigins.json` into the `ALLOWED_ORIGINS` line, then `npm run env:check` validates presence, non-emptiness, origin shape, and the deliver-URL shape; both run first in every `firebase deploy` predeploy — a revision can never ship push-dead or CORS-broken. Engine scripts (`setup.sh`, `deploy.sh`) only ever rewrite the `VALHALLA_URL` line (plus the origin sync above).
 
 One-time setup (needs IAM-grant rights on the project; functions already deployed):
 
@@ -197,14 +197,14 @@ the name (a repeated suffix silently swallows the later push):
 
 | Event | Suffix | Audience | Copy | Gate |
 |---|---|---|---|---|
-| SOS filed | (none) | candidate volunteers | "SOS request near you" | candidates exist |
+| SOS filed | (none) | candidate mobile-shop operators | "SOS request near you" | candidates exist |
 | Walk-in filed | (none) | named shop operator | "Walk-in request" | always, unless the shop switched duty off (filing rejected, push skipped) |
 | TOW filed | (none) | nearby towers | "Tow request near you" | always; freezes `candidates` + `candidateTs` like SOS |
 | TOW filed with shop drop-off | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | destinationShopId set |
 | Tow resolves at an off-duty shop | `-dropoff-arrived` | destination shop (carried) | "Tow drop-off arrived" | destination shop active but off-duty; forced walk-in spawn |
 | Destination retargeted to shop | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | new destinationShopId set |
 | Destination moved away from shop | `-dropped-<shopId>` | previous shop (carried) | "Drop-off changed" | previous ≠ new, both set |
-| Accept (shop/tower/volunteer) | `-status-2-rider` | rider (explicit) | per-type matched body | always on accept |
+| Accept (shop/tower/mobile shop) | `-status-2-rider` | rider (explicit) | per-type matched body | always on accept |
 | Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | listed statuses only |
 | Arrived/resolved + engaged shop | `-status-3/4-operator` | operator (urgent) | "Arrival confirmed" / "Ticket resolved" | assigned/addressed |
 | Quote approved | `-status-6-operator` | operator | "Quote approved" | always on approve |
@@ -214,6 +214,13 @@ the name (a repeated suffix silently swallows the later push):
 | Quote sent (first stage) | `-status-9` | rider | "Your shop sent a quote" | always on send |
 | Binding final sent | `-status-11` | rider | per-status body (`FINAL_QUOTED`) | always on final |
 | Unfixable close | `-status-15` | rider (urgent) | "Marked unfixable" | always on mark |
+| Unfixable continuation | `-unfix-grace-*` / `-unfix-continued-rider` / `-unfix-no-candidates` | rider | "Requesting another mobile shop" / "No other mobile shops nearby" | immediate when no direct or network TOW is available; otherwise 2-minute grace |
+| Mobile tow offer | `-mobile-tow-offer` | rider (urgent) | "Tow offer" / "Tow request" + `action: mobile-tow-offer` | `DIRECT` (same-vehicle TOW) or `NETWORK`; 15-minute expiry task |
+| Mobile tow network requested | `-mobile-tow-network-shop` / `-mobile-tow-network-rider` | mobile-shop operator / rider | "Tow requested" / "Finding a tow truck" | rider confirms a `NETWORK` offer; pending TOW broadcast |
+| Mobile tow accepted | `-mobile-tow-accepted-shop` | mobile shop operator | "Tow offer accepted" | rider accepts |
+| Mobile tow assigned | `-mobile-tow-assigned` | same-vehicle TOW operator | "Tow job assigned" | direct accept succeeds |
+| Mobile tow declined/expired | `-mobile-tow-declined-shop` / `-mobile-tow-expired-shop` | mobile shop operator | "Tow offer declined" / "Tow offer expired" | rider declines or task fires |
+| SOS continuation | `-sos-continued-rider` / `-mobile-tow-expired-rider` | rider | "Requesting another mobile shop" | automatic attempt 1, explicit attempt 3+ |
 | Work saved without quote | — | none | — | silent by design |
 | Manual cancel | `-cancelled-rider` | rider | "Request cancelled" | always |
 | Tower mid-trip re-match | `-rematch-rider` / `-rematch-towers` | rider (urgent) + tower-candidates | "Finding another tower" (+ km on record) / "Tow request available" | engaged tower at `2`/`3` via `POST /dispatch/tower/cancel`; freezes the leg + partial, requeues to `1` with `towerSearch: "ACTIVE"`, auto-files a dispute |

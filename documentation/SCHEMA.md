@@ -101,7 +101,7 @@ No body schema (lists the authenticated caller's profiles).
 ### `POST /vehicleProfiles` — `createVehicleProfile`
 | Field | Type | |
 |-------|------|---|
-| `type` | enum: SCOOTER, CUB, MANUAL, CAR, VAN, TRUCK | req |
+| `type` | enum: BIKE, CAR | req |
 | `baseWidth` | number | req |
 | `baseHeight` | number | req |
 
@@ -112,45 +112,6 @@ No body schema (lists the authenticated caller's profiles).
 | `configType` | enum: SOLO, PASSENGER, CARGO | req |
 | `estWidth` | number | opt |
 | `estHeight` | number | opt |
-
----
-
-## Alley Segments
-
-### `POST /alleys/segment` — `getAlleySegment`
-| Field | Type | |
-|-------|------|---|
-| `segmentId` | string | req |
-
-### `POST /alleys/near` — `searchAlleysNear`
-| Field | Type | |
-|-------|------|---|
-| `lat` | lat | req |
-| `lng` | lng | req |
-| `radiusMeters` | number | opt (default 2000) |
-
-### `POST /alleys` — `createAlleySegment`
-| Field | Type | |
-|-------|------|---|
-| `lat` | lat | req |
-| `lng` | lng | req |
-| `baseWidth` | number | opt |
-| `wireHeight` | number | opt |
-| `inclinePct` | number | opt |
-| `tier` | enum: TIER1, TIER2, TIER3 | req |
-
-### `PUT /alleys/passability` — `setPassability`
-Same as `createAlleySegment` plus `segmentId` (string, req) instead of `lat`/`lng`.
-
-### `PUT /alleys/moderate` — `moderateSegment`
-| Field | Type | |
-|-------|------|---|
-| `segmentId` | string | req |
-| `baseWidth` | number | opt |
-| `wireHeight` | number | opt |
-| `inclinePct` | number | opt |
-| `tier` | enum: TIER1, TIER2, TIER3 | opt |
-| `verifiedCount` | number | opt |
 
 ---
 
@@ -283,7 +244,7 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `openHours` | string (`DAY HH:MM-HH:MM,...`) | SHOP only |
 | `vehicleClasses` | array of `SOLO_BIKE`/`CAR` (1–2 unique) | SHOP only, opt (absent means both) |
 | `plate` | string | TOW only, req |
-| `vehicleType` | enum: CAR, VAN, TRUCK | TOW only, req |
+| `vehicleType` | enum: CAR | TOW only, req |
 | `vehicleWidth` | number (0.3–3) | TOW only, opt |
 
 ### `PUT /providers` — `updateProvider`
@@ -420,14 +381,12 @@ rows automatically because rows spread the stored doc):
 | `providerId` | string | req for `WALK_IN` |
 | `destinationShopId` | string (allows `""`/`null`) | opt (TOW drop-off) |
 | `destinationPoint` | `{lat, lng, label?}` | opt (free-form drop-off) |
-| `vehicleType` | enum: `SCOOTER`, `CUB`, `MANUAL`, `CAR`, `VAN`, `TRUCK` | opt |
+| `vehicleType` | enum: `BIKE`, `CAR` | opt |
 | `vehicleWidth` | number (0.3–3 m) | opt |
 | `vehicleLabel` | string (allows `""`/`null`) | opt |
 | `note` | string (max 280) | opt |
 | `description` | string (max 1000) | opt (richer job description) |
 | `photoUrls` | string[] Storage paths (0–5) | opt (evidence photos) |
-| `alleySegmentId` | string | opt |
-| `accessWidthMeters` | number (0–20 m) | opt |
 | `force` | boolean | opt (file despite a live duplicate) |
 
 ### `POST /dispatch/decline` — `declineDispatch`
@@ -542,12 +501,26 @@ flows:
 | `declinedShopIds` | string[] — shops that declined and stay declined for the life of the ticket | estimate decline / destination decline |
 | `pickupHistory` | array of `{lat, lng, at, reason}` — pickup-point corrections (`created`, `tower-cancel`, `REMATCH`) | ticket filing, legacy tower cancel, re-match |
 | `needsNewDestination` | boolean — the rider must pick a new drop-off | destination decline sets `true`; retarget clears it |
+| `destinationDecline` | `{shopId, reasonCode, by, at}` — rider-facing reason for the last drop-off decline; cleared when the rider re-picks | destination decline / destination update |
+| `formerAssignedShopIds` | string[] — towers that cancelled and re-queued this TOW; keeps a read-only history row for that tower | tower cancel |
+| `towCancelHistory` | array of `{shopId, by, at, reasonCode}` — tower cancellation reasons; returned to the rider and the former tower, stripped for the next tower | tower cancel |
 | `towerSearch` | `"ACTIVE"` / `"PAUSED"` — tow broadcasting state | re-match / retarget |
 | `waiting` | `{active, startedAt, endedAt, fee, withinRadius, accruedAt}` — accrual window + fee (integer VND) | waiting clock (`startWaiting`/`accrue`/`stopWaiting`) |
 | `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, vehicleClass?, waitingFee?}` — stamped at accept, partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve | accept / re-match / waiting / resolve |
 | `towActual` | `{quotedKm, actualKm, cappedKm}` — quoted vs GPS-measured vs ceiling-capped haul | re-match / resolve settle |
 | `towLegs` | array of `{toShopId, km, actual, at}` — traveled legs; `actual` only when the tower fix was fresh | destination decline / re-match freeze |
-| `unfixable` | `{reason, photoUrls, by, at}` — on-site verdict; ticket closes `"15"`, full refund, no `final` | `POST /dispatch/unfixable` |
+| `unfixable` | `{reason, photoUrls, by, at}` — on-site verdict; ticket closes `"15"`; SOS call-out-only, shop tickets refund in full, no `final` | `POST /dispatch/unfixable` |
+| `sosAttempt` | 1-based continuation attempt; missing means `1` | continuation |
+| `continuedFromTicketId` | parent SOS for a continuation | continuation |
+| `continuationTicketId` | child SOS created from this ticket | continuation |
+| `excludedShopIds` / `excludedOperatorUids` | shops/operators that must not receive a continuation SOS | continuation |
+| `sourceTicketId` | SOS that spawned a TOW | mobile tow |
+| `mobileTowOffer` | `{status, shopId, destinationShopId, mode: DIRECT\|NETWORK, towProviderId, by, at, expiresAt}` — 15-minute offer; `DIRECT` assigns the same-vehicle TOW, `NETWORK` creates a pending broadcast TOW | mobile tow |
+| `chatVersion` | number — current assignment chat room version; tower cancel increments it | tower cancel |
+| `chatHistory` | array of `{version, roomId, shopId, shopName, at}` — archived chat rooms; returned to the rider/former tower, stripped for the next tower | tower cancel |
+| `mobileTowAvailable` / `mobileTowMode` / `mobileTowState` | feed/read flags: `DIRECT` or `NETWORK` availability, with `TOW_OFF_DUTY`, `TOW_BUSY`, `NO_TOW`, or `NONE_NEARBY` | unfixable SOS feed |
+| `mobileCallOutWaived` | true when the shop was within 1 km at accept; call-out is 0 | SOS accept |
+| `unfixGraceAt` | 2-minute grace marker after an eligible unfixable close | unfixable |
 | `shopQuotedAmount` / `finalAmount` / `workType` / `faultPhotos` / `invoiceRef` / `quotedBy` / `quotedAt` | one-shot quote + work-order fields (fault photos are Storage paths) | `sendQuote` / work orders |
 | `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | tow drop-off advisory estimate + 24-hour TTL | `sendEstimate` / `approveEstimate` |
 | `paymentArmed` / `quoteApprovedAt` | work-start gate stamp | `approveQuote` |
@@ -764,26 +737,27 @@ reporting through the payment refund snapshot.
 ## Disputes
 
 Model in [`DISPUTES.md`](./DISPUTES.md). Auto-filed on mid-tow tower cancels
-and destination declines; resolution is admin-only.
+and destination declines; late/no-show is manual. Rider service/fare disputes
+at SOS `ARRIVED`/`READY` or WALK_IN/MECHANIC `READY` set `disputeHold` on the
+ticket. Resolution is admin-only.
 
 ### `POST /disputes` — `fileDispute` (participant)
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
-| `accusedKind` | enum: `TOWER`, `SHOP`, `RIDER` | opt (defaults to `SHOP`; canonical codes) |
-| `accusedId` | string | opt |
-| `type` | enum: `TOWER_CANCEL_MID`, `SHOP_DECLINE_DROPOFF`, `RIDER_NO_SHOW`, `UNFIXABLE` | opt |
-| `reasonCode` | enum: `TOWER_CANCEL_BREAKDOWN`, `TOWER_CANCEL_SAFETY`, `TOWER_CANCEL_UNREACHABLE`, `TOWER_CANCEL_OTHER`, `SHOP_FULL`, `SHOP_PART_DELAY`, `SHOP_CLOSED`, `SHOP_CAPACITY`, `SHOP_OTHER`, `RIDER_NO_RESPONSE`, `RIDER_UNREACHABLE`, `RIDER_OTHER` | opt |
-| `reason` | alias: `LATE`, `OVERCHARGE`, `NO_SHOW`, `RUDE`, `WRONG_ROUTE`, `OTHER` | opt (`reasonCode` or `reason` required) |
+| `accusedKind` | enum: `TOWER`, `SHOP`, `RIDER` | opt (inferred from ticket + filer) |
+| `accusedId` | string | opt (inferred) |
+| `type` | enum: `TOWER_CANCEL_MID`, `SHOP_DECLINE_DROPOFF`, `RIDER_NO_SHOW`, `UNFIXABLE`, `PROVIDER_NO_SHOW`, `PROVIDER_LATE`, `SERVICE_QUALITY`, `FARE_DISPUTE`, `SAFETY_CONDUCT`, `UNFIXABLE_DISAGREEMENT`, `RIDER_PAYMENT`, `RIDER_CONDUCT`, `OTHER` | opt |
+| `reasonCode` | enum: `constants/disputes.ts` (`DISPUTE_REASON`) | opt |
+| `reason` | alias: `LATE`, `NO_SHOW`, `OVERCHARGE`, `WRONG_ROUTE`, `UNSAFE`, `RUDE`, `FIX_NOT_DONE`, `POOR_QUALITY`, `UNFIXABLE_DISAGREE`, `RIDER_NO_SHOW`, `RIDER_UNREACHABLE`, `RIDER_REFUSED_PAYMENT`, `RIDER_ABUSIVE`, `OTHER` | opt (`reasonCode` or `reason` required) |
 | `note` | string (max 500) | opt |
 | `photoUrls` | string[] Storage paths (0–5) | opt |
 | `photoUrl` | string (single path, legacy alias) | opt |
 
-Canonical codes are validated; the simplified `reason` alias maps to them
-(`LATE` → `SHOP_PART_DELAY`, `OVERCHARGE`/`RUDE`/`OTHER` → `SHOP_OTHER`,
-`NO_SHOW` → `TOWER_CANCEL_UNREACHABLE`, `WRONG_ROUTE` →
-`TOWER_CANCEL_OTHER`). Only ticket participants (rider, operator/assignee) or
-admins file (`403` otherwise).
+Canonical codes are validated. The simplified `reason` alias maps by ticket
+type and filer (TOW rider → tower, SOS/shop rider → shop, provider → rider).
+Only one `OPEN` dispute per ticket; participants (rider, operator/assignee)
+or admins file (`403` otherwise).
 
 ### `POST /disputes/one` — `one` (participant)
 | Field | Type | |
@@ -803,6 +777,8 @@ Visible to the filer, the accused party, and admins.
 |-------|------|---|
 | `disputeId` | string | req |
 | `resolution` | string (1–120) | req |
+| `outcome` | enum: `SHOP`, `RIDER`, `PARTIAL` | opt (default `SHOP`) |
+| `adjustedAmount` | integer ≥ 0 (VND) | opt (`PARTIAL` only) |
 | `refundAdjust` | integer ≥ 0 (VND) | opt |
 | `payoutAdjust` | integer ≥ 0 (VND) | opt |
 
@@ -813,8 +789,11 @@ Visible to the filer, the accused party, and admins.
 | `ticketId` / `filedBy` | origin ticket + filer |
 | `accusedKind` / `accusedId` / `type` / `reasonCode` / `note` / `photoUrls` | canonical accusation + evidence (Storage paths) |
 | `status` | `OPEN` → `RESOLVED` / `DISMISSED` |
-| `resolution` / `resolvedBy` / `resolvedAt` | admin decision |
+| `resolution` / `outcome` / `adjustedAmount` / `resolvedBy` / `resolvedAt` | admin decision |
+| `hold` | whether the dispute held the ticket |
 | `refundAdjust` / `payoutAdjust` | optional money adjustments |
+
+Tickets carry `dispute` (snapshot), `disputeHold`, and `openDisputeId`.
 
 ## Platform config
 
@@ -825,12 +804,16 @@ lands). Single doc id `global` holds the whole card — reads/writes address
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `commissionRate` | map: `MECHANIC`, `TOW`, `SOS`, `WALK_IN` → percent | 10 / 15 / 10 / 10 | platform cut at charge creation |
-| `towBaseFee` | integer VND | 0 | tow rate card |
-| `towPerKmFee` | integer VND | 0 | tow rate card |
-| `carMultiplier` | number | 2.5 | car class factor |
-| `nightMultiplier` | number | 1.3 | night rate factor |
-| `nightWindow` | `{start, end}` (hours) | 22–5 | night window |
+| `towBaseFee` | integer VND | 150000 | bike base |
+| `towPerKmFee` | integer VND | 10000 | bike per-km; car per-km = `towPerKmFee × carMultiplier` |
+| `carBaseFee` | integer VND | 500000 | car base |
+| `carMultiplier` | number | 2.5 | car per-km factor |
+| `nightMultiplier` | number | 1.5 | night rate factor |
+| `nightWindow` | `{start, end}` (hours) | 22–6 | night window |
 | `minimumTowFee` | integer VND | 0 | tow floor |
+| `bikeIncludedKm` | number | 3 | bike included km |
+| `carIncludedKm` | number | 10 | car included km |
+| `ceilingMultiplier` | number | 1.1 | estimate ceiling |
 | `waitingRatePer15Min` | integer VND | 0 | waiting fee per 15-minute block |
 | `waitingGraceMin` | integer | 10 | free minutes before waiting accrues |
 | `waitingCapMin` | integer | 60 | accrual ceiling |

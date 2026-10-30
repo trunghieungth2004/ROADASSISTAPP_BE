@@ -32,7 +32,6 @@ CACHE_MAX_SIZE_<NAMESPACE>_MB   e.g. CACHE_MAX_SIZE_FLAG_MB=8
 |-----------|-------------|----------|-----|-----|--------------|
 | `user` | user doc per `userId` for auth checks (`requireAuth`), `getOneUser`, `getAllUser` (`__all__`) | `middleware/auth.ts`, `service/userService.ts` | 30 s | 3 MB | key-level: register clears `__all__`; role/status updates clear the target key + `__all__`; trust updates clear the target key |
 | `vehicleProfile` | profile list per `userId` | `service/vehicleProfileService.ts` | 30 s | 3 MB | key-level (`userId`) on profile create and ride-config add |
-| `alleySegment` | single segment per `segmentId`; near-search per `lat,lng,radius` | `service/alleySegmentService.ts` | 120 s | 4 MB | key-level (`segmentId`) on passability/moderation writes; wholesale on segment create |
 | `landmark` | near-search per `lat,lng,radius` (with computed `distance`) | `service/landmarkService.ts` | 120 s | 2 MB | wholesale on landmark create (`matchNearby` reuses the near-search cache) |
 | `flag` | near-search per `lat,lng,radius` | `service/flagService.ts` | 10 s | 4 MB | key-level (`flagId`) on confirm/moderate/expire; wholesale on flag create |
 | `savedPlace` | saved-place list per `userId` | `service/savedPlaceService.ts` | 30 s | 2 MB | key-level (`userId`) on save, relabel, remove |
@@ -50,7 +49,6 @@ The rule is blunt by design: **a write clears either its exact cache key or its 
 
 Notable behaviors:
 
-- **Near-search staleness**: `alleySegment`, `landmark`, and `flag` near-searches are keyed by exact `lat,lng,radiusMeters`. A create clears the whole namespace, but key-level writes (e.g. a flag confirm for one `flagId`) do not proactively refresh other coordinate keys — they expire via the short TTLs (10 s flags, 120 s segments/landmarks).
 - **Flag votes**: `confirmFlag` deletes only that flag's near-key; the updated vote count is returned directly in the response, so voters never read stale counts.
 - **Auth cache**: `requireAuth` reads through the `user` namespace, so role/status changes propagate within 30 s at most — and all three user mutations eagerly delete the affected keys, making propagation immediate in practice.
 
@@ -100,7 +98,7 @@ None has emulator coverage; all are billed invocations.
 
 | Function | Schedule | Sweeps | Notes |
 |----------|----------|--------|-------|
-| `sweepFlagsAndPresence` | every 60 min | flags past TTL (`flagService.expireFlags`) + stale volunteer/tow presence (`userService.sweepStaleVolunteers`) | merged — was `sweepExpiredFlags` + `sweepStaleVolunteers` |
+| `sweepFlagsAndPresence` | every 60 min | flags past TTL (`flagService.expireFlags`) + stale provider presence (`userService.sweepStalePresence`) | merged scheduled sweep |
 | `sweepRoutesAndWalkIns` | every 30 min | expired `active_routes` rows (`routingService.sweepActiveRoutes`) + unanswered walk-ins past their 2 h `expiresAt` (`dispatchService.sweepStaleWalkIns`, cancelled) | merged — was `sweepActiveRoutes` (15 min) + `sweepStaleWalkIns` (30 min); expired route rows may now linger up to 30 min |
 
 `POST /routes/sweep` (admin) runs the active-route sweep on demand and is retained for manual purges.

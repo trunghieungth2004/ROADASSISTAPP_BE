@@ -46,3 +46,48 @@ for name in VALHALLA_URL FCM_ENABLED CLOUD_TASKS_ENABLED PUSH_DELIVER_URL DISPAT
     echo "[setup:secrets] note: $name is empty in functions/.env" >&2
   fi
 done
+
+SEPAY_JSON="$ROOT/functions/config/sepay.json"
+if [ -f "$SEPAY_JSON" ]; then
+  if ! python3 -c "import json; json.load(open('$SEPAY_JSON'))" 2>/dev/null; then
+    echo "[setup:secrets] cannot read $SEPAY_JSON — git-crypt is likely locked" >&2
+    exit 1
+  fi
+  python3 - "$SEPAY_JSON" "$ENV_FILE" <<'PYEOF'
+import json, sys
+json_path, env_path = sys.argv[1], sys.argv[2]
+doc = json.load(open(json_path))
+mapping = {
+    "SEPAY_MERCHANT_ID": doc.get("merchantId", ""),
+    "SEPAY_SECRET_KEY": doc.get("secret", ""),
+    "SEPAY_ENV": doc.get("env", ""),
+    "PAYMENT_BRIDGE_URL": doc.get("bridgeUrl", ""),
+    "SEPAY_SUCCESS_URL": doc.get("successUrl", ""),
+    "SEPAY_ERROR_URL": doc.get("errorUrl", ""),
+    "SEPAY_CANCEL_URL": doc.get("cancelUrl", ""),
+}
+if not isinstance(mapping["SEPAY_MERCHANT_ID"], str) or not mapping["SEPAY_MERCHANT_ID"]:
+    raise SystemExit("[setup:secrets] sepay.json merchantId is empty")
+if not isinstance(mapping["SEPAY_SECRET_KEY"], str) or not mapping["SEPAY_SECRET_KEY"]:
+    raise SystemExit("[setup:secrets] sepay.json secret is empty")
+if mapping["SEPAY_ENV"] not in ("sandbox", "production"):
+    raise SystemExit("[setup:secrets] sepay.json env must be sandbox or production")
+lines = open(env_path).read().splitlines()
+out, seen = [], set()
+for line in lines:
+    key = line.split("=", 1)[0]
+    if key in mapping:
+        if key not in seen:
+            out.append(f"{key}={mapping[key]}")
+            seen.add(key)
+    else:
+        out.append(line)
+for key, value in mapping.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+open(env_path, "w").write("\n".join(out) + "\n")
+PYEOF
+  echo "[setup:secrets] SePay config synced into functions/.env (values not printed)"
+else
+  echo "[setup:secrets] note: functions/config/sepay.json missing; SePay stays disabled" >&2
+fi
