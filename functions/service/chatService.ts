@@ -13,7 +13,6 @@ import type {Message} from "firebase-admin/messaging";
 
 const MAX_TEXT = 1000;
 const MAX_PHOTOS = 3;
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 type Scope = "TICKET" | "HAZARD";
 
@@ -99,29 +98,52 @@ const open = async ({
   userId,
   scope,
   refId,
+  version,
 }: {
   userId: string;
   scope: Scope;
   refId: string;
+  version?: number;
 }) => {
   if (scope === "TICKET") {
     const {ticket, uids} = await ticketParticipants(refId);
+    const currentVersion = typeof ticket.chatVersion === "number" ?
+      ticket.chatVersion :
+      0;
+    if (typeof version === "number" && version > currentVersion) {
+      throw new ValidationError("Chat version is not available");
+    }
+    if (typeof version === "number" && version < currentVersion) {
+      const archived = await chatRepository.findById(
+        chatRepository.roomIdFor(scope, refId, version),
+      );
+      if (!archived || !archived.participantUids.includes(userId)) {
+        throw new ForbiddenError("This chat is archived");
+      }
+      return archived;
+    }
     if (!uids.includes(userId)) {
       throw new ForbiddenError("Only the rider and assigned provider chat");
     }
     const existing = await chatRepository.findById(
-      chatRepository.roomIdFor(scope, refId),
+      chatRepository.roomIdFor(scope, refId, currentVersion),
     );
     if (existing) {
-      if (existing.expiresAt && Date.parse(existing.expiresAt) <= Date.now()) {
-        throw new ValidationError("Chat has expired");
+      const missing = uids.filter((uid) =>
+        !existing.participantUids.includes(uid));
+      for (const uid of missing) {
+        await chatRepository.addParticipant(existing.id, uid);
       }
-      return existing;
+      if (existing.expiresAt !== null) {
+        await chatRepository.clearExpiry(existing.id);
+      }
+      return {
+        ...existing,
+        participantUids: [...new Set([...existing.participantUids, ...uids])],
+        expiresAt: null,
+      };
     }
-    const expiresAt = TERMINAL_STATUSES.has(String(ticket.status)) ?
-      new Date(Date.now() + RETENTION_MS).toISOString() :
-      null;
-    return chatRepository.create(scope, refId, uids, expiresAt);
+    return chatRepository.create(scope, refId, uids, null, currentVersion);
   }
   const flag = await flagRepository.findById(refId);
   if (!flag) throw new NotFoundError("Hazard not found");
@@ -144,16 +166,15 @@ const messages = async ({
   userId,
   scope,
   refId,
+  version,
 }: {
   userId: string;
   scope: Scope;
   refId: string;
+  version?: number;
 }) => {
-  const room = await open({userId, scope, refId});
+  const room = await open({userId, scope, refId, version});
   if (!room) throw new NotFoundError("Chat not found");
-  if (room.expiresAt && Date.parse(room.expiresAt) <= Date.now()) {
-    throw new ValidationError("Chat has expired");
-  }
   return chatRepository.listMessages(room.id);
 };
 
@@ -161,12 +182,14 @@ const send = async ({
   userId,
   scope,
   refId,
+  version,
   text,
   photoUrls,
 }: {
   userId: string;
   scope: Scope;
   refId: string;
+  version?: number;
   text?: string;
   photoUrls?: string[];
 }) => {
@@ -184,18 +207,19 @@ const send = async ({
     paths: photoUrls,
     ownerUid: userId,
     prefix: CHAT_PHOTO_PREFIX,
+    chatId: refId,
   });
-  const room = await open({userId, scope, refId});
+  const room = await open({userId, scope, refId, version});
   if (!room) throw new NotFoundError("Chat not found");
-  if (room.expiresAt && Date.parse(room.expiresAt) <= Date.now()) {
-    throw new ValidationError("Chat has expired");
-  }
   if (scope === "TICKET") {
     const ticket = await dispatchRepository.findById(refId);
     if (!ticket) throw new NotFoundError("Dispatch ticket not found");
-    if (TERMINAL_STATUSES.has(String(ticket.status)) &&
-      !room.expiresAt) {
-      await chatRepository.addParticipant(room.id, userId);
+    const currentVersion = typeof ticket.chatVersion === "number" ?
+      ticket.chatVersion :
+      0;
+    if ((typeof version === "number" && version < currentVersion) ||
+      room.closedAt !== null) {
+      throw new ValidationError("This chat is archived");
     }
     if (TERMINAL_STATUSES.has(String(ticket.status))) {
       throw new ValidationError("This ticket is closed");
@@ -210,11 +234,63 @@ const send = async ({
     senderName,
     text: body === "" ? null : body,
     photoUrls: paths,
+    kind: "USER",
     createdAt: new Date().toISOString(),
   });
   const fresh = await chatRepository.findById(room.id);
   if (fresh) await pushChat(fresh, userId, senderName, created.text);
   return created;
+};
+
+const addSystemEvent = async (
+  ticketId: string,
+  text: string,
+  event?: string,
+  params?: Record<string, string | number>,
+): Promise<void> => {
+  try {
+    const {ticket, uids} = await ticketParticipants(ticketId);
+    if (uids.length === 0) return;
+    const version = typeof ticket.chatVersion === "number" ?
+      ticket.chatVersion :
+      0;
+    const roomId = chatRepository.roomIdFor("TICKET", ticketId, version);
+    const existing = await chatRepository.findById(roomId);
+    const room = existing ?? await chatRepository.create(
+      "TICKET",
+      ticketId,
+      uids,
+      null,
+      version,
+    );
+    await chatRepository.addMessage(room.id, {
+      senderUid: "system",
+      senderName: null,
+      text,
+      photoUrls: [],
+      kind: "SYSTEM",
+      ...(event !== undefined ? {event} : {}),
+      ...(params !== undefined ? {params} : {}),
+      createdAt: new Date().toISOString(),
+    });
+  } catch {
+    return;
+  }
+};
+
+const archiveTicketRoom = async ({
+  ticketId,
+  version,
+}: {
+  ticketId: string;
+  version: number;
+}): Promise<{roomId: string; at: string} | null> => {
+  const roomId = chatRepository.roomIdFor("TICKET", ticketId, version);
+  const room = await chatRepository.findById(roomId);
+  if (!room) return null;
+  const at = new Date().toISOString();
+  await chatRepository.archiveRoom(roomId, at);
+  return {roomId, at};
 };
 
 const expireChats = async (): Promise<{deleted: number}> => {
@@ -236,6 +312,8 @@ export const chatService = {
   open,
   messages,
   send,
+  addSystemEvent,
+  archiveTicketRoom,
   expireChats,
 };
 

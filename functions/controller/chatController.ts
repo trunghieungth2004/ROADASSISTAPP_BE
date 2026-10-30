@@ -6,8 +6,8 @@ import {AuthedRequest} from "../middleware/auth";
 const openRoom = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {scope, refId} = req.body;
-    const result = await chatService.open({userId, scope, refId});
+    const {scope, refId, version} = req.body;
+    const result = await chatService.open({userId, scope, refId, version});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -17,8 +17,8 @@ const openRoom = async (req: Request, res: Response) => {
 const listMessages = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {scope, refId} = req.body;
-    const result = await chatService.messages({userId, scope, refId});
+    const {scope, refId, version} = req.body;
+    const result = await chatService.messages({userId, scope, refId, version});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -28,11 +28,12 @@ const listMessages = async (req: Request, res: Response) => {
 const sendMessage = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {scope, refId, text, photoUrls} = req.body;
+    const {scope, refId, version, text, photoUrls} = req.body;
     const result = await chatService.send({
       userId,
       scope,
       refId,
+      version,
       text,
       photoUrls,
     });

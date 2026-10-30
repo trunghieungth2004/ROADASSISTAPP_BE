@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import * as chatController from "../controller/chatController";
 
 export default (
@@ -20,6 +21,7 @@ export default (
   );
   app.post(
     "/chat/send",
+    writeLimited,
     requireAuth,
     validate({body: schemas.chatSend}),
     chatController.sendMessage,

@@ -4,6 +4,7 @@ export type ChatRoom = {
   id: string;
   scope: string;
   refId: string;
+  version: number;
   participantUids: string[];
   createdAt: string;
   updatedAt: string;
@@ -17,16 +18,30 @@ export type ChatMessage = {
   senderName: string | null;
   text: string | null;
   photoUrls: string[];
+  kind?: string;
+  event?: string;
+  params?: Record<string, string | number>;
   createdAt: string;
 };
 
-const roomIdFor = (scope: string, refId: string): string =>
-  `${scope.toLowerCase()}_${refId}`;
+const roomIdFor = (
+  scope: string,
+  refId: string,
+  version = 0,
+): string => {
+  const suffix = version > 0 ? `_v${version}` : "";
+  return `${scope.toLowerCase()}_${refId}${suffix}`;
+};
 
 const findById = async (roomId: string): Promise<ChatRoom | null> => {
   const doc = await db.collection("chats").doc(roomId).get();
   if (!doc.exists) return null;
-  return {id: doc.id, ...doc.data()} as ChatRoom;
+  const data = doc.data() ?? {};
+  return {
+    id: doc.id,
+    ...data,
+    version: typeof data.version === "number" ? data.version : 0,
+  } as ChatRoom;
 };
 
 const create = async (
@@ -34,12 +49,14 @@ const create = async (
   refId: string,
   participantUids: string[],
   expiresAt: string | null,
+  version = 0,
 ): Promise<ChatRoom> => {
-  const id = roomIdFor(scope, refId);
+  const id = roomIdFor(scope, refId, version);
   const now = new Date().toISOString();
   const doc = {
     scope,
     refId,
+    version,
     participantUids: [...new Set(participantUids)],
     createdAt: now,
     updatedAt: now,
@@ -48,6 +65,20 @@ const create = async (
   };
   await db.collection("chats").doc(id).set(doc);
   return {id, ...doc};
+};
+
+const clearExpiry = async (roomId: string): Promise<void> => {
+  await db.collection("chats").doc(roomId).update({
+    expiresAt: null,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const archiveRoom = async (roomId: string, at: string): Promise<void> => {
+  await db.collection("chats").doc(roomId).update({
+    closedAt: at,
+    updatedAt: at,
+  });
 };
 
 const addParticipant = async (
@@ -104,6 +135,7 @@ const deleteRoom = async (roomId: string): Promise<void> => {
 const findExpired = async (nowIso: string): Promise<ChatRoom[]> => {
   const snapshot = await db
     .collection("chats")
+    .where("scope", "==", "HAZARD")
     .where("expiresAt", "<=", nowIso)
     .limit(50)
     .get();
@@ -117,6 +149,8 @@ export {
   findById,
   create,
   addParticipant,
+  clearExpiry,
+  archiveRoom,
   addMessage,
   listMessages,
   deleteRoom,
