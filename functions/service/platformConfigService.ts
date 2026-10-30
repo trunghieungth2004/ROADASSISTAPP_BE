@@ -14,12 +14,12 @@ import {ValidationError} from "../utils/errors";
 import {logWarn} from "../utils/logger";
 
 interface TowRates {
-  towBaseFee: number;
-  towPerKmFee: number;
-  carMultiplier: number;
+  SOLO_BIKE: {base: number; perKm: number; includedKm: number};
+  CAR: {base: number; perKm: number; includedKm: number};
   nightMultiplier: number;
   nightWindow: {start: number; end: number};
-  minimumTowFee: number;
+  ceilingMultiplier: number;
+  minimumFee: number;
   deadheadPayable: boolean;
 }
 
@@ -63,11 +63,23 @@ const validatePaymentConfig = (
   if (!(config.waitingCapMin >= config.waitingGraceMin)) {
     issues.push("waitingCapMin");
   }
-  for (const key of ["towBaseFee", "towPerKmFee", "minimumTowFee"] as const) {
+  for (const key of [
+    "towBaseFee",
+    "towPerKmFee",
+    "carBaseFee",
+    "minimumTowFee",
+  ] as const) {
     if (!Number.isFinite(config[key]) || config[key] < 0) issues.push(key);
   }
-  for (const key of ["carMultiplier", "nightMultiplier"] as const) {
+  for (const key of [
+    "carMultiplier",
+    "nightMultiplier",
+    "ceilingMultiplier",
+  ] as const) {
     if (!Number.isFinite(config[key]) || config[key] <= 0) issues.push(key);
+  }
+  for (const key of ["bikeIncludedKm", "carIncludedKm"] as const) {
+    if (!Number.isFinite(config[key]) || config[key] < 0) issues.push(key);
   }
   const start = config.nightWindow.start;
   const end = config.nightWindow.end;
@@ -124,15 +136,23 @@ const getCommissionRate = async (ticketType: string): Promise<number> => {
 const getTowRates = async (): Promise<TowRates> => {
   const config = await getConfig();
   return {
-    towBaseFee: config.towBaseFee,
-    towPerKmFee: config.towPerKmFee,
-    carMultiplier: config.carMultiplier,
+    SOLO_BIKE: {
+      base: config.towBaseFee,
+      perKm: config.towPerKmFee,
+      includedKm: config.bikeIncludedKm,
+    },
+    CAR: {
+      base: config.carBaseFee,
+      perKm: config.towPerKmFee * config.carMultiplier,
+      includedKm: config.carIncludedKm,
+    },
     nightMultiplier: config.nightMultiplier,
     nightWindow: {
       start: config.nightWindow.start,
       end: config.nightWindow.end,
     },
-    minimumTowFee: config.minimumTowFee,
+    ceilingMultiplier: config.ceilingMultiplier,
+    minimumFee: config.minimumTowFee,
     deadheadPayable: config.deadheadPayable,
   };
 };

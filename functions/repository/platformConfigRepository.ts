@@ -23,10 +23,14 @@ interface PlatformConfig {
   commissionRate: CommissionRate;
   towBaseFee: number;
   towPerKmFee: number;
+  carBaseFee: number;
   carMultiplier: number;
   nightMultiplier: number;
   nightWindow: NightWindow;
   minimumTowFee: number;
+  bikeIncludedKm: number;
+  carIncludedKm: number;
+  ceilingMultiplier: number;
   waitingRatePer15Min: number;
   waitingGraceMin: number;
   waitingCapMin: number;
@@ -97,6 +101,7 @@ const get = async (): Promise<PlatformConfig> => {
     },
     towBaseFee: asNumber(raw.towBaseFee, defaults.towBaseFee),
     towPerKmFee: asNumber(raw.towPerKmFee, defaults.towPerKmFee),
+    carBaseFee: asNumber(raw.carBaseFee, defaults.carBaseFee),
     carMultiplier: asNumber(raw.carMultiplier, defaults.carMultiplier),
     nightMultiplier: asNumber(raw.nightMultiplier, defaults.nightMultiplier),
     nightWindow: {
@@ -104,6 +109,18 @@ const get = async (): Promise<PlatformConfig> => {
       end: asNumber(nightWindow.end, defaults.nightWindow.end),
     },
     minimumTowFee: asNumber(raw.minimumTowFee, defaults.minimumTowFee),
+    bikeIncludedKm: asNumber(
+      raw.bikeIncludedKm,
+      defaults.bikeIncludedKm,
+    ),
+    carIncludedKm: asNumber(
+      raw.carIncludedKm,
+      defaults.carIncludedKm,
+    ),
+    ceilingMultiplier: asNumber(
+      raw.ceilingMultiplier,
+      defaults.ceilingMultiplier,
+    ),
     waitingRatePer15Min: asNumber(
       raw.waitingRatePer15Min,
       defaults.waitingRatePer15Min,
