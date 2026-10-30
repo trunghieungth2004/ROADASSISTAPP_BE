@@ -468,5 +468,3 @@ const destinationPartyOf = (
     phoneSharingStatuses.has(row.status);
   return buildShopParty(shopId, shop, shared);
 };
-
-

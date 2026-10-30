@@ -177,4 +177,3 @@ export const getDispatch = async (id: string, userId: string) => {
   }
   return out;
 };
-

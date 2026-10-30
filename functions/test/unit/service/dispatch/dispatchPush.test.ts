@@ -1099,4 +1099,3 @@ describe("dispatchService.deliverDispatchPush", () => {
     expect(payload?.data?.urgent).toBe("true");
   });
 });
-

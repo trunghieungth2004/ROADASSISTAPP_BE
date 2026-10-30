@@ -394,4 +394,3 @@ describe("dispatchService.findTowOperators", () => {
     ).resolves.toEqual([]);
   });
 });
-

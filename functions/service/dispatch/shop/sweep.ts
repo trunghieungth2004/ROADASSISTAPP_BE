@@ -41,5 +41,3 @@ export const sweepLateTows = async (): Promise<{notified: number}> => {
   if (notified > 0) cacheManager.del(NS);
   return {notified};
 };
-
-

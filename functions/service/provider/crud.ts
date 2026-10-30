@@ -496,4 +496,3 @@ export const updateProvider = async ({
   cacheManager.del(SHOP_NS);
   return {updated: 1};
 };
-

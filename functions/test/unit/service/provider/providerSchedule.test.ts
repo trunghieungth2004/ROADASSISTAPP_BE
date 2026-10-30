@@ -127,4 +127,3 @@ describe("providerService.nextTransition", () => {
     expect(nextTransition("", monday(10))).toBeNull();
   });
 });
-

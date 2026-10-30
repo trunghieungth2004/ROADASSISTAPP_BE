@@ -354,4 +354,3 @@ export const respondMobileShopTow = async ({
     ...(network ? {network: true} : {}),
   };
 };
-

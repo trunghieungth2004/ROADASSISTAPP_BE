@@ -172,4 +172,3 @@ export const normalizeShopServices = (services: unknown): ShopService[] => {
   }
   return out;
 };
-

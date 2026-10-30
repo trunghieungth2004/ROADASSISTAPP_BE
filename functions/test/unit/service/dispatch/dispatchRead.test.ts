@@ -901,4 +901,3 @@ describe("dispatchService feedTickets", () => {
     expect(feed.find((t) => t.id === "t4")?.photoUrls).toBeUndefined();
   });
 });
-

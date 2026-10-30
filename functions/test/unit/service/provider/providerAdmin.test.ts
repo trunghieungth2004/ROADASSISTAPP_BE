@@ -375,4 +375,3 @@ describe("providerService.dismissReport", () => {
     ).resolves.toEqual({dismissed: true});
   });
 });
-

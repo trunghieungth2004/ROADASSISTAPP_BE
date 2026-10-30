@@ -404,4 +404,3 @@ export const searchProviders = async ({
     ticketId,
     now,
   });
-

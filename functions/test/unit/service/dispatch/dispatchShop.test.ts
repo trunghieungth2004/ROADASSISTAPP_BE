@@ -883,4 +883,3 @@ it("refuses to re-quote or re-finalize", async () => {
     updateWorkOrder({userId: "op1", ticketId: "t1", finalAmount: 130000}),
   ).rejects.toMatchObject({statusCode: 400});
 });
-

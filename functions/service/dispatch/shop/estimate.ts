@@ -274,4 +274,3 @@ export const declineEstimate = async ({
   }
   return {declined: true};
 };
-

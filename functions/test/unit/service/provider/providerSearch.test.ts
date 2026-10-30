@@ -386,4 +386,3 @@ describe("providerService.searchProviders", () => {
     expect(providerRepository.findByNamePrefix).not.toHaveBeenCalled();
   });
 });
-

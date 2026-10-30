@@ -151,4 +151,3 @@ export const updateDispatchDestination = async ({userId,
   }
   return dispatchRepository.findById(ticketId);
 };
-

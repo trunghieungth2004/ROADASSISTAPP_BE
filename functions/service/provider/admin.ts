@@ -295,4 +295,3 @@ export const restoreProvider = async ({
   cacheManager.del(SHOP_NS);
   return {restored: true, suspended: false};
 };
-

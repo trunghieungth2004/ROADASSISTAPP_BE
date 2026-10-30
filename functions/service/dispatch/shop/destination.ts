@@ -141,4 +141,3 @@ export const declineDestination = async ({
   }
   return {declined: true, legKm};
 };
-

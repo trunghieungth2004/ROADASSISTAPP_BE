@@ -563,4 +563,3 @@ describe("dispatchService vehicle and capability", () => {
     await expect(tow()).resolves.toMatchObject({id: "t1"});
   });
 });
-

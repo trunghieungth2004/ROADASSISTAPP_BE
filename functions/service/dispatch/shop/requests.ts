@@ -26,5 +26,3 @@ export const getShopRecords = async ({
   await resolveShopOperator(userId, shopId);
   return dispatchRepository.findRecentForShop(shopId, limit);
 };
-
-
