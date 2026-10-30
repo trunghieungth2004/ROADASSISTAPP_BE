@@ -25,9 +25,9 @@ afterAll(async () => {
 describe("validation edge cases", () => {
   it("rejects out-of-range coordinates with 400", async () => {
     const res = await request(app)
-      .post("/alleys")
+      .post("/flags")
       .set("Authorization", bearer(USER))
-      .send({lat: 200, lng: BASE_LNG, tier: "TIER1"});
+      .send({type: "FLOOD", lat: 200, lng: BASE_LNG});
     expect(res.status).toBe(400);
     expect(res.body.errors).toBeDefined();
   });
@@ -42,27 +42,27 @@ describe("validation edge cases", () => {
 
   it("rejects missing required fields with 400", async () => {
     const res = await request(app)
-      .post("/alleys/near")
+      .post("/flags")
       .set("Authorization", bearer(USER))
-      .send({lng: BASE_LNG});
+      .send({type: "FLOOD", lng: BASE_LNG});
     expect(res.status).toBe(400);
   });
 
   it("rejects requests without a bearer token with 401", async () => {
     const res = await request(app)
-      .post("/alleys/near")
-      .send({lat: BASE_LAT, lng: BASE_LNG});
+      .post("/flags")
+      .send({type: "FLOOD", lat: BASE_LAT, lng: BASE_LNG});
     expect(res.status).toBe(401);
   });
 
   it("strips unknown fields", async () => {
     const res = await request(app)
-      .post("/alleys")
+      .post("/flags")
       .set("Authorization", bearer(USER))
       .send({
+        type: "FLOOD",
         lat: BASE_LAT,
         lng: BASE_LNG,
-        tier: "TIER1",
         injected: "nope",
       });
     expect(res.status).toBe(201);
