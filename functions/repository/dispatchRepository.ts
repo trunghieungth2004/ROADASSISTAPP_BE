@@ -9,8 +9,6 @@ interface DispatchTicket {
   lat: number;
   lng: number;
   diagnosticId?: string | null;
-  alleySegmentId?: string | null;
-  accessWidthMeters?: number | null;
   note?: string | null;
   description?: string | null;
   photoUrls?: string[];
@@ -52,11 +50,19 @@ interface DispatchTicket {
     actualKm: number | null;
     cappedKm: number | null;
   } | null;
+  jobTrack?: Array<{lat: number; lng: number; at: string}>;
   providerId?: string | null;
   providerSnapshot?: Record<string, unknown> | null;
   destinationShopId?: string | null;
   destinationSnapshot?: Record<string, unknown> | null;
   destinationPoint?: Record<string, unknown> | null;
+  destinationDecline?: {
+    shopId: string;
+    reasonCode: string;
+    by: string;
+    at: string;
+  } | null;
+  vehicleId?: string | null;
   vehicleType?: string | null;
   vehicleWidth?: number | null;
   vehicleClass?: string | null;
@@ -69,13 +75,25 @@ interface DispatchTicket {
   quotedAt?: string | null;
   finalAmount?: number | null;
   mobileCallOutFee?: number | null;
+  mobileCallOutWaived?: boolean | null;
   mobileTravelFee?: number | null;
+  chatVersion?: number;
+  chatHistory?: Array<{
+    version: number;
+    roomId: string;
+    shopId: string;
+    shopName?: string | null;
+    at: string;
+  }>;
   mobileTowOffer?: {
     status: string;
     shopId: string;
     destinationShopId: string | null;
+    mode: string;
+    towProviderId: string | null;
     by: string;
     at: string;
+    expiresAt?: string | null;
   } | null;
   returnTowOffer?: {
     status: string;
@@ -99,6 +117,13 @@ interface DispatchTicket {
     by: string;
     at: string;
   } | null;
+  unfixGraceAt?: string | null;
+  sosAttempt?: number;
+  continuedFromTicketId?: string | null;
+  continuationTicketId?: string | null;
+  excludedShopIds?: string[];
+  excludedOperatorUids?: string[];
+  sourceTicketId?: string | null;
   invoiceRef?: string | null;
   fulfilledByShopId?: string | null;
   declineReason?: string | null;
@@ -131,6 +156,13 @@ interface DispatchTicket {
   assignedUid?: string | null;
   assignedShopId?: string | null;
   assignedKind?: string | null;
+  formerAssignedShopIds?: string[];
+  towCancelHistory?: Array<{
+    shopId: string;
+    by: string;
+    at: string;
+    reasonCode?: string;
+  }>;
   candidates?: string[];
   candidateTs?: string | null;
   riderRating?: number | null;
@@ -144,8 +176,6 @@ const create = async (data: {
   lat: number;
   lng: number;
   diagnosticId?: string;
-  alleySegmentId?: string;
-  accessWidthMeters?: number;
   note?: string;
   description?: string;
   photoUrls?: string[];
@@ -170,18 +200,29 @@ const create = async (data: {
     by: string;
     at: string;
   } | null;
+  unfixGraceAt?: string | null;
   providerId?: string;
   providerSnapshot?: Record<string, unknown>;
   destinationShopId?: string;
   destinationSnapshot?: Record<string, unknown>;
   destinationPoint?: {lat: number; lng: number; label?: string};
+  vehicleId?: string | null;
   vehicleType?: string;
   vehicleWidth?: number;
   vehicleClass?: string;
   vehicleLabel?: string;
   expiresAt?: string;
+  sosAttempt?: number;
+  continuedFromTicketId?: string | null;
+  continuationTicketId?: string | null;
+  excludedShopIds?: string[];
+  excludedOperatorUids?: string[];
+  sourceTicketId?: string | null;
+  id?: string;
 }): Promise<DispatchTicket> => {
-  const ref = db.collection("dispatch_tickets").doc();
+  const ref = data.id !== undefined ?
+    db.collection("dispatch_tickets").doc(data.id) :
+    db.collection("dispatch_tickets").doc();
   const doc = {
     id: ref.id,
     userId: data.userId,
@@ -189,8 +230,6 @@ const create = async (data: {
     lat: data.lat,
     lng: data.lng,
     diagnosticId: data.diagnosticId ?? null,
-    alleySegmentId: data.alleySegmentId ?? null,
-    accessWidthMeters: data.accessWidthMeters ?? null,
     note: data.note ?? null,
     description: data.description ?? null,
     photoUrls: data.photoUrls ?? [],
@@ -201,6 +240,12 @@ const create = async (data: {
     waiting: data.waiting ?? null,
     towActual: data.towActual ?? null,
     unfixable: data.unfixable ?? null,
+    sosAttempt: data.sosAttempt ?? 1,
+    continuedFromTicketId: data.continuedFromTicketId ?? null,
+    continuationTicketId: data.continuationTicketId ?? null,
+    excludedShopIds: data.excludedShopIds ?? [],
+    excludedOperatorUids: data.excludedOperatorUids ?? [],
+    sourceTicketId: data.sourceTicketId ?? null,
     estimateAmount: null,
     estimateNote: null,
     estimateEta: null,
@@ -220,6 +265,8 @@ const create = async (data: {
     vehicleWidth: data.vehicleWidth ?? null,
     vehicleClass: data.vehicleClass ?? null,
     vehicleLabel: data.vehicleLabel ?? null,
+    chatVersion: 0,
+    chatHistory: [],
     workType: null,
     priceEstimate: null,
     priceCurrency: "VND",
@@ -492,17 +539,20 @@ const findRecentForShop = async (
   shopId: string,
   limit = 20,
 ): Promise<DispatchTicket[]> => {
-  const [assigned, addressed] = await Promise.all([
+  const [assigned, addressed, former] = await Promise.all([
     db.collection("dispatch_tickets")
       .where("assignedShopId", "==", shopId)
       .get(),
     db.collection("dispatch_tickets")
       .where("destinationShopId", "==", shopId)
       .get(),
+    db.collection("dispatch_tickets")
+      .where("formerAssignedShopIds", "array-contains", shopId)
+      .get(),
   ]);
   const seen = new Set<string>();
   const results: DispatchTicket[] = [];
-  for (const snap of [assigned, addressed]) {
+  for (const snap of [assigned, addressed, former]) {
     snap.forEach((doc) => {
       if (seen.has(doc.id)) return;
       seen.add(doc.id);
@@ -540,6 +590,15 @@ const findBusyUids = async (uids: string[]): Promise<Set<string>> => {
   return busy;
 };
 
+const appendJobTrack = async (
+  ticketId: string,
+  point: {lat: number; lng: number; at: string},
+): Promise<void> => {
+  await db.collection("dispatch_tickets").doc(ticketId).update({
+    jobTrack: FieldValue.arrayUnion(point),
+  });
+};
+
 const countFulfilled = async (shopId: string): Promise<number> => {
   const snap = await db
     .collection("dispatch_tickets")
@@ -556,5 +615,5 @@ export {create, findById, updateStatus, update, claimForAssignment,
   findByStatus, findByStatusForTypes, findByUserId, findActiveForUid,
   findByAssignee, findActiveForShop, findActiveForDestination,
   findPendingForShop, findRecentForShop,
-  findStaleWalkIns, countFulfilled,
+  findStaleWalkIns, appendJobTrack, countFulfilled,
   findBusyUids, ACTIVE_TICKET_STATUSES, DispatchTicket};

@@ -94,6 +94,7 @@ const enqueueDispatchPush = async (
   ticketId: string,
   taskSuffix = "",
   extra: Record<string, string> = {},
+  scheduleAt?: string,
 ): Promise<{enqueued: boolean}> => {
   if (!tasksEnabled()) return {enqueued: false};
   const project =
@@ -115,6 +116,9 @@ const enqueueDispatchPush = async (
       DISPATCH_QUEUE_NAME,
     );
     const taskId = sanitizeTaskId(`dispatch-${ticketId}${taskSuffix}`);
+    const scheduleTime = scheduleAt !== undefined ?
+      {seconds: Math.floor(Date.parse(scheduleAt) / 1000)} :
+      undefined;
     await client.createTask({
       parent,
       task: {
@@ -124,6 +128,7 @@ const enqueueDispatchPush = async (
           DISPATCH_QUEUE_NAME,
           taskId,
         ),
+        ...(scheduleTime !== undefined ? {scheduleTime} : {}),
         httpRequest: {
           httpMethod: "POST",
           url,

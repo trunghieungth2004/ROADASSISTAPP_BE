@@ -184,10 +184,15 @@ describe("dispatchRepository shop lists", () => {
       snap("t1", {status: "4", createdAt: "2026-01-01"}),
       snap("t2", {status: "4", createdAt: "2026-01-03"}),
       snap("t3", {status: "2", createdAt: "2026-01-02"}),
-    ]];
+    ], [], []];
     const result = await findRecentForShop("shop9", 2);
     expect(result.map((t) => t.id)).toEqual(["t2", "t3"]);
     expect(whereCalls[0]?.slice(0, 2)).toEqual(["assignedShopId", "=="]);
+    expect(whereCalls).toContainEqual([
+      "formerAssignedShopIds",
+      "array-contains",
+      "shop9",
+    ]);
   });
 });
 

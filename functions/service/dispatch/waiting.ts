@@ -6,7 +6,7 @@ import * as userRepository from "../../repository/userRepository";
 import {ROLE_ADMIN} from "../../constants/roles";
 import {ForbiddenError, NotFoundError} from "../../utils/errors";
 import {haversineMeters} from "../../utils/geo";
-import {getConfig} from "../platformConfig";
+import {getConfig} from "../platformConfigService";
 import {
   MS_PER_MIN,
   WAITING_BLOCK_MS,
@@ -291,7 +291,7 @@ const assertWaitingReader = async (
   throw new ForbiddenError("Only ticket participants read waiting");
 };
 
-const waitingSummary = async ({
+export const getWaitingSummary = async ({
   userId,
   ticketId,
 }: {
@@ -349,7 +349,6 @@ export {
   startWaiting,
   stopWaiting,
   accrue,
-  waitingSummary,
   currentWaitingFee,
   calcFee,
   WaitingRules,

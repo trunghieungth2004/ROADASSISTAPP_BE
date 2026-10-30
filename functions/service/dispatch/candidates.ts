@@ -1,8 +1,5 @@
 import * as dispatchRepository from
   "../../repository/dispatchRepository";
-import * as userRepository from "../../repository/userRepository";
-import * as volunteerLocationRepository from
-  "../../repository/volunteerLocationRepository";
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 import * as providerRepository from "../../repository/providerRepository";
@@ -16,22 +13,47 @@ import {
   PROVIDER_KIND,
   PROVIDER_STATUS,
   TOW_DISPATCH_RADIUS,
-  VOLUNTEER_DEFAULT_RADIUS,
-  VOLUNTEER_FRESH_MS,
 } from "../../constants/status";
-import {volunteerFitsTicket} from "./helpers";
 import {servesVehicleClass, vehicleClassOf} from "../providerService";
+
+const operatorBusy = async (
+  operatorUid: string,
+  cache: Map<string, boolean>,
+): Promise<boolean> => {
+  const known = cache.get(operatorUid);
+  if (known !== undefined) return known;
+  const operated = (await providerRepository.findByOperator(operatorUid)) ?? [];
+  let busy = false;
+  for (const provider of operated) {
+    if (provider.kind !== PROVIDER_KIND.TOW &&
+      provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+      continue;
+    }
+    const active =
+      (await dispatchRepository.findActiveForShop(provider.id)) ?? [];
+    if (active.length > 0) {
+      busy = true;
+      break;
+    }
+  }
+  cache.set(operatorUid, busy);
+  return busy;
+};
 
 export const findMobileShopOperators = async ({
   lat,
   lng,
-  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  radiusMeters = TOW_DISPATCH_RADIUS,
   vehicleType,
+  excludeOperatorUids = [],
+  excludeShopIds = [],
 }: {
   lat: number;
   lng: number;
   radiusMeters?: number;
   vehicleType?: string;
+  excludeOperatorUids?: string[];
+  excludeShopIds?: string[];
 }): Promise<string[]> => {
   const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
   const cells = cellsCoveringBounds(bounds, 6);
@@ -55,6 +77,8 @@ export const findMobileShopOperators = async ({
     if (typeof provider.operatorUid !== "string" ||
       provider.operatorUid === "") continue;
     if (!servesVehicleClass(provider, vehicleClassOf(vehicleType))) continue;
+    if (excludeOperatorUids.includes(provider.operatorUid)) continue;
+    if (excludeShopIds.includes(provider.id)) continue;
     if (!eligible.some((item) => item.uid === provider.operatorUid)) {
       eligible.push({
         uid: provider.operatorUid,
@@ -63,50 +87,9 @@ export const findMobileShopOperators = async ({
     }
   }
   const free: string[] = [];
+  const busyCache = new Map<string, boolean>();
   for (const item of eligible) {
-    const active = await dispatchRepository.findActiveForShop(item.providerId);
-    if (active.length === 0) free.push(item.uid);
-  }
-  return free;
-};
-
-const findVolunteerCandidates = async ({
-  lat,
-  lng,
-  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
-  vehicleType,
-}: {
-  lat: number;
-  lng: number;
-  radiusMeters?: number;
-  vehicleType?: string;
-}): Promise<string[]> => {
-  const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
-  const cells = cellsCoveringBounds(bounds, 6);
-  const locations =
-    await volunteerLocationRepository.findByGeohashPrefixes(cells);
-  const cutoff = Date.now() - VOLUNTEER_FRESH_MS;
-  const fresh = locations.filter((loc) => {
-    if (Date.parse(loc.lastSeen) < cutoff) return false;
-    return haversineMeters(lat, lng, loc.lat, loc.lng) <= radiusMeters;
-  });
-  if (fresh.length === 0) return [];
-  const users = await userRepository.findByIds(
-    fresh.map((loc) => loc.uid),
-  );
-  const eligible: string[] = [];
-  for (const loc of fresh) {
-    const user = users.get(loc.uid);
-    if (!user) continue;
-    if (user.volunteerAvailable !== true) continue;
-    if (user.status && user.status !== "1") continue;
-    if (!volunteerFitsTicket(user.capability, vehicleType)) continue;
-    eligible.push(loc.uid);
-  }
-  const free: string[] = [];
-  const busy = await dispatchRepository.findBusyUids(eligible);
-  for (const uid of eligible) {
-    if (!busy.has(uid)) free.push(uid);
+    if (!(await operatorBusy(item.uid, busyCache))) free.push(item.uid);
   }
   return free;
 };
@@ -116,11 +99,9 @@ export const findCandidates = async (input: {
   lng: number;
   radiusMeters?: number;
   vehicleType?: string;
-}): Promise<string[]> => {
-  const mobile = await findMobileShopOperators(input);
-  if (mobile.length > 0) return mobile;
-  return findVolunteerCandidates(input);
-};
+  excludeOperatorUids?: string[];
+  excludeShopIds?: string[];
+}): Promise<string[]> => findMobileShopOperators(input);
 
 export const findTowOperators = async ({
   lat,
@@ -161,5 +142,10 @@ export const findTowOperators = async ({
       operators.push(shop.operatorUid);
     }
   }
-  return operators;
+  const free: string[] = [];
+  const busyCache = new Map<string, boolean>();
+  for (const operatorUid of operators) {
+    if (!(await operatorBusy(operatorUid, busyCache))) free.push(operatorUid);
+  }
+  return free;
 };

@@ -1,5 +1,3 @@
-import * as alleySegmentRepository from
-  "../../repository/alleySegmentRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
 import * as dispatchRepository from
@@ -13,7 +11,6 @@ import {
   PROVIDER_STATUS,
   TOW_CLASS_MULTIPLIER_BIKE,
   TOW_CLASS_MULTIPLIER_CAR,
-  VOLUNTEER_CAPABILITY,
 } from "../../constants/status";
 import {vehicleClassOf, servesVehicleClass} from "../providerService";
 import {isCarVehicle, postRoute} from "../../utils/valhalla";
@@ -25,19 +22,6 @@ import {
 } from "./constants";
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
-
-export const resolveAccessWidth = async (
-  alleySegmentId: string | undefined,
-  accessWidthMeters: number | undefined,
-): Promise<number | undefined> => {
-  if (accessWidthMeters !== undefined) return accessWidthMeters;
-  if (!alleySegmentId) return undefined;
-  const segment = await alleySegmentRepository.findById(alleySegmentId);
-  if (!segment) throw new NotFoundError("Alley segment not found");
-  const width = segment.baseWidth as number | null;
-  return typeof width === "number" ? width : undefined;
-};
-
 
 export const resolveDestination = async (
   destinationShopId: string | undefined,
@@ -111,20 +95,11 @@ export const requireProviderForTicket = (
   }
   const expected = providerKindForTicket(ticketType);
   if (!expected) {
-    throw new ForbiddenError("Tickets of this type are volunteer-only");
+    throw new ForbiddenError("Unsupported ticket type");
   }
   if (shop.kind !== expected) {
     throw new ValidationError(`Ticket needs a ${expected} provider`);
   }
-};
-
-
-export const volunteerFitsTicket = (
-  capability: unknown,
-  vehicleType: string | undefined,
-): boolean => {
-  if (!isCarVehicle(vehicleType)) return true;
-  return capability === VOLUNTEER_CAPABILITY.CAR;
 };
 
 

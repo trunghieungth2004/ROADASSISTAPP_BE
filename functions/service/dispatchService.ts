@@ -3,10 +3,17 @@ export {
   updateDispatchStatus,
   updateDispatchDestination,
   refreshTowEta,
-  estimateTowFarePreview,
+  getTowFareEstimate,
+  getTowFareEstimate as estimateTowFarePreview,
   cancelTowerSearch,
 } from "./dispatch/tickets";
-export {nearDispatch, dispatchOffers, selectDispatch} from "./dispatch/board";
+export {
+  getNearbyDispatch,
+  getNearbyDispatch as nearDispatch,
+  getDispatchOffers,
+  getDispatchOffers as dispatchOffers,
+  selectDispatch,
+} from "./dispatch/board";
 export {acceptDispatch} from "./dispatch/accept";
 export {
   declineDispatch,
@@ -22,18 +29,30 @@ export {
   approveQuote,
   declineDestination,
   sweepLateTows,
-  shopRequests,
-  shopRecords,
+  getShopRequests,
+  getShopRequests as shopRequests,
+  getShopRecords,
+  getShopRecords as shopRecords,
   feedTickets,
   sweepStaleWalkIns,
   updateWorkOrder,
 } from "./dispatch/shop";
+export {
+  continueSos,
+  continueUnfixIfNeeded,
+  expireMobileTowOffer,
+  sweepMobileTowOffers,
+  sweepUnfixGrace,
+} from "./dispatch/sos";
 export {findCandidates, findTowOperators} from "./dispatch/candidates";
-export {waitingSummary} from "./dispatch/waiting";
+export {
+  getWaitingSummary,
+  getWaitingSummary as waitingSummary,
+} from "./dispatch/waiting";
 export {
   deliverDispatchPush,
   deliverOperatorPush,
   deliverTowWithdrawn,
-} from "./dispatch/push";
+} from "./push/dispatch";
 export {ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";

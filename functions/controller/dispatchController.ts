@@ -12,18 +12,16 @@ const createDispatch = async (req: Request, res: Response) => {
       lat,
       lng,
       diagnosticId,
-      alleySegmentId,
-      accessWidthMeters,
       note,
       description,
       photoUrls,
       providerId,
       destinationShopId,
       destinationPoint,
+      vehicleId,
       vehicleType,
       vehicleWidth,
       vehicleLabel,
-      force,
     } = req.body;
     const result = await dispatchService.createDispatch({
       userId,
@@ -31,18 +29,16 @@ const createDispatch = async (req: Request, res: Response) => {
       lat,
       lng,
       diagnosticId,
-      alleySegmentId,
-      accessWidthMeters,
       note,
       description,
       photoUrls,
       providerId,
       destinationShopId,
       destinationPoint,
+      vehicleId,
       vehicleType,
       vehicleWidth,
       vehicleLabel,
-      force: force === true,
     });
     sendSuccess(res, result, {message: "Dispatch created", statusCode: 201});
   } catch (error) {
@@ -95,7 +91,7 @@ const nearDispatch = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {lat, lng, radiusMeters, ticketType} = req.body;
-    const result = await dispatchService.nearDispatch({
+    const result = await dispatchService.getNearbyDispatch({
       userId,
       lat,
       lng,
@@ -110,15 +106,14 @@ const nearDispatch = async (req: Request, res: Response) => {
 
 const dispatchOffers = async (req: Request, res: Response) => {
   try {
-    const {lat, lng, radiusMeters, kind, limit, accessWidthMeters,
-      ticketId, minRating, sortBy} = req.body;
-    const result = await dispatchService.dispatchOffers({
+    const {lat, lng, radiusMeters, kind, limit, ticketId, minRating,
+      sortBy} = req.body;
+    const result = await dispatchService.getDispatchOffers({
       lat,
       lng,
       radiusMeters,
       kind,
       limit,
-      accessWidthMeters,
       ticketId,
       minRating,
       sortBy,
@@ -306,12 +301,27 @@ const offerMobileShopTow = async (req: Request, res: Response) => {
 const respondMobileShopTow = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, accept, destinationPoint} = req.body;
+    const {ticketId, accept, destinationShopId, destinationPoint} = req.body;
     const result = await dispatchService.respondMobileShopTow({
       userId,
       ticketId,
       accept,
+      destinationShopId,
       destinationPoint,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const continueSos = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.continueSos({
+      userId,
+      ticketId,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -421,7 +431,7 @@ const estimateTowFare = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {ticketId, lat, lng} = req.body;
-    const result = await dispatchService.estimateTowFarePreview({
+    const result = await dispatchService.getTowFareEstimate({
       userId,
       ticketId,
       lat,
@@ -437,7 +447,7 @@ const shopRequests = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {shopId} = req.body;
-    const result = await dispatchService.shopRequests({userId, shopId});
+    const result = await dispatchService.getShopRequests({userId, shopId});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -448,7 +458,7 @@ const shopRecords = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {shopId, limit} = req.body;
-    const result = await dispatchService.shopRecords({
+    const result = await dispatchService.getShopRecords({
       userId,
       shopId,
       limit,
@@ -481,7 +491,32 @@ const deliverDispatch = async (req: Request, res: Response) => {
       );
       return;
     }
-    const {ticketId, audience, title, body, shopId, urgent} = req.body;
+    const {
+      ticketId,
+      audience,
+      title,
+      body,
+      shopId,
+      urgent,
+      action,
+      offerAt,
+    } = req.body;
+    if (action === "expire-mobile-tow-offer") {
+      const result = await dispatchService.expireMobileTowOffer(
+        ticketId,
+        typeof offerAt === "string" ? offerAt : "",
+      );
+      sendSuccess(res, result);
+      return;
+    }
+    if (action === "unfix-grace") {
+      const result = await dispatchService.continueUnfixIfNeeded(
+        ticketId,
+        typeof offerAt === "string" ? offerAt : "",
+      );
+      sendSuccess(res, result);
+      return;
+    }
     const result = await dispatchService.deliverDispatchPush(
       ticketId,
       audience,
@@ -490,6 +525,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
         undefined,
       typeof shopId === "string" && shopId !== "" ? shopId : undefined,
       urgent === true || urgent === "true",
+      typeof action === "string" && action !== "" ? action : undefined,
     );
     sendSuccess(res, result);
   } catch (error) {
@@ -505,6 +541,7 @@ export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   offerMobileShopTow,
   respondMobileShopTow,
   respondReturnTow,
+  continueSos,
   approveQuote, declineDestination, cancelTowerSearch, waitingStatus,
   refreshTowEta, estimateTowFare,
   updateWorkOrder, shopRequests, shopRecords, feedTickets,

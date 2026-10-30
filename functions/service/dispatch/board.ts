@@ -5,23 +5,24 @@ import * as providerRepository from
   "../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
-import {nearProviders} from "../providerService";
+import {
+  nearProviders,
+  servesVehicleClass,
+  vehicleClassOf,
+} from "../providerService";
 import {haversineMeters} from "../../utils/geo";
 import {
+  MOBILE_SHOP_DEFAULT_RADIUS,
   NEAR_SHOPS_MAX,
   PROVIDER_FRESH_MS,
   PROVIDER_KIND,
   PROVIDER_STATUS,
   STATUS_DISPATCH,
-  VEHICLE_CLASS,
-  VOLUNTEER_CAPABILITY,
-  VOLUNTEER_DEFAULT_RADIUS,
 } from "../../constants/status";
 import {NS} from "./constants";
 import {
   requireProviderForTicket,
   towEstimateFor,
-  volunteerFitsTicket,
 } from "./helpers";
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
@@ -31,7 +32,7 @@ export const nearDispatchInner = async ({
   userId,
   lat,
   lng,
-  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  radiusMeters = MOBILE_SHOP_DEFAULT_RADIUS,
   ticketType,
   limit = 50,
 }: {
@@ -42,38 +43,27 @@ export const nearDispatchInner = async ({
   ticketType?: string;
   limit?: number;
 }) => {
-  let capability: unknown;
   let activeTow = false;
   let activeMobileShop = false;
+  let mobile: {vehicleClasses?: unknown} | undefined;
+  const ownedShopIds: string[] = [];
   if (userId) {
     const me = await userRepository.findById(userId);
     if (!me) return [];
     const operated =
       (await providerRepository.findByOperator(me.id)) ?? [];
+    ownedShopIds.push(...operated.map((p) => p.id));
     activeTow = operated.some(
       (p) => p.kind === PROVIDER_KIND.TOW &&
         p.status === PROVIDER_STATUS.ACTIVE,
     );
-    const mobile = operated.find(
+    mobile = operated.find(
       (p) => p.kind === PROVIDER_KIND.MOBILE_SHOP &&
         p.status === PROVIDER_STATUS.ACTIVE &&
         p.accepting !== false,
     );
     activeMobileShop = mobile !== undefined;
-    if (me.volunteerAvailable === true) {
-      capability = me.capability;
-    } else if (activeMobileShop && mobile) {
-      const classes = Array.isArray(mobile.vehicleClasses) ?
-        mobile.vehicleClasses as string[] :
-        [];
-      capability = classes.includes(VEHICLE_CLASS.CAR) ?
-        VOLUNTEER_CAPABILITY.CAR :
-        VOLUNTEER_CAPABILITY.SOLO_BIKE;
-    } else if (activeTow) {
-      capability = me.capability;
-    } else {
-      return [];
-    }
+    if (!activeTow && !activeMobileShop) return [];
   }
   const tickets = await dispatchRepository.findByStatusForTypes(
     STATUS_DISPATCH.PENDING,
@@ -81,13 +71,22 @@ export const nearDispatchInner = async ({
     limit,
   );
   const nearby = tickets
-    .filter((t) =>
-      t.ticketType !== "SOS" ||
-      volunteerFitsTicket(
-        capability,
-        t.vehicleType as string | undefined,
-      ),
-    )
+    .filter((t) => {
+      if (t.ticketType !== "SOS") return true;
+      if (!activeMobileShop || !mobile) return false;
+      if (Array.isArray(t.excludedOperatorUids) &&
+        t.excludedOperatorUids.includes(userId ?? "")) {
+        return false;
+      }
+      if (Array.isArray(t.excludedShopIds) &&
+        t.excludedShopIds.some((id) => ownedShopIds.includes(id))) {
+        return false;
+      }
+      return servesVehicleClass(
+        mobile,
+        vehicleClassOf(t.vehicleType as string | undefined),
+      );
+    })
     .map((t) => ({
       ...t,
       distance: haversineMeters(lat, lng, t.lat, t.lng),
@@ -97,8 +96,10 @@ export const nearDispatchInner = async ({
     .slice(0, limit);
   return nearby.map((t) => {
     const row: Record<string, unknown> = {...t};
-    if (!(activeTow && t.ticketType === "TOW") &&
-      !(activeMobileShop && t.ticketType === "SOS")) delete row.photoUrls;
+    const keepPhotos =
+      (activeTow && t.ticketType === "TOW") ||
+      (activeMobileShop && t.ticketType === "SOS");
+    if (!keepPhotos) delete row.photoUrls;
     return row;
   });
 };
@@ -109,7 +110,7 @@ export const nearDispatchCached = cacheManager.wrap(nearDispatchInner, {
     userId,
     lat,
     lng,
-    radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+    radiusMeters = MOBILE_SHOP_DEFAULT_RADIUS,
     ticketType,
     limit = 50,
   }: {
@@ -124,11 +125,11 @@ export const nearDispatchCached = cacheManager.wrap(nearDispatchInner, {
     `${radiusMeters},${ticketType ?? "-"},${limit}`,
 });
 
-export const nearDispatch = async ({
+export const getNearbyDispatch = async ({
   userId,
   lat,
   lng,
-  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  radiusMeters = MOBILE_SHOP_DEFAULT_RADIUS,
   ticketType,
   limit = 50,
 }: {
@@ -142,13 +143,12 @@ export const nearDispatch = async ({
   nearDispatchCached({userId, lat, lng, radiusMeters, ticketType, limit});
 
 
-export const dispatchOffers = async ({
+export const getDispatchOffers = async ({
   lat,
   lng,
-  radiusMeters = VOLUNTEER_DEFAULT_RADIUS,
+  radiusMeters = MOBILE_SHOP_DEFAULT_RADIUS,
   kind,
   limit = NEAR_SHOPS_MAX,
-  accessWidthMeters,
   ticketId,
   minRating,
   sortBy,
@@ -158,7 +158,6 @@ export const dispatchOffers = async ({
   radiusMeters?: number;
   kind?: string;
   limit?: number;
-  accessWidthMeters?: number;
   ticketId?: string;
   minRating?: number;
   sortBy?: string;
@@ -198,16 +197,7 @@ export const dispatchOffers = async ({
   })
     .filter((s) => (s.distance as number) <= radiusMeters);
   withLive.sort((a, b) => (a.distance as number) - (b.distance as number));
-  return withLive.slice(0, limit).map((shop) => {
-    const towWidth = shop.vehicleWidth as number | null;
-    const fitsAlley =
-      shop.kind === PROVIDER_KIND.TOW &&
-      typeof towWidth === "number" &&
-      accessWidthMeters !== undefined ?
-        towWidth <= accessWidthMeters :
-        null;
-    return {...shop, fitsAlley};
-  });
+  return withLive.slice(0, limit);
 };
 
 

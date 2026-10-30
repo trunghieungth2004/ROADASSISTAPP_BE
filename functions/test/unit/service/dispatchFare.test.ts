@@ -49,7 +49,27 @@ describe("dispatch fare", () => {
       deadheadKm: 8,
       loadedKm: 8,
     });
-    expect(quote.estimate).toBe(1250000);
+    expect(quote.estimate).toBe(500000);
+  });
+
+  it("uses the configured per-class rate card", () => {
+    const quote = quoteTowFare({
+      vehicleClass: "CAR",
+      night: false,
+      deadheadKm: 0,
+      loadedKm: 12,
+      rates: {
+        SOLO_BIKE: {base: 100000, perKm: 5000, includedKm: 2},
+        CAR: {base: 400000, perKm: 20000, includedKm: 10},
+        nightMultiplier: 1.5,
+        nightWindow: {start: 22, end: 6},
+        ceilingMultiplier: 1.2,
+        minimumFee: 300000,
+        deadheadPayable: true,
+      },
+    });
+    expect(quote.estimate).toBe(440000);
+    expect(quote.ceiling).toBe(528000);
   });
 
   it("applies the night multiplier to the whole fare", () => {

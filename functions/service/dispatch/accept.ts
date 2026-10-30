@@ -5,27 +5,26 @@ import * as providerRepository from
   "../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
-import {isOpenNow} from "../providerService";
 import {haversineMeters} from "../../utils/geo";
 import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
 import {roundFare, stampTowFare} from "./fare";
+import {chatService} from "../chatService";
 import {
   estimateTowEta,
   requireProviderForTicket,
-  volunteerFitsTicket,
 } from "./helpers";
 import {
   HELPER_KIND,
   MOBILE_SHOP_CALL_OUT_FEE,
+  MOBILE_SHOP_CALL_OUT_WAIVER_M,
   MOBILE_SHOP_TRAVEL_PER_KM,
   PROVIDER_FRESH_MS,
   PROVIDER_KIND,
-  SERVICE_ROLE,
   STATUS_DISPATCH,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
-import {ForbiddenError, NotFoundError, ValidationError} from
+import {ConflictError, ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 import {logError} from "../../utils/logger";
 import * as cacheManager from "../../utils/cacheManager";
@@ -34,7 +33,6 @@ export const acceptAsShop = async (
   userId: string,
   ticketId: string,
   shopId: string,
-  now?: Date,
 ) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
@@ -46,13 +44,17 @@ export const acceptAsShop = async (
   if (operator !== userId && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator accepts for this provider");
   }
-  if (shop.accepting === false) {
-    throw new ValidationError("Provider is not accepting requests");
+  if (Array.isArray(ticket.excludedShopIds) &&
+    ticket.excludedShopIds.includes(shopId)) {
+    throw new ForbiddenError("This shop is excluded from the ticket");
+  }
+  if (Array.isArray(ticket.excludedOperatorUids) &&
+    ticket.excludedOperatorUids.includes(userId)) {
+    throw new ForbiddenError("This operator is excluded from the ticket");
   }
   requireProviderForTicket(shop, ticket.ticketType);
-  if (ticket.ticketType === "WALK_IN" &&
-    isOpenNow(shop.openHours as string | null, now) === false) {
-    throw new ValidationError("Shop is currently closed");
+  if (shop.accepting === false) {
+    throw new ValidationError("Provider is not accepting requests");
   }
   if (typeof ticket.providerId === "string" && ticket.providerId !== "" &&
     ticket.providerId !== shopId) {
@@ -63,19 +65,45 @@ export const acceptAsShop = async (
       shop.plate === "")) {
     throw new ForbiddenError("Approved tow provider required");
   }
-  const mobileFees: Record<string, number> = {};
+  if (shop.kind === PROVIDER_KIND.TOW ||
+    shop.kind === PROVIDER_KIND.MOBILE_SHOP) {
+    const operatorUid = typeof shop.operatorUid === "string" ?
+      shop.operatorUid :
+      "";
+    const operated = operatorUid !== "" ?
+      (await providerRepository.findByOperator(operatorUid)) ?? [] :
+      [];
+    for (const provider of operated) {
+      if (provider.kind !== PROVIDER_KIND.TOW &&
+        provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+        continue;
+      }
+      const active =
+        (await dispatchRepository.findActiveForShop(provider.id)) ?? [];
+      if (active.length > 0) {
+        throw new ConflictError("Provider already has an active ticket");
+      }
+    }
+  }
+  const mobileFees: Record<string, unknown> = {};
   if (shop.kind === PROVIDER_KIND.MOBILE_SHOP &&
     ticket.ticketType === "SOS") {
     const fixes = await providerLocationRepository.findByIds([shopId]);
     const fix = fixes.get(shopId);
-    const meters = fix && typeof fix.lat === "number" &&
-      typeof fix.lng === "number" ?
+    const fresh = fix &&
+      typeof fix.lat === "number" &&
+      typeof fix.lng === "number" &&
+      typeof fix.lastSeen === "string" &&
+      Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
+    const meters = fresh && fix ?
       haversineMeters(ticket.lat, ticket.lng, fix.lat, fix.lng) :
+      null;
+    const waived = meters !== null && meters <= MOBILE_SHOP_CALL_OUT_WAIVER_M;
+    mobileFees.mobileCallOutFee = waived ? 0 : MOBILE_SHOP_CALL_OUT_FEE;
+    mobileFees.mobileCallOutWaived = waived;
+    mobileFees.mobileTravelFee = meters !== null ?
+      roundFare((meters / 1000) * MOBILE_SHOP_TRAVEL_PER_KM) :
       0;
-    mobileFees.mobileCallOutFee = MOBILE_SHOP_CALL_OUT_FEE;
-    mobileFees.mobileTravelFee = roundFare(
-      (meters / 1000) * MOBILE_SHOP_TRAVEL_PER_KM,
-    );
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
@@ -95,12 +123,54 @@ export const acceptAsShop = async (
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
   }
+  await chatService.addSystemEvent(
+    ticketId,
+    "The provider accepted the request.",
+    "ACCEPTED",
+    {kind: shop.kind},
+  );
   if (shop.kind === PROVIDER_KIND.TOW) {
     await providerRepository.update(shopId, {accepting: false});
   }
   if (ticket.ticketType === "TOW") {
     await stampTowEta(ticketId, ticket, shopId);
     await stampTowFare(ticketId, ticket, shopId);
+  }
+  const fresh = await dispatchRepository.findById(ticketId);
+  if (fresh && ticket.ticketType === "TOW") {
+    const fare = fresh.towFare as {estimate?: unknown} | null | undefined;
+    const estimate = typeof fare?.estimate === "number" ? fare.estimate : null;
+    const fareText = estimate !== null ?
+      Math.round(estimate).toLocaleString("en-US") :
+      null;
+    const feeText = fareText !== null ?
+      `Tow accepted. Estimated fare ${fareText} VND.` :
+      "Tow accepted.";
+    await chatService.addSystemEvent(ticketId, feeText);
+    await enqueueDispatchPush(ticketId, "-accepted-fee-rider", {
+      audience: "rider",
+      title: "Tow accepted",
+      body: feeText,
+    });
+  }
+  if (fresh && ticket.ticketType === "SOS") {
+    const callOut = typeof fresh.mobileCallOutFee === "number" ?
+      fresh.mobileCallOutFee :
+      0;
+    const travel = typeof fresh.mobileTravelFee === "number" ?
+      fresh.mobileTravelFee :
+      0;
+    const callOutText = Math.round(callOut).toLocaleString("en-US");
+    const travelText = Math.round(travel).toLocaleString("en-US");
+    const feeText =
+      `Mobile shop accepted. Call-out ${callOutText} VND, ` +
+      `travel ${travelText} VND.`;
+    await chatService.addSystemEvent(ticketId, feeText);
+    await enqueueDispatchPush(ticketId, "-accepted-fee-rider", {
+      audience: "rider",
+      title: "Mobile shop accepted",
+      body: feeText,
+    });
   }
   cacheManager.del(NS);
   cacheManager.del("shop");
@@ -192,69 +262,22 @@ export const stampTowEta = async (
 };
 
 
-export const acceptAsVolunteer = async (userId: string, ticketId: string) => {
-  const me = await userRepository.findById(userId);
-  if (!me) throw new NotFoundError("User not found");
-  if (me.role !== ROLE_ADMIN) {
-    const held = Array.isArray(me.services) ? me.services : [];
-    if (!held.includes(SERVICE_ROLE.VOLUNTEER)) {
-      throw new ForbiddenError("Volunteer license required");
-    }
-  }
-  if (me.volunteerAvailable !== true) {
-    throw new ForbiddenError("Volunteer mode is off");
-  }
-  const ticket = await dispatchRepository.findById(ticketId);
-  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
-  if (ticket.ticketType !== "SOS") {
-    throw new ForbiddenError("Only SOS tickets accept volunteers");
-  }
-  if (
-    !volunteerFitsTicket(
-      me.capability,
-      ticket.vehicleType as string | undefined,
-    )
-  ) {
-    throw new ForbiddenError("Ticket needs a car-capable volunteer");
-  }
-  const active = await dispatchRepository.findActiveForUid(userId);
-  if (active.length > 0) {
-    throw new ValidationError("Volunteer is already on a ticket");
-  }
-  const claimed = await dispatchRepository.claimForAssignment(ticketId, {
-    assignedUid: userId,
-    assignedKind: HELPER_KIND.VOLUNTEER,
-    status: STATUS_DISPATCH.MATCHED,
-  }, userId);
-  if (!claimed) {
-    throw new ValidationError("Ticket is no longer pending");
-  }
-  cacheManager.del(NS);
-  await enqueueDispatchPush(
-    ticketId,
-    `-status-${STATUS_DISPATCH.MATCHED}-rider`,
-    {audience: "rider"},
-  );
-  return {matched: true, kind: HELPER_KIND.VOLUNTEER};
-};
-
-
 export const acceptDispatch = async ({
   userId,
   ticketId,
   shopId,
-  now,
 }: {
   userId: string;
   ticketId: string;
   shopId?: string;
-  now?: Date;
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   if (ticket.status !== STATUS_DISPATCH.PENDING) {
     throw new ValidationError("Ticket is no longer pending");
   }
-  if (shopId) return acceptAsShop(userId, ticketId, shopId, now);
-  return acceptAsVolunteer(userId, ticketId);
+  if (!shopId) {
+    throw new ValidationError("A provider is required to accept this ticket");
+  }
+  return acceptAsShop(userId, ticketId, shopId);
 };

@@ -15,11 +15,22 @@ const bearer = (uid: string) => `Bearer ${uid}`;
 
 const USER = `${PREFIX}-user-1`;
 const VOLUNLICENSED = `${PREFIX}-unlicensed`;
+const vehicleProfileId = (index: number) => `${PREFIX}-vehicle-${index}`;
 
 beforeAll(async () => {
   await cleanAll();
   await seedUser(USER, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
   await seedUser(VOLUNLICENSED, "2");
+  for (let index = 0; index < 40; index += 1) {
+    await db.collection("users").doc(USER).collection("vehicle_profiles")
+      .doc(vehicleProfileId(index)).set({
+        id: vehicleProfileId(index),
+        type: "BIKE",
+        baseWidth: 0.7,
+        baseHeight: 1.1,
+        createdAt: new Date().toISOString(),
+      });
+  }
 });
 
 afterAll(async () => {
@@ -37,6 +48,7 @@ describe("dispatch endpoints", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: vehicleProfileId(1),
         destinationPoint: {lat: 10.71, lng: 106.61},
       });
     expect(res.status).toBe(201);
@@ -103,52 +115,53 @@ describe("dispatch endpoints", () => {
     expect(res.status).toBe(403);
   });
 
-  it("POST /dispatch/near hides tickets from unavailable callers", async () => {
+  it("POST /dispatch/sos/continue reports no candidates", async () => {
+    const ref = db.collection("dispatch_tickets").doc("sos-continuation-it");
+    await ref.set({
+      id: ref.id,
+      userId: USER,
+      ticketType: "SOS",
+      status: "15",
+      lat: BASE_LAT,
+      lng: BASE_LNG,
+      sosAttempt: 1,
+      assignedShopId: "missing-mobile-shop",
+      mobileCallOutFee: 50000,
+      excludedShopIds: [],
+      excludedOperatorUids: [],
+      createdAt: new Date().toISOString(),
+    });
+    const res = await request(app)
+      .post("/dispatch/sos/continue")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: ref.id});
+    expect(res.status).toBe(200);
+    expect(res.body.data.noCandidates).toBe(true);
+    expect(typeof res.body.data.ticketId).toBe("string");
+    await db.collection("dispatch_tickets")
+      .doc(res.body.data.ticketId as string)
+      .delete();
+    await ref.delete();
+  });
+
+  it("POST /dispatch/near hides tickets without a provider", async () => {
     const denied = await request(app)
       .post("/dispatch/near")
       .set("Authorization", bearer(VOLUNLICENSED))
       .send({lat: BASE_LAT, lng: BASE_LNG});
     expect(denied.status).toBe(200);
     expect(denied.body.data).toEqual([]);
-    const onboard = await request(app)
-      .put("/users/onboard")
-      .set("Authorization", bearer(VOLUNLICENSED))
-      .send({service: "VOLUNTEER"});
-    expect(onboard.status).toBe(200);
-    const stillHidden = await request(app)
-      .post("/dispatch/near")
-      .set("Authorization", bearer(VOLUNLICENSED))
-      .send({lat: BASE_LAT, lng: BASE_LNG});
-    expect(stillHidden.status).toBe(200);
-    expect(stillHidden.body.data).toEqual([]);
-    const toggle = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(VOLUNLICENSED))
-      .send({available: true});
-    expect(toggle.status).toBe(200);
-    const allowed = await request(app)
-      .post("/dispatch/near")
-      .set("Authorization", bearer(VOLUNLICENSED))
-      .send({lat: BASE_LAT, lng: BASE_LNG});
-    expect(allowed.status).toBe(200);
   });
 });
 
 describe("dispatch assist flow", () => {
-  const VOL = `${PREFIX}-volunteer`;
   const ADMIN = `${PREFIX}-admin`;
   let shopId = "";
   let destShopId = "";
   let flowTicket = "";
 
-  it("seeds a volunteer and a tow shop", async () => {
-    await seedUser(VOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
+  it("seeds a tow shop and an admin", async () => {
     await seedUser(ADMIN, "1", STATUS_USER.ACTIVE, 0, ["RIDER"]);
-    const toggle = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(VOL))
-      .send({available: true});
-    expect(toggle.status).toBe(200);
     const shop = await request(app)
       .post("/providers")
       .set("Authorization", bearer(USER))
@@ -158,7 +171,7 @@ describe("dispatch assist flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         plate: "30A-12345",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         vehicleWidth: 2.0,
       });
     expect(shop.status).toBe(201);
@@ -194,6 +207,7 @@ describe("dispatch assist flow", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: vehicleProfileId(2),
         note: "Alley gate",
         destinationShopId: destShopId,
       });
@@ -208,7 +222,8 @@ describe("dispatch assist flow", () => {
     const res = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(USER))
-      .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG});
+      .send({ticketType: "TOW", lat: BASE_LAT, lng: BASE_LNG,
+        vehicleId: vehicleProfileId(5)});
     expect(res.status).toBe(400);
   });
 
@@ -237,9 +252,9 @@ describe("dispatch assist flow", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: vehicleProfileId(3),
         destinationPoint: {lat: 10.71, lng: 106.61},
         vehicleType: "CAR",
-        force: true,
       });
     expect(tow.status).toBe(201);
     const res = await request(app)
@@ -293,7 +308,8 @@ describe("dispatch assist flow", () => {
         ticketType: "MECHANIC",
         lat: BASE_LAT,
         lng: BASE_LNG,
-        vehicleType: "SCOOTER",
+        vehicleId: vehicleProfileId(4),
+        vehicleType: "BIKE",
       });
     expect(ticket.status).toBe(201);
     const res = await request(app)
@@ -305,7 +321,16 @@ describe("dispatch assist flow", () => {
 
   it("rejects unapproved tow accepts with 403", async () => {
     const FRESH = `${PREFIX}-fresh-tow`;
+    const FRESHVEHICLE = `${PREFIX}-fresh-vehicle`;
     await seedUser(FRESH, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
+    await db.collection("users").doc(FRESH).collection("vehicle_profiles")
+      .doc(FRESHVEHICLE).set({
+        id: FRESHVEHICLE,
+        type: "BIKE",
+        baseWidth: 0.7,
+        baseHeight: 1.1,
+        createdAt: new Date().toISOString(),
+      });
     const shop = await request(app)
       .post("/providers")
       .set("Authorization", bearer(FRESH))
@@ -315,7 +340,7 @@ describe("dispatch assist flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         plate: "51F-99999",
-        vehicleType: "TRUCK",
+        vehicleType: "CAR",
       });
     expect(shop.status).toBe(201);
     const ticket = await request(app)
@@ -325,6 +350,7 @@ describe("dispatch assist flow", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: FRESHVEHICLE,
         destinationPoint: {lat: 10.71, lng: 106.61},
       });
     expect(ticket.status).toBe(201);
@@ -353,62 +379,13 @@ describe("dispatch assist flow", () => {
     const ids = (offers.body.data as {id: string}[]).map((s) => s.id);
     expect(ids).toContain(shopId);
   });
-
-  it("POST /dispatch/near surfaces pending SOS tickets", async () => {
-    const sos = await request(app)
-      .post("/dispatch")
-      .set("Authorization", bearer(USER))
-      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG});
-    expect(sos.status).toBe(201);
-    const res = await request(app)
-      .post("/dispatch/near")
-      .set("Authorization", bearer(VOL))
-      .send({lat: BASE_LAT, lng: BASE_LNG, ticketType: "SOS"});
-    expect(res.status).toBe(200);
-    const ids = (res.body.data as {id: string}[]).map((t) => t.id);
-    expect(ids).toContain(sos.body.data.id as string);
-  });
-
-  it("a volunteer accepts an SOS ticket", async () => {
-    const sos = await request(app)
-      .post("/dispatch")
-      .set("Authorization", bearer(USER))
-      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG, force: true});
-    const res = await request(app)
-      .post("/dispatch/accept")
-      .set("Authorization", bearer(VOL))
-      .send({ticketId: sos.body.data.id});
-    expect(res.status).toBe(200);
-    expect(res.body.data).toEqual({matched: true, kind: "VOLUNTEER"});
-  });
 });
 
-describe("dispatch vehicle and capability flow", () => {
-  const BIKE = `${PREFIX}-bikevol`;
-  const CARVOL = `${PREFIX}-carvol`;
-  let towId = "";
-
-  it("seeds bike-only and car-capable volunteers", async () => {
-    await seedUser(BIKE, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
-    await seedUser(CARVOL, "2", STATUS_USER.ACTIVE, 0, ["RIDER", "VOLUNTEER"]);
-    const bike = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(BIKE))
-      .send({available: true, capability: "SOLO_BIKE"});
-    expect(bike.status).toBe(200);
-    const car = await request(app)
-      .put("/users/volunteer")
-      .set("Authorization", bearer(CARVOL))
-      .send({available: true, capability: "CAR"});
-    expect(car.status).toBe(200);
-    for (const vol of [BIKE, CARVOL]) {
-      const beat = await request(app)
-        .post("/users/volunteer/heartbeat")
-        .set("Authorization", bearer(vol))
-        .send({lat: BASE_LAT, lng: BASE_LNG});
-      expect(beat.status).toBe(200);
-    }
-  });
+describe("dispatch vehicle flow", () => {
+  const WALKOP = `${PREFIX}-walkop`;
+  const WALKADMIN = `${PREFIX}-walkadmin`;
+  let walkShop = "";
+  let walkTicket = "";
 
   it("stores the rider vehicle and a free-form destination", async () => {
     const res = await request(app)
@@ -418,10 +395,10 @@ describe("dispatch vehicle and capability flow", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: vehicleProfileId(0),
         destinationPoint: {lat: 10.71, lng: 106.61, label: "Home"},
         vehicleType: "CAR",
         vehicleWidth: 1.9,
-        force: true,
       });
     expect(res.status).toBe(201);
     expect(res.body.data.vehicleType).toBe("CAR");
@@ -433,69 +410,13 @@ describe("dispatch vehicle and capability flow", () => {
     });
   });
 
-  it("matches car SOS tickets to car-capable volunteers only", async () => {
-    const sos = await request(app)
+  it("rejects a ticket without a vehicle", async () => {
+    const res = await request(app)
       .post("/dispatch")
       .set("Authorization", bearer(USER))
-      .send({
-        ticketType: "SOS",
-        lat: BASE_LAT,
-        lng: BASE_LNG,
-        vehicleType: "CAR",
-        vehicleWidth: 1.9,
-        force: true,
-      });
-    expect(sos.status).toBe(201);
-    expect(sos.body.data.candidates).toEqual([CARVOL]);
-    const denied = await request(app)
-      .post("/dispatch/accept")
-      .set("Authorization", bearer(BIKE))
-      .send({ticketId: sos.body.data.id});
-    expect(denied.status).toBe(403);
-    const accepted = await request(app)
-      .post("/dispatch/accept")
-      .set("Authorization", bearer(CARVOL))
-      .send({ticketId: sos.body.data.id});
-    expect(accepted.status).toBe(200);
+      .send({ticketType: "SOS", lat: BASE_LAT, lng: BASE_LNG});
+    expect(res.status).toBe(400);
   });
-
-  it("labels tow offers with alley fit", async () => {
-    towId = "30A12345";
-    const wide = await request(app)
-      .post("/dispatch/offers")
-      .set("Authorization", bearer(USER))
-      .send({
-        lat: BASE_LAT,
-        lng: BASE_LNG,
-        kind: "TOW",
-        accessWidthMeters: 2.5,
-      });
-    expect(wide.status).toBe(200);
-    const hit = (wide.body.data as {id: string; fitsAlley: unknown}[]).find(
-      (s) => s.id === towId,
-    );
-    expect(hit?.fitsAlley).toBe(true);
-    const narrow = await request(app)
-      .post("/dispatch/offers")
-      .set("Authorization", bearer(USER))
-      .send({
-        lat: BASE_LAT,
-        lng: BASE_LNG,
-        kind: "TOW",
-        accessWidthMeters: 1.4,
-      });
-    const miss = (
-      narrow.body.data as {id: string; fitsAlley: unknown}[]
-    ).find((s) => s.id === towId);
-    expect(miss?.fitsAlley).toBe(false);
-  });
-});
-
-describe("dispatch walk-in flow", () => {
-  const WALKOP = `${PREFIX}-walkop`;
-  const WALKADMIN = `${PREFIX}-walkadmin`;
-  let walkShop = "";
-  let walkTicket = "";
 
   it("opens a walk-in with a shop snapshot and expiry", async () => {
     await seedUser(WALKOP, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
@@ -525,7 +446,7 @@ describe("dispatch walk-in flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         providerId: walkShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     walkTicket = opened.body.data.id as string;
@@ -704,7 +625,7 @@ describe("dispatch walk-in flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         providerId: walkShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     const second = opened.body.data.id as string;
@@ -730,7 +651,7 @@ describe("dispatch walk-in flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         providerId: walkShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     const third = opened.body.data.id as string;
@@ -792,7 +713,7 @@ describe("dispatch walk-in flow", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         providerId: walkShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     const quotedTicket = opened.body.data.id as string;

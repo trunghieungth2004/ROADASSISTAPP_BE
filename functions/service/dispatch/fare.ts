@@ -6,27 +6,61 @@ import {
   TOW_FARE_NIGHT_MULT,
 } from "./constants";
 import {
-  TOW_CLASS_MULTIPLIER_BIKE,
-  TOW_CLASS_MULTIPLIER_CAR,
   PROVIDER_FRESH_MS,
   VEHICLE_CLASS,
 } from "../../constants/status";
 import {isCarVehicle, postRoute} from "../../utils/valhalla";
 import {vehicleClassOf} from "../providerService";
-import {logError} from "../../utils/logger";
+import {haversineMeters} from "../../utils/geo";
+import {logError, logWarn} from "../../utils/logger";
 import * as dispatchRepository from
   "../../repository/dispatchRepository";
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 import * as providerRepository from
   "../../repository/providerRepository";
+import * as platformConfigService from "../platformConfigService";
 
 const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
 
-export const isNightFare = (now: Date = new Date()): boolean => {
+export type TowRateTable = {
+  base: number;
+  perKm: number;
+  includedKm: number;
+};
+
+export type TowRates = {
+  SOLO_BIKE: TowRateTable;
+  CAR: TowRateTable;
+  nightMultiplier: number;
+  nightWindow: {start: number; end: number};
+  ceilingMultiplier: number;
+  minimumFee: number;
+  deadheadPayable: boolean;
+};
+
+export const DEFAULT_TOW_RATES: TowRates = {
+  SOLO_BIKE: {...TOW_FARE.SOLO_BIKE},
+  CAR: {...TOW_FARE.CAR},
+  nightMultiplier: TOW_FARE_NIGHT_MULT,
+  nightWindow: {
+    start: NIGHT_START_MINUTES / 60,
+    end: NIGHT_END_MINUTES / 60,
+  },
+  ceilingMultiplier: TOW_FARE_CEILING,
+  minimumFee: 0,
+  deadheadPayable: true,
+};
+
+export const isNightFare = (
+  now: Date = new Date(),
+  window: {start: number; end: number} = DEFAULT_TOW_RATES.nightWindow,
+): boolean => {
   const shifted = new Date(now.getTime() + ICT_OFFSET_MS);
   const minutes = shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
-  return minutes >= NIGHT_START_MINUTES || minutes < NIGHT_END_MINUTES;
+  const start = window.start * 60;
+  const end = window.end * 60;
+  return minutes >= start || minutes < end;
 };
 
 export const roundFare = (amount: number): number =>
@@ -41,34 +75,38 @@ export type TowFareQuote = {
   vehicleClass: string;
 };
 
-export const nightMult = (night: boolean): number =>
-  night ? TOW_FARE_NIGHT_MULT : 1;
+export const nightMult = (
+  night: boolean,
+  multiplier: number = TOW_FARE_NIGHT_MULT,
+): number => night ? multiplier : 1;
 
 export const quoteTowFare = ({
   vehicleClass,
   night,
   deadheadKm,
   loadedKm,
+  rates = DEFAULT_TOW_RATES,
 }: {
   vehicleClass?: string;
   night: boolean;
   deadheadKm: number;
   loadedKm: number;
+  rates?: TowRates;
 }): TowFareQuote => {
   const table = vehicleClass === VEHICLE_CLASS.CAR ?
-    TOW_FARE.CAR :
-    TOW_FARE.SOLO_BIKE;
-  const classMult = vehicleClass === VEHICLE_CLASS.CAR ?
-    TOW_CLASS_MULTIPLIER_CAR :
-    TOW_CLASS_MULTIPLIER_BIKE;
+    rates.CAR :
+    rates.SOLO_BIKE;
   const billable = Math.max(0, loadedKm - table.includedKm);
   const estimate = roundFare(
-    nightMult(night) * classMult *
-    (table.base + table.perKm * billable),
+    Math.max(
+      rates.minimumFee,
+      nightMult(night, rates.nightMultiplier) *
+        (table.base + table.perKm * billable),
+    ),
   );
   return {
     estimate,
-    ceiling: roundFare(estimate * TOW_FARE_CEILING),
+    ceiling: roundFare(estimate * rates.ceilingMultiplier),
     deadheadKm,
     loadedKm,
     night,
@@ -83,19 +121,20 @@ export const partialTowFare = ({
   vehicleClass,
   night,
   deadheadKm,
+  rates = DEFAULT_TOW_RATES,
 }: {
   vehicleClass?: string;
   night: boolean;
   deadheadKm: number;
+  rates?: TowRates;
 }): number => {
+  if (!rates.deadheadPayable) return 0;
   const table = vehicleClass === VEHICLE_CLASS.CAR ?
-    TOW_FARE.CAR :
-    TOW_FARE.SOLO_BIKE;
-  const classMult = vehicleClass === VEHICLE_CLASS.CAR ?
-    TOW_CLASS_MULTIPLIER_CAR :
-    TOW_CLASS_MULTIPLIER_BIKE;
+    rates.CAR :
+    rates.SOLO_BIKE;
   return roundFare(
-    nightMult(night) * classMult * table.perKm * Math.max(0, deadheadKm),
+    nightMult(night, rates.nightMultiplier) *
+      table.perKm * Math.max(0, deadheadKm),
   );
 };
 
@@ -108,6 +147,7 @@ export const quoteTowFareForRoute = async ({
   destLat,
   destLng,
   now,
+  rates = DEFAULT_TOW_RATES,
 }: {
   vehicleType?: string;
   towerLat: number;
@@ -117,15 +157,18 @@ export const quoteTowFareForRoute = async ({
   destLat?: number;
   destLng?: number;
   now?: Date;
+  rates?: TowRates;
 }): Promise<TowFareQuote | null> => {
+  const costing = isCarVehicle(vehicleType) ? "auto" : "motor_scooter";
+  let deadheadKm = 0;
+  let loadedKm = 0;
   try {
-    const costing = isCarVehicle(vehicleType) ? "auto" : "motor_scooter";
     const deadhead = await postRoute(
       [{lat: towerLat, lng: towerLng}, {lat: ticketLat, lng: ticketLng}],
       [],
       costing,
     );
-    let loadedKm = 0;
+    deadheadKm = (deadhead.distanceMeters ?? 0) / 1000;
     if (typeof destLat === "number" && typeof destLng === "number") {
       const loaded = await postRoute(
         [{lat: ticketLat, lng: ticketLng}, {lat: destLat, lng: destLng}],
@@ -134,16 +177,24 @@ export const quoteTowFareForRoute = async ({
       );
       loadedKm = (loaded.distanceMeters ?? 0) / 1000;
     }
-    return quoteTowFare({
-      vehicleClass: vehicleClassOf(vehicleType),
-      night: isNightFare(now),
-      deadheadKm: (deadhead.distanceMeters ?? 0) / 1000,
-      loadedKm,
-    });
   } catch (err) {
-    logError("dispatch", "tow-fare-quote-failed", {}, err);
-    return null;
+    logWarn("dispatch", "tow-fare-route-fallback", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    deadheadKm = haversineMeters(towerLat, towerLng, ticketLat, ticketLng) /
+      1000;
+    if (typeof destLat === "number" && typeof destLng === "number") {
+      loadedKm = haversineMeters(ticketLat, ticketLng, destLat, destLng) /
+        1000;
+    }
   }
+  return quoteTowFare({
+    vehicleClass: vehicleClassOf(vehicleType),
+    night: isNightFare(now, rates.nightWindow),
+    deadheadKm,
+    loadedKm,
+    rates,
+  });
 };
 
 export const actualDeadheadKm = (towLegs: unknown): number => {
@@ -169,6 +220,8 @@ export const stampTowFare = async (
   shopId: string,
 ): Promise<void> => {
   try {
+    const rates = await platformConfigService.getTowRates()
+      .catch(() => DEFAULT_TOW_RATES);
     const fixes = await providerLocationRepository.findByIds([shopId]);
     const fix = fixes.get(shopId);
     const fresh = fix && typeof fix.lat === "number" &&
@@ -212,6 +265,7 @@ export const stampTowFare = async (
       ...(destLat !== undefined && destLng !== undefined ?
         {destLat, destLng} :
         {}),
+      rates,
     });
     if (!quote) return;
     const priorCeiling = ticket.towFare &&
