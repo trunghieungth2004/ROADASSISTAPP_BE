@@ -34,6 +34,21 @@ const ipn = async (req: Request, res: Response) => {
   }
 };
 
+const checkoutPage = async (req: Request, res: Response) => {
+  try {
+    const paymentId = String(req.params.paymentId ?? "");
+    const token = typeof req.query.token === "string" ? req.query.token : "";
+    const html = await paymentService.buildSepayCheckoutPage({
+      paymentId,
+      token,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(html);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const confirmCash = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
@@ -74,4 +89,4 @@ const listAll = async (req: Request, res: Response) => {
   }
 };
 
-export {createPayment, ipn, confirmCash, getOne, listAll};
+export {createPayment, ipn, checkoutPage, confirmCash, getOne, listAll};

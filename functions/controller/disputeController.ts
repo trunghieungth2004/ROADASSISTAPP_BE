@@ -17,12 +17,6 @@ const file = async (req: Request, res: Response) => {
       photoUrls,
       photoUrl,
     } = req.body;
-    const codes = disputeService.normalizeCodes({
-      accusedKind,
-      type,
-      reasonCode,
-      reason,
-    });
     const photos = [
       ...(Array.isArray(photoUrls) ? photoUrls : []),
       ...(typeof photoUrl === "string" && photoUrl !== "" ? [photoUrl] : []),
@@ -31,7 +25,10 @@ const file = async (req: Request, res: Response) => {
       ticketId,
       filedBy: uid,
       accusedId,
-      ...codes,
+      accusedKind,
+      type,
+      reasonCode,
+      reason,
       note,
       photoUrls: photos,
     });
@@ -70,11 +67,20 @@ const listAll = async (req: Request, res: Response) => {
 const resolve = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {disputeId, resolution, refundAdjust, payoutAdjust} = req.body;
+    const {
+      disputeId,
+      resolution,
+      outcome,
+      adjustedAmount,
+      refundAdjust,
+      payoutAdjust,
+    } = req.body;
     const result = await disputeService.resolve({
       disputeId,
       resolution,
       by: uid,
+      outcome,
+      adjustedAmount,
       refundAdjust,
       payoutAdjust,
     });

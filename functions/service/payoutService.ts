@@ -1,7 +1,7 @@
 import * as payoutRepository from "../repository/payoutRepository";
 import * as paymentRepository from "../repository/paymentRepository";
 import * as userRepository from "../repository/userRepository";
-import * as paymentPush from "./paymentPush";
+import * as paymentPush from "./push/payment";
 import {
   PAYMENT_PAYOUT_PREFIX,
   PAYMENT_RECEIVED_STATUSES,

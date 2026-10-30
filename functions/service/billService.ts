@@ -114,6 +114,7 @@ const asBillable = (ticket: dispatchRepository.DispatchTicket): TicketLike =>
     finalAmount: ticket.finalAmount,
     mobileCallOutFee: ticket.mobileCallOutFee,
     mobileTravelFee: ticket.mobileTravelFee,
+    cancelledBy: ticket.cancelledBy,
     towFare: ticket.towFare,
   }) as TicketLike;
 
@@ -134,6 +135,7 @@ const journeyRootId = async (
   let current = ticket;
   const seen = new Set<string>([ticket.id]);
   for (let depth = 0; depth < MAX_JOURNEY_DEPTH; depth += 1) {
+    if (current.ticketType === "SOS") break;
     const parent = await linkedTowFor(current);
     if (!parent || seen.has(parent.id)) break;
     seen.add(parent.id);
@@ -202,8 +204,11 @@ const buildItem = async (
   const payments = await paymentRepository.findByTicketId(ticket.id);
   const payment = payments[0] ?? null;
   const paymentStatus = payment ? String(payment.status) : null;
+  const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
+    ticket.cancelledBy === ticket.userId;
   const voided = UNPAYABLE_STATUSES.has(String(ticket.status ?? "")) &&
-    ticket.ticketType !== "SOS";
+    ticket.ticketType !== "SOS" &&
+    !(ticket.ticketType === "TOW" && riderCancelled);
   let status: string;
   if (paymentStatus !== null && SETTLED_STATUSES.has(paymentStatus)) {
     status = BILL_ITEM_STATUS.PAID;
@@ -342,7 +347,7 @@ const listBills = async ({
   );
   const bills: Bill[] = [];
   for (const ticket of tickets) {
-    if (ticket.ticketType === "TOW") {
+    if (ticket.ticketType === "TOW" || ticket.ticketType === "SOS") {
       const bill = await buildBill(ticket.id, {
         viewer: "RIDER",
         viewerUid: userId,

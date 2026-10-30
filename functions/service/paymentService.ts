@@ -1,6 +1,6 @@
 import * as dispatchRepository from "../repository/dispatchRepository";
 import * as paymentRepository from "../repository/paymentRepository";
-import * as paymentPush from "./paymentPush";
+import * as paymentPush from "./push/payment";
 import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
@@ -24,6 +24,8 @@ import {
 } from "../constants/payments";
 import {
   SEPAY_AMOUNT_KEYS,
+  SEPAY_IPN_FIELD,
+  SEPAY_IPN_NOTIFICATION_PAID,
   SEPAY_IPN_REF_KEYS,
   SEPAY_QR_REF_KEYS,
 } from "../constants/sepay";
@@ -47,6 +49,7 @@ export type TicketLike = {
   finalAmount?: number | null;
   mobileCallOutFee?: number | null;
   mobileTravelFee?: number | null;
+  cancelledBy?: string | null;
   towFare?: {
     final?: number | null;
     estimate?: number | null;
@@ -74,7 +77,11 @@ const billableAmountFor = (
   ticket: TicketLike,
 ): {amount: number; waitingFee: number} | null => {
   if (ticket.ticketType === "TOW") {
-    if (ticket.status !== STATUS_DISPATCH.RESOLVED) return null;
+    if (ticket.status !== STATUS_DISPATCH.RESOLVED &&
+      !(ticket.status === STATUS_DISPATCH.CANCELLED &&
+        ticket.cancelledBy === ticket.userId)) {
+      return null;
+    }
     const fare = ticket.towFare;
     const base = fare && typeof fare === "object" ?
       (typeof fare.final === "number" ? fare.final :
@@ -104,6 +111,10 @@ const billableAmountFor = (
       ticket.status === STATUS_DISPATCH.RESOLVED_UNFIXABLE) {
       return {amount: callOut, waitingFee: 0};
     }
+    if (ticket.status === STATUS_DISPATCH.CANCELLED &&
+      ticket.cancelledBy === ticket.userId) {
+      return {amount: callOut + travel, waitingFee: 0};
+    }
     return null;
   }
   if (typeof ticket.shopQuotedAmount === "number") {
@@ -117,7 +128,9 @@ const billableAmountFor = (
 
 const expectedAmountFor = (ticket: TicketLike): number => {
   const billable = billableAmountFor(ticket);
-  if (!billable) throw new ValidationError("Ticket has no payable amount yet");
+  if (!billable || billable.amount <= 0) {
+    throw new ValidationError("Ticket has no payable amount yet");
+  }
   return billable.amount;
 };
 
@@ -206,10 +219,19 @@ const numField = (
 ): number | undefined => {
   for (const key of keys) {
     const value = body[key];
-    if (typeof value === "number") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
   }
   return undefined;
 };
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ?
+    value as Record<string, unknown> :
+    {};
 
 const asReused = async (
   payment: paymentRepository.Payment,
@@ -240,18 +262,28 @@ const createPaymentForTicket = async ({
   if (ticket.userId !== userId) {
     throw new ForbiddenError("Only the rider pays for a ticket");
   }
+  if (ticket.disputeHold === true) {
+    throw new ValidationError("Dispute under review");
+  }
   const blocked: Set<string> = new Set([
     STATUS_DISPATCH.CANCELLED,
     STATUS_DISPATCH.DECLINED,
     STATUS_DISPATCH.RESOLVED_UNFIXABLE,
     STATUS_DISPATCH.UNFIXABLE,
   ]);
-  if (blocked.has(ticket.status)) {
+  const unfixableSos = ticket.ticketType === "SOS" &&
+    (ticket.status === STATUS_DISPATCH.UNFIXABLE ||
+      ticket.status === STATUS_DISPATCH.RESOLVED_UNFIXABLE);
+  const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
+    ticket.cancelledBy === ticket.userId &&
+    (ticket.ticketType === "TOW" || ticket.ticketType === "SOS");
+  if (blocked.has(ticket.status) && !unfixableSos && !riderCancelled) {
     throw new ValidationError("Ticket is not payable");
   }
   if (
     ticket.ticketType === "TOW" &&
-    ticket.status !== STATUS_DISPATCH.RESOLVED
+    ticket.status !== STATUS_DISPATCH.RESOLVED &&
+    !riderCancelled
   ) {
     throw new ValidationError(
       "Tow payment is available after the tow is resolved",
@@ -355,7 +387,17 @@ const handleSepayIpn = async (
   if (headers !== undefined && !sepayService.verifyIpnAuth(headers)) {
     throw new ForbiddenError("Invalid SePay authorization");
   }
-  const qrRef = strField(body, SEPAY_QR_REF_KEYS);
+  const order = asRecord(body.order);
+  const transaction = asRecord(body.transaction);
+  const notificationType = typeof body.notification_type === "string" ?
+    body.notification_type :
+    "";
+  if (notificationType !== "" &&
+    notificationType !== SEPAY_IPN_NOTIFICATION_PAID) {
+    return null;
+  }
+  const qrRef = strField(order, [SEPAY_IPN_FIELD.ORDER_INVOICE_NUMBER]) ??
+    strField(body, SEPAY_QR_REF_KEYS);
   if (!qrRef) throw new ValidationError("IPN has no order reference");
   const payment = await paymentRepository.findByQrRef(qrRef);
   if (!payment) throw new NotFoundError("Payment not found");
@@ -366,14 +408,21 @@ const handleSepayIpn = async (
   if (payment.status !== PAYMENT_STATUS.PENDING) {
     throw new ValidationError("Payment cannot be held");
   }
-  const notified = numField(body, SEPAY_AMOUNT_KEYS);
+  const notified = numField(transaction, [
+    SEPAY_IPN_FIELD.TRANSACTION_AMOUNT,
+  ]) ??
+    numField(order, [SEPAY_IPN_FIELD.ORDER_AMOUNT]) ??
+    numField(body, SEPAY_AMOUNT_KEYS);
   if (typeof notified !== "number") {
     throw new ValidationError("IPN amount missing");
   }
-  if (notified !== payment.amount) {
+  if (Math.round(notified) !== payment.amount) {
     throw new ValidationError("IPN amount mismatch");
   }
-  const ipnRef = strField(body, SEPAY_IPN_REF_KEYS) ?? qrRef;
+  const ipnRef = strField(transaction, [
+    SEPAY_IPN_FIELD.TRANSACTION_ID,
+    SEPAY_IPN_FIELD.ID,
+  ]) ?? strField(body, SEPAY_IPN_REF_KEYS) ?? qrRef;
   const held = await paymentRepository.updateStatus(
     payment.id,
     PAYMENT_STATUS.HELD,
@@ -386,6 +435,48 @@ const handleSepayIpn = async (
     await notify(paymentPush.deliverReceived(held));
   }
   return held;
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const buildSepayCheckoutPage = async ({
+  paymentId,
+  token,
+}: {
+  paymentId: string;
+  token: string;
+}): Promise<string> => {
+  if (!sepayService.verifyCheckoutToken(paymentId, token)) {
+    throw new ForbiddenError("Invalid checkout token");
+  }
+  const payment = await paymentRepository.findById(paymentId);
+  if (!payment || payment.method !== PAYMENT_METHOD.SEPAY) {
+    throw new NotFoundError("Payment not found");
+  }
+  if (payment.status !== PAYMENT_STATUS.PENDING) {
+    throw new ValidationError("Payment is no longer payable");
+  }
+  const checkout = sepayService.buildCheckoutFields(payment);
+  const inputs = Object.entries(checkout.fields)
+    .map(([key, value]) =>
+      `<input type="hidden" name="${escapeHtml(key)}" ` +
+      `value="${escapeHtml(value)}" />`)
+    .join("");
+  const form = "<form id=\"sepay-checkout\" method=\"post\" " +
+    `action="${escapeHtml(checkout.action)}">${inputs}</form>`;
+  const submit =
+    "<script>document.getElementById(\"sepay-checkout\").submit();" +
+    "</script>";
+  return "<!doctype html><html><head><meta charset=\"utf-8\" />" +
+    "<meta name=\"viewport\" content=\"width=device-width," +
+    "initial-scale=1\" /><title>RoadAssist payment</title></head><body>" +
+    form + submit + "</body></html>";
 };
 
 const refund = async ({
@@ -594,6 +685,7 @@ export {
   confirmCash,
   buildSepayOrder,
   handleSepayIpn,
+  buildSepayCheckoutPage,
   isParticipant,
   isOperatorOfTicket,
   refund,

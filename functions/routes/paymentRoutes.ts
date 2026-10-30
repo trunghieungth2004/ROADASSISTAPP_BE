@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {SERVICE_ROLE} from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
 import * as paymentController from "../controller/paymentController";
@@ -7,6 +8,10 @@ import paymentWriteLimiter from "../middleware/paymentRateLimit";
 
 const mountPaymentIpn = (app: Express) => {
   app.post("/payments/ipn", paymentController.ipn);
+  app.get(
+    "/payments/sepay/checkout/:paymentId",
+    paymentController.checkoutPage,
+  );
 };
 
 export default (
@@ -15,6 +20,7 @@ export default (
 ) => {
   app.post(
     "/payments/create",
+    writeLimited,
     requireAuth,
     paymentWriteLimiter,
     requireService(SERVICE_ROLE.RIDER),
@@ -23,6 +29,7 @@ export default (
   );
   app.post(
     "/payments/confirm-cash",
+    writeLimited,
     requireAuth,
     paymentWriteLimiter,
     validate({body: schemas.confirmCash}),

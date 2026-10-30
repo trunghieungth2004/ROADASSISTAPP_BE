@@ -368,6 +368,26 @@ describe("billService.listBills", () => {
     expect(bills[1].items).toHaveLength(1);
   });
 
+  it("lists an unfixable SOS call-out bill", async () => {
+    const sos = ticket("sos1", {
+      ticketType: "SOS",
+      status: STATUS_DISPATCH.UNFIXABLE,
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 50000,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    });
+    routeTickets(sos);
+    routeProviders({id: "mobile1", name: "Mobile Shop", operatorUid: "op1"});
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([sos]);
+    const bills = await listBills({userId: "rider1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      billId: "sos1",
+      ticketType: "SOS",
+      total: 50000,
+    });
+  });
+
   it("skips a journey with nothing payable yet", async () => {
     const pendingTow = towTicket({towFare: null});
     routeTickets(pendingTow);

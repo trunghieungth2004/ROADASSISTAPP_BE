@@ -1,5 +1,6 @@
 import {Express} from "express";
 import {RouteDeps} from "../types/routes";
+import {writeLimited} from "../middleware/rateLimit";
 import {ROLE_ADMIN} from "../constants/roles";
 import * as disputeController from "../controller/disputeController";
 
@@ -9,6 +10,7 @@ export default (
 ) => {
   app.post(
     "/disputes",
+    writeLimited,
     requireAuth,
     validate({body: schemas.fileDispute}),
     disputeController.file,
@@ -28,6 +30,7 @@ export default (
   );
   app.post(
     "/disputes/resolve",
+    writeLimited,
     requireAuth,
     requireRole(ROLE_ADMIN),
     validate({body: schemas.resolveDispute}),

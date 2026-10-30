@@ -4,6 +4,12 @@ import {STATUS_USER} from "../../constants/status";
 import {cleanAll, seedUser, PREFIX, db} from "../utils/seed";
 
 process.env.SEPAY_SECRET_KEY = "test-secret";
+process.env.SEPAY_MERCHANT_ID = "SP-TEST";
+process.env.SEPAY_ENV = "sandbox";
+process.env.PAYMENT_BRIDGE_URL = "https://api.example.com";
+process.env.SEPAY_SUCCESS_URL = "https://example.com/success";
+process.env.SEPAY_ERROR_URL = "https://example.com/error";
+process.env.SEPAY_CANCEL_URL = "https://example.com/cancel";
 
 const app = buildIntegrationApp();
 const bearer = (uid: string) => `Bearer ${uid}`;
@@ -52,6 +58,15 @@ const ipn = (
   request(app)
     .post("/payments/ipn")
     .set("Authorization", `Apikey ${secret}`)
+    .send(body);
+
+const ipnCurrent = (
+  body: Record<string, unknown>,
+  secret = "test-secret",
+) =>
+  request(app)
+    .post("/payments/ipn")
+    .set("X-Secret-Key", secret)
     .send(body);
 
 beforeEach(async () => {
@@ -163,6 +178,20 @@ describe("sepay IPN", () => {
     };
   };
 
+  it("serves the signed checkout bridge", async () => {
+    const ticketId = await makeTicket();
+    const created = await create(ticketId, "SEPAY");
+    expect(created.status).toBe(201);
+    const qrUrl = String(created.body.data.checkout?.qrUrl ?? "");
+    expect(qrUrl).toContain("/payments/sepay/checkout/");
+    const path = new URL(qrUrl).pathname + new URL(qrUrl).search;
+    const page = await request(app).get(path);
+    expect(page.status).toBe(200);
+    expect(page.text).toContain("https://pay-sandbox.sepay.vn/v1/checkout/init");
+    expect(page.text).toContain("name=\"merchant\" value=\"SP-TEST\"");
+    expect(page.text).toContain("name=\"signature\"");
+  });
+
   it("rejects invalid or missing authorization", async () => {
     const {qrRef} = await openSepay();
     const invalid = await ipn({qrRef, amount: 100000}, "wrong");
@@ -196,6 +225,28 @@ describe("sepay IPN", () => {
     const replay = await ipn({qrRef, amount: 100000, transaction_id: "TX-1"});
     expect(replay.status).toBe(200);
     expect(replay.body.data.status).toBe("HELD");
+  });
+
+  it("accepts the current Payment Gateway IPN shape", async () => {
+    const {ticketId, paymentId, qrRef} = await openSepay();
+    const held = await ipnCurrent({
+      timestamp: Math.floor(Date.now() / 1000),
+      notification_type: "ORDER_PAID",
+      order: {
+        order_invoice_number: qrRef,
+        order_amount: "100000.00",
+        order_status: "CAPTURED",
+      },
+      transaction: {
+        transaction_id: "TX-CURRENT-1",
+        transaction_amount: "100000",
+      },
+    });
+    expect(held.status).toBe(200);
+    expect(held.body.data.status).toBe("HELD");
+    expect(held.body.data.ipnRef).toBe("TX-CURRENT-1");
+    expect((await ticketDoc(ticketId)).paymentStatus).toBe("HELD");
+    expect((await paymentDoc(paymentId)).status).toBe("HELD");
   });
 
   it("rejects IPNs for refunded and cancelled charges", async () => {

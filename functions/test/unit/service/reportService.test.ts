@@ -133,7 +133,7 @@ describe("payee report", () => {
       } as payoutRepository.Payout,
     ]);
     jest.mocked(userRepository.findByIds).mockResolvedValue(new Map([
-      ["payee1", {id: "payee1", role: "2", displayName: "Volunteer One"}],
+      ["payee1", {id: "payee1", role: "2", displayName: "Provider One"}],
     ]));
     const report = await payeesReport({
       from: "2026-10-01",
@@ -142,7 +142,7 @@ describe("payee report", () => {
     expect(report.rows).toHaveLength(2);
     expect(report.rows[0]).toMatchObject({
       payeeId: "payee1",
-      payeeName: "Volunteer One",
+      payeeName: "Provider One",
       gross: 100000,
       commission: 10000,
       net: 90000,

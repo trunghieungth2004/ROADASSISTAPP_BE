@@ -1,5 +1,6 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
+import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as platformConfigService from
   "../../../service/platformConfigService";
@@ -7,6 +8,7 @@ import {
   auditLedger,
   cancelPendingPayments,
   confirmCash,
+  createPaymentForTicket,
   refund,
 } from "../../../service/paymentService";
 import {ForbiddenError} from "../../../utils/errors";
@@ -17,6 +19,12 @@ jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../service/platformConfigService");
 jest.mock("../../../service/sepayService");
+jest.mock("../../../service/push/payment", () => ({
+  deliverOpened: jest.fn(async () => undefined),
+  deliverReceived: jest.fn(async () => undefined),
+  deliverConfirmed: jest.fn(async () => undefined),
+  deliverRefunded: jest.fn(async () => undefined),
+}));
 
 const payment = (patch: Record<string, unknown> = {}) => ({
   id: "pay1",
@@ -60,6 +68,75 @@ beforeEach(() => {
   jest.mocked(paymentRepository.updateStatus).mockImplementation(
     async (id, status, fields) =>
       payment({id, status, ...fields}) as never);
+});
+
+describe("createPaymentForTicket", () => {
+  beforeEach(() => {
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([]);
+    jest.mocked(paymentRepository.createGuarded).mockResolvedValue({
+      payment: payment({status: "PENDING"}),
+      reused: false,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      operatorUid: "payee1",
+    } as never);
+    jest.mocked(platformConfigService.getCommissionRate)
+      .mockResolvedValue(15);
+  });
+
+  it("allows a TOW rider-cancel partial", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "TOW",
+      status: "5",
+      cancelledBy: "rider1",
+      assignedShopId: "tow1",
+      towFare: {final: 20000, estimate: 200000, waitingFee: 0},
+    } as never);
+    await createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    });
+    expect(paymentRepository.createGuarded).toHaveBeenCalledWith(
+      expect.objectContaining({amount: 20000}),
+    );
+  });
+
+  it("refuses a cancelled walk-in", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "WALK_IN",
+      status: "5",
+      cancelledBy: "rider1",
+      shopQuotedAmount: 500000,
+    } as never);
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    })).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("refuses a zero-amount waived SOS", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "SOS",
+      status: "15",
+      assignedShopId: "tow1",
+      mobileCallOutFee: 0,
+      mobileTravelFee: 5000,
+    } as never);
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    })).rejects.toMatchObject({statusCode: 400});
+  });
 });
 
 describe("refund", () => {

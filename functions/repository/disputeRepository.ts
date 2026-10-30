@@ -3,7 +3,7 @@ import {
   DISPUTE_COLLECTION,
   DISPUTE_LIST_LIMIT,
   DISPUTE_STATUS,
-} from "../constants/payments";
+} from "../constants/disputes";
 
 interface Dispute {
   id: string;
@@ -17,6 +17,9 @@ interface Dispute {
   photoUrls: string[];
   status: string;
   resolution: string | null;
+  outcome: string | null;
+  adjustedAmount: number | null;
+  hold: boolean;
   resolvedBy: string | null;
   resolvedAt: string | null;
   refundAdjust: number | null;
@@ -42,6 +45,7 @@ const create = async (data: {
   note?: string | null;
   photoUrls?: string[];
   status?: string;
+  hold?: boolean;
 }): Promise<Dispute> => {
   const ref = db.collection(DISPUTE_COLLECTION).doc();
   const now = new Date().toISOString();
@@ -57,6 +61,9 @@ const create = async (data: {
     photoUrls: data.photoUrls ?? [],
     status: data.status ?? DISPUTE_STATUS.OPEN,
     resolution: null,
+    outcome: null,
+    adjustedAmount: null,
+    hold: data.hold === true,
     resolvedBy: null,
     resolvedAt: null,
     refundAdjust: null,

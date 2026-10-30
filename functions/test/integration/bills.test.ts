@@ -18,6 +18,7 @@ const TOWOP = `${PREFIX}-bill-towop`;
 const SHOPOP = `${PREFIX}-bill-shopop`;
 const ADMIN = `${PREFIX}-bill-admin`;
 const OTHER = `${PREFIX}-bill-other`;
+const VEHICLE = `${PREFIX}-bill-vehicle`;
 
 type BillItem = {
   kind: string;
@@ -65,6 +66,14 @@ beforeAll(async () => {
   await seedUser(SHOPOP, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
   await seedUser(ADMIN, "1", STATUS_USER.ACTIVE, 0, ["RIDER"]);
   await seedUser(OTHER, "2", STATUS_USER.ACTIVE, 0, ["RIDER"]);
+  await db.collection("users").doc(RIDER).collection("vehicle_profiles")
+    .doc(VEHICLE).set({
+      id: VEHICLE,
+      type: "BIKE",
+      baseWidth: 0.7,
+      baseHeight: 1.1,
+      createdAt: new Date().toISOString(),
+    });
 });
 
 afterAll(async () => {
@@ -82,7 +91,7 @@ describe("bills", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         plate: "30A-55555",
-        vehicleType: "VAN",
+        vehicleType: "CAR",
         vehicleWidth: 2.0,
       });
     expect(tow.status).toBe(201);
@@ -119,8 +128,9 @@ describe("bills", () => {
         ticketType: "TOW",
         lat: BASE_LAT,
         lng: BASE_LNG,
+        vehicleId: VEHICLE,
         destinationShopId: fixShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     towTicket = opened.body.data.id as string;
@@ -399,7 +409,7 @@ describe("bills", () => {
         lat: BASE_LAT,
         lng: BASE_LNG,
         providerId: fixShop,
-        vehicleType: "SCOOTER",
+        vehicleType: "BIKE",
       });
     expect(opened.status).toBe(201);
     standaloneId = opened.body.data.id as string;
