@@ -7,12 +7,14 @@ export {
   getShopRecords as shopRecords,
 } from "./requests";
 export {feedTickets} from "./feed";
-export {updateWorkOrder} from "./workOrder";
+export {updateWorkOrder, approveInvoice} from "./workOrder";
 export {sendEstimate, approveEstimate, declineEstimate} from "./estimate";
-export {sendQuote, approveQuote} from "./quote";
+export {sendQuote, approveQuote, declineQuote} from "./quote";
 export {declineDestination} from "./destination";
 export {
   setMobileShopFix,
+  approveMobileFix,
+  declineMobileFix,
   offerMobileShopTow,
   respondMobileShopTow,
 } from "./mobile";

@@ -72,12 +72,17 @@ describe("ratings endpoints", () => {
     expect(accepted.status).toBe(200);
     const arrived = await request(app)
       .put("/dispatch/status")
-      .set("Authorization", bearer(RIDER))
+      .set("Authorization", bearer(TOWOP))
       .send({ticketId, status: "3"});
     expect(arrived.status).toBe(200);
+    const loaded = await request(app)
+      .post("/dispatch/tow/loaded")
+      .set("Authorization", bearer(TOWOP))
+      .send({ticketId});
+    expect(loaded.status).toBe(200);
     const resolved = await request(app)
       .put("/dispatch/status")
-      .set("Authorization", bearer(RIDER))
+      .set("Authorization", bearer(TOWOP))
       .send({ticketId, status: "4"});
     expect(resolved.status).toBe(200);
   });

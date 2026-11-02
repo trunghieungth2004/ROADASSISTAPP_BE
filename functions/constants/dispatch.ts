@@ -122,6 +122,26 @@ export const TOW_FARE = {
   CAR: {base: 500000, perKm: 25000, includedKm: 10},
 };
 
+export const PROVIDER_PRICING_BOUNDS = {
+  TOW: {
+    baseMin: 100000,
+    baseMax: 300000,
+    perKmMin: 8000,
+    perKmMax: 15000,
+  },
+  MOBILE_SHOP: {
+    callOutMin: 0,
+    callOutMax: 100000,
+    travelPerKmMin: 3000,
+    travelPerKmMax: 10000,
+  },
+} as const;
+
+export const WORK_ITEM_LIMIT = 20;
+export const WORK_ITEM_NAME_MAX = 120;
+export const WORK_ITEM_QTY_MAX = 99;
+export const WORK_ITEM_PRICE_MAX = 999999999;
+
 export const TOW_FARE_NIGHT_MULT = 1.5;
 export const TOW_FARE_CEILING = 1.1;
 export const NIGHT_START_MINUTES = 22 * 60;

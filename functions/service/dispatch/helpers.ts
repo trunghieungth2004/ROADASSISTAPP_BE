@@ -181,6 +181,91 @@ export const estimateTowEta = async ({
   }
 };
 
+export const trackedDeadheadKm = (
+  ticket: {
+    lat: number;
+    lng: number;
+    assignedAt?: unknown;
+    jobTrack?: unknown;
+  },
+  shopId: string,
+): number | null => {
+  const track = Array.isArray(ticket.jobTrack) ? ticket.jobTrack : [];
+  const since = typeof ticket.assignedAt === "string" ?
+    Date.parse(ticket.assignedAt) :
+    null;
+  const points = track.filter((raw) => {
+    if (typeof raw !== "object" || raw === null) return false;
+    const point = raw as {
+      lat?: unknown;
+      lng?: unknown;
+      at?: unknown;
+      shopId?: unknown;
+    };
+    if (typeof point.lat !== "number" || typeof point.lng !== "number") {
+      return false;
+    }
+    if (typeof point.shopId === "string" && point.shopId !== shopId) {
+      return false;
+    }
+    if (since !== null && typeof point.at === "string") {
+      const at = Date.parse(point.at);
+      if (!Number.isNaN(at) && at < since - 5000) return false;
+    }
+    return true;
+  });
+  if (points.length < 2) return null;
+  let meters = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i] as {lat: number; lng: number};
+    const b = points[i + 1] as {lat: number; lng: number};
+    meters += haversineMeters(a.lat, a.lng, b.lat, b.lng);
+    if (haversineMeters(b.lat, b.lng, ticket.lat, ticket.lng) <= 120) {
+      break;
+    }
+  }
+  return Math.round((meters / 1000) * 1000) / 1000;
+};
+
+export const trackedLoadedKm = (
+  ticket: {
+    loadedAt?: unknown;
+    jobTrack?: unknown;
+  },
+  shopId: string,
+): number | null => {
+  if (typeof ticket.loadedAt !== "string") return null;
+  const since = Date.parse(ticket.loadedAt);
+  if (Number.isNaN(since)) return null;
+  const track = Array.isArray(ticket.jobTrack) ? ticket.jobTrack : [];
+  const points = track.filter((raw) => {
+    if (typeof raw !== "object" || raw === null) return false;
+    const point = raw as {
+      lat?: unknown;
+      lng?: unknown;
+      at?: unknown;
+      shopId?: unknown;
+    };
+    if (typeof point.lat !== "number" || typeof point.lng !== "number") {
+      return false;
+    }
+    if (typeof point.shopId === "string" && point.shopId !== shopId) {
+      return false;
+    }
+    if (typeof point.at !== "string") return false;
+    const at = Date.parse(point.at);
+    return !Number.isNaN(at) && at >= since - 5000;
+  });
+  if (points.length < 2) return null;
+  let meters = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i] as {lat: number; lng: number};
+    const b = points[i + 1] as {lat: number; lng: number};
+    meters += haversineMeters(a.lat, a.lng, b.lat, b.lng);
+  }
+  return Math.round((meters / 1000) * 1000) / 1000;
+};
+
 export const freezeTowLeg = async (
   ticketId: string,
   ticket: {
@@ -191,6 +276,7 @@ export const freezeTowLeg = async (
     lng: number;
   },
   toShopId: string | null,
+  traveledKm?: number,
 ): Promise<number> => {
   const legs = Array.isArray(ticket.towLegs) ?
     [...(ticket.towLegs as unknown[])] :
@@ -210,9 +296,13 @@ export const freezeTowLeg = async (
       );
       actual = Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
     }
+    const traveled = typeof traveledKm === "number" ?
+      Math.max(0, traveledKm) :
+      0;
     legs.push({
       toShopId,
       km: legKm,
+      traveledKm: Math.round(traveled * 1000) / 1000,
       actual,
       at: new Date().toISOString(),
     });

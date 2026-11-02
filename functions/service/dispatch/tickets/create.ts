@@ -40,6 +40,48 @@ import * as cacheManager from "../../../utils/cacheManager";
 import {validatePhotoPathsStructure} from "../../../utils/media";
 
 
+const liveTicketConflict = (
+  mine: dispatchRepository.DispatchTicket[],
+  ticketType: string,
+  vehicleId?: string,
+): ConflictError | null => {
+  if (ticketType === "SOS") {
+    const liveSos = mine.find((t) =>
+      t.ticketType === "SOS" &&
+      !TERMINAL_STATUSES.has(t.status as string));
+    if (liveSos) {
+      return new ConflictError(
+        "Rider already has a live SOS",
+        {
+          ticketId: liveSos.id,
+          status: liveSos.status,
+          createdAt: liveSos.createdAt ?? null,
+          reason: "SOS_BUSY",
+        },
+      );
+    }
+  }
+  const live = vehicleId !== undefined ?
+    mine.find((t) =>
+      t.vehicleId === vehicleId &&
+      !TERMINAL_STATUSES.has(t.status as string)) :
+    mine.find((t) =>
+      t.ticketType === ticketType &&
+      !TERMINAL_STATUSES.has(t.status as string));
+  if (!live) return null;
+  return new ConflictError(
+    vehicleId !== undefined ?
+      "Vehicle already has an open ticket" :
+      "Rider already holds a live ticket of this type",
+    {
+      ticketId: live.id,
+      status: live.status,
+      createdAt: live.createdAt ?? null,
+      ...(vehicleId !== undefined ? {reason: "VEHICLE_BUSY"} : {}),
+    },
+  );
+};
+
 export const createDispatch = async ({
   userId,
   ticketType,
@@ -56,6 +98,7 @@ export const createDispatch = async ({
   vehicleType,
   vehicleWidth,
   vehicleLabel,
+  towKind,
   allowOffDutyShop,
   allowVehicleOverlap,
   allowMissingVehicle,
@@ -84,6 +127,7 @@ export const createDispatch = async ({
   vehicleType?: string;
   vehicleWidth?: number;
   vehicleLabel?: string;
+  towKind?: "NORMAL" | "RETURN";
   allowOffDutyShop?: boolean;
   allowVehicleOverlap?: boolean;
   allowMissingVehicle?: boolean;
@@ -162,26 +206,8 @@ export const createDispatch = async ({
   }
   if (!allowVehicleOverlap) {
     const mine = await dispatchRepository.findByUserId(userId);
-    const live = vehicleId !== undefined ?
-      mine.find((t) =>
-        t.vehicleId === vehicleId &&
-        !TERMINAL_STATUSES.has(t.status as string)) :
-      mine.find((t) =>
-        t.ticketType === ticketType &&
-        !TERMINAL_STATUSES.has(t.status as string));
-    if (live) {
-      throw new ConflictError(
-        vehicleId !== undefined ?
-          "Vehicle already has an open ticket" :
-          "Rider already holds a live ticket of this type",
-        {
-          ticketId: live.id,
-          status: live.status,
-          createdAt: live.createdAt ?? null,
-          ...(vehicleId !== undefined ? {reason: "VEHICLE_BUSY"} : {}),
-        },
-      );
-    }
+    const conflict = liveTicketConflict(mine, ticketType, vehicleId);
+    if (conflict !== null) throw conflict;
   }
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
@@ -212,6 +238,7 @@ export const createDispatch = async ({
     vehicleWidth,
     vehicleClass: vehicleClassOf(vehicleType),
     vehicleLabel: vehicleLabel ?? vehicleType,
+    ...(ticketType === "TOW" ? {towKind: towKind ?? "NORMAL"} : {}),
     sourceTicketId: sourceTicketId ?? null,
     continuedFromTicketId: continuedFromTicketId ?? null,
     sosAttempt: sosAttempt ?? 1,

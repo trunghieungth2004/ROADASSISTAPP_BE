@@ -5,6 +5,11 @@ import * as providerRepository from "../../../repository/providerRepository";
 
 
 import {enqueueDispatchPush} from "../../taskQueueService";
+import {normalizeWorkItems, workItemsTotal} from "./items";
+import {findCandidates} from "../candidates";
+import * as paymentRepository from "../../../repository/paymentRepository";
+import * as paymentService from "../../paymentService";
+import {FieldValue} from "../../../config/firebase";
 
 
 import {MOBILE_TOW_OFFER_TTL_MS, NS} from "../constants";
@@ -15,6 +20,7 @@ import {
   PROVIDER_STATUS,
   STATUS_DISPATCH,
 } from "../../../constants/status";
+import {PAYMENT_ACTIVE_STATUSES} from "../../../constants/payments";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
 import {createDispatch} from "../tickets";
@@ -37,10 +43,12 @@ export const setMobileShopFix = async ({
   userId,
   ticketId,
   fixAmount,
+  items,
 }: {
   userId: string;
   ticketId: string;
   fixAmount: number;
+  items?: unknown;
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
@@ -72,9 +80,267 @@ export const setMobileShopFix = async ({
   if (!Number.isInteger(fixAmount) || fixAmount < 0) {
     throw new ValidationError("Fix fee must be a non-negative integer");
   }
-  await dispatchRepository.update(ticketId, {finalAmount: fixAmount});
+  const invoiceItems = items === undefined ? null : normalizeWorkItems(items);
+  if (invoiceItems !== null && workItemsTotal(invoiceItems) !== fixAmount) {
+    throw new ValidationError("Fix items must match the fix fee");
+  }
+  await dispatchRepository.update(ticketId, {
+    finalAmount: fixAmount,
+    ...(invoiceItems !== null ? {invoiceItems} : {}),
+    mobileFixApprovedAt: null,
+    mobileFixDeclinedAt: null,
+    mobileFixDeclineReason: null,
+  });
+  await dispatchRepository.updateStatus(
+    ticketId,
+    STATUS_DISPATCH.QUOTED,
+    userId,
+  );
   cacheManager.del(NS);
+  await chatService.addSystemEvent(
+    ticketId,
+    "The mobile shop sent a fix quote.",
+    "MOBILE_FIX_QUOTED",
+    {amount: fixAmount},
+  );
+  await enqueueDispatchPush(ticketId, `-status-9-${Date.now()}`);
   return {updated: 1};
+};
+
+export const approveMobileFix = async ({
+  userId,
+  ticketId,
+}: {
+  userId: string;
+  ticketId: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "SOS") {
+    throw new ValidationError("Mobile fix approval is SOS-only");
+  }
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider approves the fix");
+  }
+  if (ticket.status !== STATUS_DISPATCH.QUOTED) {
+    throw new ValidationError("No mobile fix awaiting approval");
+  }
+  if (ticket.disputeHold === true) {
+    throw new ValidationError("Dispute under review");
+  }
+  const payments = await paymentRepository.findByTicketId(ticketId);
+  let funded = payments.some((p) =>
+    (p.method === "CASH" && (p.status === "PENDING" ||
+      p.status === "CONFIRMED")) ||
+    (p.method === "SEPAY" && (p.status === "HELD" ||
+      p.status === "CONFIRMED")));
+  const active = payments.some((p) =>
+    PAYMENT_ACTIVE_STATUSES.includes(p.status));
+  if (!funded && !active) {
+    await paymentService.createPaymentForTicket({
+      userId,
+      ticketId,
+      method: "CASH",
+    });
+    funded = true;
+  }
+  if (!funded) {
+    throw new ValidationError("Payment required before approving the fix");
+  }
+  await dispatchRepository.update(ticketId, {
+    mobileFixApprovedAt: new Date().toISOString(),
+    fulfilledByShopId: ticket.assignedShopId ?? null,
+  });
+  await dispatchRepository.updateStatus(
+    ticketId,
+    STATUS_DISPATCH.READY,
+    userId,
+  );
+  cacheManager.del(NS);
+  await chatService.addSystemEvent(
+    ticketId,
+    "The rider approved the fix quote.",
+    "MOBILE_FIX_APPROVED",
+  );
+  await enqueueDispatchPush(ticketId, "-status-7");
+  await enqueueDispatchPush(
+    ticketId,
+    `-mobile-fix-approved-operator-${Date.now()}`,
+    {
+      audience: "operator",
+      urgent: "true",
+      title: "Fix quote approved",
+      body: "The rider approved your fix quote — tap to view",
+    },
+  );
+  return {approved: true};
+};
+
+export const declineMobileFix = async ({
+  userId,
+  ticketId,
+  reason,
+}: {
+  userId: string;
+  ticketId: string;
+  reason?: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.ticketType !== "SOS") {
+    throw new ValidationError("Mobile fix decline is SOS-only");
+  }
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider declines the fix");
+  }
+  if (ticket.status !== STATUS_DISPATCH.QUOTED) {
+    throw new ValidationError("No mobile fix awaiting approval");
+  }
+  if (ticket.disputeHold === true) {
+    throw new ValidationError("Dispute under review");
+  }
+  const shopId = typeof ticket.assignedShopId === "string" ?
+    ticket.assignedShopId :
+    "";
+  if (shopId === "") {
+    throw new ValidationError("Mobile shop is not assigned");
+  }
+  const shop = await providerRepository.findById(shopId);
+  if (!shop) throw new NotFoundError("Provider not found");
+  const now = new Date().toISOString();
+  const history = Array.isArray(ticket.mobileFeeHistory) ?
+    [...ticket.mobileFeeHistory] :
+    [];
+  history.push({
+    shopId,
+    shopName: typeof shop.name === "string" ? shop.name : null,
+    callOutFee: typeof ticket.mobileCallOutFee === "number" ?
+      ticket.mobileCallOutFee :
+      0,
+    travelFee: typeof ticket.mobileTravelFee === "number" ?
+      ticket.mobileTravelFee :
+      0,
+    waived: ticket.mobileCallOutWaived === true,
+    fixAmount: typeof ticket.finalAmount === "number" ?
+      ticket.finalAmount :
+      null,
+    items: Array.isArray(ticket.invoiceItems) ? ticket.invoiceItems : [],
+    declinedAt: now,
+    reason: typeof reason === "string" && reason.trim() !== "" ?
+      reason.trim() :
+      null,
+  });
+  const excludedShops = Array.isArray(ticket.excludedShopIds) ?
+    [...ticket.excludedShopIds] :
+    [];
+  if (!excludedShops.includes(shopId)) excludedShops.push(shopId);
+  const excludedOperators = Array.isArray(ticket.excludedOperatorUids) ?
+    [...ticket.excludedOperatorUids] :
+    [];
+  if (typeof shop.operatorUid === "string" &&
+    shop.operatorUid !== "" &&
+    !excludedOperators.includes(shop.operatorUid)) {
+    excludedOperators.push(shop.operatorUid);
+  }
+  const former = Array.isArray(ticket.formerAssignedShopIds) ?
+    [...ticket.formerAssignedShopIds] :
+    [];
+  if (!former.includes(shopId)) former.push(shopId);
+  const chatVersion = typeof ticket.chatVersion === "number" ?
+    ticket.chatVersion :
+    0;
+  await chatService.addSystemEvent(
+    ticketId,
+    "The rider declined the fix quote.",
+    "MOBILE_FIX_DECLINED",
+    {
+      ...(typeof reason === "string" && reason.trim() !== "" ?
+        {reason: reason.trim()} :
+        {}),
+    },
+  );
+  const archived = await chatService.archiveTicketRoom({
+    ticketId,
+    version: chatVersion,
+  }).catch(() => null);
+  const candidates = await findCandidates({
+    lat: ticket.lat,
+    lng: ticket.lng,
+    ...(typeof ticket.vehicleType === "string" ?
+      {vehicleType: ticket.vehicleType} :
+      {}),
+    excludeOperatorUids: excludedOperators,
+    excludeShopIds: excludedShops,
+  }).catch(() => []);
+  await dispatchRepository.update(ticketId, {
+    assignedShopId: null,
+    assignedUid: null,
+    assignedKind: null,
+    assignedAt: null,
+    mobileCallOutFee: null,
+    mobileCallOutWaived: null,
+    mobileTravelFee: null,
+    finalAmount: null,
+    invoiceItems: null,
+    mobileFeeHistory: history,
+    mobileFixDeclinedAt: now,
+    mobileFixDeclineReason: typeof reason === "string" &&
+      reason.trim() !== "" ? reason.trim() : null,
+    excludedShopIds: excludedShops,
+    excludedOperatorUids: excludedOperators,
+    formerAssignedShopIds: former,
+    chatVersion: chatVersion + (archived !== null ? 1 : 0),
+    ...(archived !== null ?
+      {
+        chatHistory: FieldValue.arrayUnion({
+          version: chatVersion,
+          roomId: archived.roomId,
+          shopId,
+          shopName: typeof shop.name === "string" ? shop.name : null,
+          at: archived.at,
+        }),
+      } :
+      {}),
+    candidates,
+    candidateTs: candidates.length > 0 ? now : null,
+  });
+  try {
+    await paymentService.cancelPendingPayments(ticketId);
+    const payments = await paymentRepository.findByTicketId(ticketId);
+    for (const payment of payments) {
+      if (payment.status === "HELD" ||
+        payment.status === "CONFIRMED" ||
+        payment.status === "PARTIAL") {
+        await paymentService.refundPayment({
+          paymentId: payment.id,
+          adminUid: userId,
+        });
+      }
+    }
+  } catch {
+    void 0;
+  }
+  await dispatchRepository.updateStatus(
+    ticketId,
+    STATUS_DISPATCH.PENDING,
+    userId,
+  );
+  cacheManager.del(NS);
+  const pushAt = Date.now();
+  await enqueueDispatchPush(ticketId, `-mobile-fix-declined-${pushAt}`);
+  await enqueueDispatchPush(
+    ticketId,
+    `-mobile-fix-declined-shop-${pushAt}`,
+    {
+      audience: "shop",
+      shopId,
+      urgent: "true",
+      title: "Fix quote declined",
+      body: "The rider declined your fix quote — the request was " +
+        "sent to another mobile shop.",
+    },
+  );
+  return {declined: true};
 };
 
 export const offerMobileShopTow = async ({
@@ -337,11 +603,6 @@ export const respondMobileShopTow = async ({
       body: "Your tow request is live — a tow truck can accept it.",
     });
   } else {
-    await enqueueDispatchPush(ticketId, "-mobile-tow-accepted-shop", {
-      audience: "operator",
-      title: "Tow offer accepted",
-      body: "The rider accepted your tow offer.",
-    });
     await enqueueDispatchPush(created.id, "-mobile-tow-assigned", {
       audience: "operator",
       title: "Tow job assigned",

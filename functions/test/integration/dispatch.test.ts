@@ -367,6 +367,11 @@ describe("dispatch assist flow", () => {
       .set("Authorization", bearer(USER))
       .send({ticketId: flowTicket, status: "3"});
     expect(arrived.status).toBe(200);
+    const loaded = await request(app)
+      .post("/dispatch/tow/loaded")
+      .set("Authorization", bearer(USER))
+      .send({ticketId: flowTicket});
+    expect(loaded.status).toBe(200);
     const res = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))
@@ -529,6 +534,11 @@ describe("dispatch vehicle flow", () => {
       .set("Authorization", bearer(USER))
       .send({ticketId: walkTicket});
     expect(ticket.body.data.fulfilledByShopId).toBe(walkShop);
+    const cash = await request(app)
+      .post("/payments/confirm-cash")
+      .set("Authorization", bearer(WALKOP))
+      .send({ticketId: walkTicket});
+    expect(cash.status).toBe(200);
     const resolved = await request(app)
       .put("/dispatch/status")
       .set("Authorization", bearer(USER))

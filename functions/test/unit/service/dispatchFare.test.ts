@@ -1,9 +1,12 @@
 import {
+  actualDeadheadKm,
+  DEFAULT_TOW_RATES,
   isNightFare,
   partialTowFare,
   quoteTowFare,
   roundFare,
   settleTowFare,
+  towRatesForProvider,
 } from "../../../service/dispatch/fare";
 
 describe("dispatch fare", () => {
@@ -97,6 +100,34 @@ describe("dispatch fare", () => {
     });
     expect(quote.estimate).toBe(200000);
     expect(quote.vehicleClass).toBe("SOLO_BIKE");
+  });
+
+  it("uses the provider's tow rates when set", () => {
+    const rates = towRatesForProvider(DEFAULT_TOW_RATES, {
+      towBaseFee: 200000,
+      towPerKmFee: 12000,
+    });
+    expect(rates.CAR).toMatchObject({base: 200000, perKm: 12000});
+    const quote = quoteTowFare({
+      vehicleClass: "CAR",
+      night: false,
+      deadheadKm: 0,
+      loadedKm: 15,
+      rates,
+    });
+    expect(quote.estimate).toBe(260000);
+    expect(quote.perKmFee).toBe(12000);
+  });
+
+  it("counts only traveled deadhead, not remaining distance", () => {
+    expect(actualDeadheadKm([
+      {actual: true, km: 8000, traveledKm: 2},
+      {actual: true, km: 4000, traveledKm: 1.5},
+    ])).toBe(3.5);
+    expect(actualDeadheadKm([
+      {actual: true, km: 8000},
+      {actual: false, km: 1000, traveledKm: 1},
+    ])).toBe(0);
   });
 
   it("prices cancel partials from actual deadhead only", () => {

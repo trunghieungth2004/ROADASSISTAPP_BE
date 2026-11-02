@@ -55,8 +55,15 @@ type BillItem = {
   ticketStatus: string;
   amount: number;
   waitingFee: number;
+  items: Array<{
+    name: string;
+    qty: number;
+    unitPrice: number;
+    amount: number;
+  }>;
   status: string;
   payeeId: string | null;
+  ratingTargetId: string | null;
   payeeName: string | null;
   qrUrl: string | null;
   payment: BillPayment | null;
@@ -111,20 +118,54 @@ const asBillable = (ticket: dispatchRepository.DispatchTicket): TicketLike =>
     providerId: ticket.providerId,
     assignedUid: ticket.assignedUid,
     shopQuotedAmount: ticket.shopQuotedAmount,
+    invoiceAmount: ticket.invoiceAmount,
+    invoiceApproval: ticket.invoiceApproval,
     finalAmount: ticket.finalAmount,
     mobileCallOutFee: ticket.mobileCallOutFee,
     mobileTravelFee: ticket.mobileTravelFee,
+    mobileFeeHistory: ticket.mobileFeeHistory,
     cancelledBy: ticket.cancelledBy,
+    towFeeHistory: ticket.towFeeHistory,
     towFare: ticket.towFare,
   }) as TicketLike;
 
-const linkedTowFor = async (
+const parentIdOf = (
+  ticket: dispatchRepository.DispatchTicket,
+): string | null => {
+  if (nonEmpty(ticket.sourceTicketId)) return ticket.sourceTicketId;
+  if (nonEmpty(ticket.continuedFromTicketId)) {
+    return ticket.continuedFromTicketId;
+  }
+  return null;
+};
+
+const parentTicketFor = async (
   ticket: dispatchRepository.DispatchTicket,
 ): Promise<dispatchRepository.DispatchTicket | null> => {
+  const direct = parentIdOf(ticket);
+  if (direct !== null) {
+    const parent = await dispatchRepository.findById(direct);
+    if (parent && parent.id !== ticket.id) return parent;
+  }
   for (const id of linkIdsOf(ticket)) {
     if (id === ticket.id) continue;
     const linked = await dispatchRepository.findById(id);
-    if (linked && linked.ticketType === "TOW") return linked;
+    if (!linked) continue;
+    if ((ticket.ticketType === "WALK_IN" ||
+      ticket.ticketType === "MECHANIC") &&
+      linked.ticketType === "TOW" &&
+      linked.towKind !== "RETURN") {
+      return linked;
+    }
+    if (ticket.ticketType === "TOW" && linked.ticketType === "SOS") {
+      return linked;
+    }
+    if (ticket.ticketType === "TOW" &&
+      ticket.towKind === "RETURN" &&
+      (linked.ticketType === "WALK_IN" ||
+        linked.ticketType === "MECHANIC")) {
+      return linked;
+    }
   }
   return null;
 };
@@ -135,8 +176,7 @@ const journeyRootId = async (
   let current = ticket;
   const seen = new Set<string>([ticket.id]);
   for (let depth = 0; depth < MAX_JOURNEY_DEPTH; depth += 1) {
-    if (current.ticketType === "SOS") break;
-    const parent = await linkedTowFor(current);
+    const parent = await parentTicketFor(current);
     if (!parent || seen.has(parent.id)) break;
     seen.add(parent.id);
     current = parent;
@@ -144,20 +184,46 @@ const journeyRootId = async (
   return current.id;
 };
 
+const childTicketsOf = async (
+  ticket: dispatchRepository.DispatchTicket,
+): Promise<dispatchRepository.DispatchTicket[]> => {
+  const parentId = parentIdOf(ticket);
+  const out: dispatchRepository.DispatchTicket[] = [];
+  for (const id of linkIdsOf(ticket)) {
+    if (id === ticket.id || id === parentId) continue;
+    const linked = await dispatchRepository.findById(id);
+    if (!linked) continue;
+    if (ticket.ticketType === "SOS" &&
+      (linked.ticketType === "TOW" || linked.ticketType === "SOS")) {
+      out.push(linked);
+    } else if (ticket.ticketType === "TOW" &&
+      (linked.ticketType === "WALK_IN" ||
+        linked.ticketType === "MECHANIC")) {
+      out.push(linked);
+    } else if ((ticket.ticketType === "WALK_IN" ||
+      ticket.ticketType === "MECHANIC") &&
+      linked.ticketType === "TOW" &&
+      linked.towKind === "RETURN") {
+      out.push(linked);
+    }
+  }
+  return out;
+};
+
 const journeyTickets = async (
   root: dispatchRepository.DispatchTicket,
 ): Promise<dispatchRepository.DispatchTicket[]> => {
-  const tickets = [root];
-  if (root.ticketType !== "TOW") return tickets;
-  for (const id of linkIdsOf(root)) {
-    if (id === root.id) continue;
-    const linked = await dispatchRepository.findById(id);
-    if (!linked) continue;
-    if (linked.ticketType !== "WALK_IN" && linked.ticketType !== "MECHANIC") {
-      continue;
+  const tickets: dispatchRepository.DispatchTicket[] = [];
+  const seen = new Set<string>();
+  const visit = async (ticket: dispatchRepository.DispatchTicket) => {
+    if (seen.has(ticket.id)) return;
+    seen.add(ticket.id);
+    tickets.push(ticket);
+    for (const child of await childTicketsOf(ticket)) {
+      await visit(child);
     }
-    tickets.push(linked);
-  }
+  };
+  await visit(root);
   return tickets;
 };
 
@@ -192,6 +258,20 @@ const payoutStatusFor = (
   if (nonEmpty(payment.payoutAt)) return "PAID";
   if (PAYMENT_RECEIVED_STATUSES.includes(payment.status)) return "PENDING";
   return "NONE";
+};
+
+const ratingTargetIdFor = (
+  ticket: dispatchRepository.DispatchTicket,
+): string | null => {
+  if (typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "") {
+    return ticket.assignedShopId;
+  }
+  if (typeof ticket.destinationShopId === "string" &&
+    ticket.destinationShopId !== "") {
+    return ticket.destinationShopId;
+  }
+  return null;
 };
 
 const buildItem = async (
@@ -232,8 +312,13 @@ const buildItem = async (
     ticketStatus: String(ticket.status ?? ""),
     amount: billable.amount,
     waitingFee: billable.waitingFee,
+    items: Array.isArray(ticket.invoiceItems) &&
+      ticket.invoiceItems.length > 0 ?
+      ticket.invoiceItems :
+      Array.isArray(ticket.quoteItems) ? ticket.quoteItems : [],
     status,
     payeeId: await payeeUidFor(ticket),
+    ratingTargetId: ratingTargetIdFor(ticket),
     payeeName: await payeeNameFor(ticket),
     qrUrl: nonEmpty(ticket.checkoutUrl) ? ticket.checkoutUrl : null,
     payment: payment ? {
@@ -346,20 +431,20 @@ const listBills = async ({
     BILL_SCAN_LIMIT,
   );
   const bills: Bill[] = [];
+  const roots = new Set<string>();
   for (const ticket of tickets) {
-    if (ticket.ticketType === "TOW" || ticket.ticketType === "SOS") {
-      const bill = await buildBill(ticket.id, {
-        viewer: "RIDER",
-        viewerUid: userId,
-      });
-      if (bill.total > 0) bills.push(bill);
+    if (ticket.ticketType !== "TOW" && ticket.ticketType !== "SOS" &&
+      ticket.ticketType !== "WALK_IN" && ticket.ticketType !== "MECHANIC") {
       continue;
     }
-    if (ticket.ticketType !== "WALK_IN" && ticket.ticketType !== "MECHANIC") {
-      continue;
-    }
-    if (await linkedTowFor(ticket)) continue;
-    const bill = await buildBill(ticket.id, {
+    const rootId = await journeyRootId(ticket);
+    if (roots.has(rootId)) continue;
+    roots.add(rootId);
+    const root = ticket.id === rootId ?
+      ticket :
+      await dispatchRepository.findById(rootId);
+    if (!root) continue;
+    const bill = await buildBill(root.id, {
       viewer: "RIDER",
       viewerUid: userId,
     });

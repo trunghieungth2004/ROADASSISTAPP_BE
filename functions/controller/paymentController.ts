@@ -8,10 +8,11 @@ import {ForbiddenError} from "../utils/errors";
 const createPayment = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {ticketId, method} = req.body;
+    const {ticketId, planId, method} = req.body;
     const result = await paymentService.createPaymentForTicket({
       userId: uid,
       ticketId,
+      planId,
       method,
     });
     sendSuccess(res, result, {message: "Payment created", statusCode: 201});
@@ -44,6 +45,22 @@ const checkoutPage = async (req: Request, res: Response) => {
     });
     res.setHeader("Cache-Control", "no-store");
     res.type("html").send(html);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const cancelPayment = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await paymentService.cancelPendingPayment({
+      userId: uid,
+      ticketId,
+    });
+    sendSuccess(res, result, {
+      message: result.cancelled ? "Payment cancelled" : "No pending payment",
+    });
   } catch (error) {
     handleServiceError(res, error as Error);
   }
@@ -89,4 +106,5 @@ const listAll = async (req: Request, res: Response) => {
   }
 };
 
-export {createPayment, ipn, checkoutPage, confirmCash, getOne, listAll};
+export {createPayment, ipn, checkoutPage, confirmCash, cancelPayment,
+  getOne, listAll};

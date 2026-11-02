@@ -8,16 +8,21 @@ import {
   PAYMENT_METHOD,
   PAYMENT_STATUS,
 } from "../../constants/payments";
+import {SUBSCRIPTION_PLAN_IDS} from "../../constants/subscriptions";
 
 
 export const paymentsSchemas = {
   createPayment: Joi.object({
-    ticketId: strReq(),
+    ticketId: Joi.string().trim().max(120),
+    planId: Joi.string().valid(...SUBSCRIPTION_PLAN_IDS),
     method: Joi.string()
       .valid(...Object.values(PAYMENT_METHOD))
       .required(),
-  }),
+  }).xor("ticketId", "planId"),
   confirmCash: Joi.object({
+    ticketId: strReq(),
+  }),
+  cancelPayment: Joi.object({
     ticketId: strReq(),
   }),
   paymentOne: Joi.object({

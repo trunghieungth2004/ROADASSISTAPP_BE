@@ -141,6 +141,55 @@ const verifyIpnAuth = (headers: Record<string, unknown>): boolean => {
   return authorizationValue(headers) === `${SEPAY_AUTH_PREFIX} ${secret}`;
 };
 
+
+type SepayCancelResult = {
+  ok: boolean;
+  missing: boolean;
+  alreadyCancelled?: boolean;
+  message?: string;
+};
+
+const cancelOrder = async (
+  orderInvoiceNumber: string,
+): Promise<SepayCancelResult> => {
+  const merchant = merchantId();
+  const secret = secretKey();
+  if (merchant === "" || secret === "") {
+    return {ok: false, missing: false, message: "SePay is not configured"};
+  }
+  const auth = Buffer.from(`${merchant}:${secret}`).toString("base64");
+  try {
+    const res = await fetch(`${SEPAY_ENV[sepayEnv()].api}/v1/order/cancel`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${auth}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({order_invoice_number: orderInvoiceNumber}),
+    });
+    if (res.status === 404) return {ok: true, missing: true};
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const lower = text.toLowerCase();
+      const alreadyCancelled = /hủy|huỷ|cancel/.test(lower) &&
+        !/capture|paid|thanh toán|payment received/.test(lower);
+      return {
+        ok: alreadyCancelled,
+        missing: false,
+        ...(alreadyCancelled ? {alreadyCancelled: true} : {}),
+        message: text === "" ? `SePay cancel failed (${res.status})` : text,
+      };
+    }
+    return {ok: true, missing: false};
+  } catch (error) {
+    return {
+      ok: false,
+      missing: false,
+      message: error instanceof Error ? error.message : "SePay cancel failed",
+    };
+  }
+};
+
 export {
   SepayPaymentLike,
   SepayCheckoutFields,
@@ -149,4 +198,6 @@ export {
   checkoutToken,
   verifyCheckoutToken,
   verifyIpnAuth,
+  cancelOrder,
+  SepayCancelResult,
 };

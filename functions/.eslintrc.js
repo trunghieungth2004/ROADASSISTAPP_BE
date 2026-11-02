@@ -47,7 +47,10 @@ module.exports = {
       },
     },
     {
-      files: ["service/dispatch/tickets/transition.ts"],
+      files: [
+        "service/dispatch/tickets/transition.ts",
+        "service/dispatch/tickets/assertTransition.ts",
+      ],
       rules: {
         "max-lines-per-function": "off",
         "complexity": "off",
@@ -65,8 +68,13 @@ module.exports = {
         "service/dispatch/shop/estimate.ts",
         "service/provider/crud.ts",
         "service/push/service.ts",
+        "service/paymentService.ts",
       ],
       rules: {"complexity": "off"},
+    },
+    {
+      files: ["routes/dispatchRoutes.ts"],
+      rules: {"max-lines-per-function": "off"},
     },
     {
       files: ["*.js"],

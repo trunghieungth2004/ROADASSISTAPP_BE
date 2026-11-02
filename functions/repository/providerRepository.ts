@@ -30,6 +30,8 @@ interface Provider {
   vehicleProfileId?: string | null;
   towBaseFee?: number | null;
   towPerKmFee?: number | null;
+  callOutFee?: number | null;
+  travelPerKmFee?: number | null;
   status: string;
   suspended?: boolean;
   suspendedAt?: string | null;
@@ -112,6 +114,8 @@ const createMobileShop = async (data: {
   vehicleType: string;
   vehicleWidth?: number | null;
   vehicleProfileId?: string | null;
+  callOutFee?: number;
+  travelPerKmFee?: number;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc();
   const doc = {
@@ -133,6 +137,8 @@ const createMobileShop = async (data: {
     vehicleType: data.vehicleType,
     vehicleWidth: data.vehicleWidth ?? null,
     vehicleProfileId: data.vehicleProfileId ?? null,
+    callOutFee: data.callOutFee ?? null,
+    travelPerKmFee: data.travelPerKmFee ?? null,
     licenseNumber: data.licenseNumber,
     licensePhotoUrl: data.licensePhotoUrl ?? null,
     status: PROVIDER_STATUS.PENDING,

@@ -126,7 +126,7 @@ List all users. No body schema.
 
 ### `POST /users/me` **(Auth)**
 
-Login bootstrap: the authenticated caller's profile plus their registered vehicles and the active (routing) vehicle in one call. No body required. `activeVehicle` is `null` until a vehicle is marked active.
+Login bootstrap: the authenticated caller's profile plus their registered vehicles and the active (routing) vehicle in one call. No body required. `activeVehicle` is `null` until a vehicle is marked active. `subscription` is `null` until a SePay VIP plan is paid; `status` is derived from `expiresAt` on every read (`ACTIVE`/`EXPIRED`), so no scheduled expiry job is needed. `subscriptionPlans` is the server-authoritative plan catalog (amounts and durations) used by the paywall.
 
 **Response `200`:**
 ```json
@@ -149,7 +149,19 @@ Login bootstrap: the authenticated caller's profile plus their registered vehicl
       "type": "SCOOTER",
       "baseWidth": 0.7,
       "baseHeight": 1.1
-    }
+    },
+    "subscription": {
+      "planId": "MONTHLY",
+      "status": "ACTIVE",
+      "startedAt": "2026-11-01T10:00:00.000Z",
+      "expiresAt": "2026-12-01T10:00:00.000Z",
+      "lastPaymentId": "pay1"
+    },
+    "subscriptionPlans": [
+      { "id": "WEEKLY", "amount": 40000, "days": 7 },
+      { "id": "MONTHLY", "amount": 200000, "days": 30 },
+      { "id": "YEARLY", "amount": 1500000, "days": 365 }
+    ]
   }
 }
 ```
@@ -299,19 +311,30 @@ Licenses are granted via `PUT /users/onboard` (`{service}` self-serves `RIDER`; 
 
 ## Providers
 
-Repair shops (`SHOP`) and tow operators (`TOW`) are provider records in the top-level `providers` collection — creating the record is the grant, so there is no `SHOP` or `TOW` license. Both kinds start `PENDING` and must be approved before they can accept jobs or appear in listings. At most one live record per kind per operator: `409` when a `PENDING` or `ACTIVE` record of that kind already exists; a `DENIED` record does not block re-applying. `TOW` records use the normalized plate (uppercased, non-alphanumerics stripped) as the document id, so one plate maps to one account; the id is reserved with an atomic create, so a concurrent duplicate plate also gets `409` instead of overwriting. Plates are immutable after creation. `POST /dispatch/accept` for `TOW` providers requires `ACTIVE` status plus a plate on file. Tow-assigned tickets carry the operator's `towPlate` so the rider can check the vehicle before it arrives. Suspended providers (see below) are hidden from every public listing and cannot accept. Shops optionally declare `vehicleClasses` (`SOLO_BIKE`/`CAR`, absent means both); the directory filters hard on the rider's vehicle class, and tow destinations are blocked when the shop does not service the towed class.
+Repair shops (`SHOP`), tow operators (`TOW`), and mobile shops (`MOBILE_SHOP`) are provider records in the top-level `providers` collection — creating the record is the grant, so there is no `SHOP` or `TOW` license. Both kinds start `PENDING` and must be approved before they can accept jobs or appear in listings. At most one live record per kind per operator: `409` when a `PENDING` or `ACTIVE` record of that kind already exists; a `DENIED` record does not block re-applying. `TOW` records use the normalized plate (uppercased, non-alphanumerics stripped) as the document id, so one plate maps to one account; the id is reserved with an atomic create, so a concurrent duplicate plate also gets `409` instead of overwriting. Plates are immutable after creation. `POST /dispatch/accept` for `TOW` providers requires `ACTIVE` status plus a plate on file. Tow-assigned tickets carry the operator's `towPlate` so the rider can check the vehicle before it arrives. Suspended providers (see below) are hidden from every public listing and cannot accept. Shops optionally declare `vehicleClasses` (`SOLO_BIKE`/`CAR`, absent means both); the directory filters hard on the rider's vehicle class, and tow destinations are blocked when the shop does not service the towed class.
 
 ### `POST /providers` **(Auth)**
 
-Create a provider record. `TOW` requires `plate` + `vehicleType`; `SHOP` takes `openHours` and optional `vehicleClasses` (`SOLO_BIKE`/`CAR`, 1–2 unique) and forbids plate/vehicle fields (`400` either way). `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
+Create a provider record. `TOW` requires `plate` + `vehicleType` and may set `towBaseFee`/`towPerKmFee`; `MOBILE_SHOP` requires `plate` + `vehicleType` + `licenseNumber` and may set `callOutFee`/`travelPerKmFee`. Both are validated against the live `providerPricing` bounds in `platform_config/global` (defaults: tow base 100k–300k, per-km 8k–15k; mobile call-out 0–100k, travel 3k–10k); `SHOP` takes `openHours`, optional `vehicleClasses` (`SOLO_BIKE`/`CAR`, 1–2 unique), and an itemized `services` catalog. Out-of-bounds pricing is `400`. `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
 
 ```json
-{ "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "VAN", "vehicleWidth": 2.0 }
+{ "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "CAR", "vehicleWidth": 2.0, "towBaseFee": 200000, "towPerKmFee": 12000 }
 ```
 
 ### `POST /providers/mine` **(Auth)**
 
 List the caller's own provider records with their statuses and any denial note.
+
+### `POST /providers/pricing` **(Auth)**
+
+Read the live `providerPricing` bounds from `platform_config/global` so provider settings can show the allowed fee ranges before saving. Returns `TOW` (`baseMin`/`baseMax`, `perKmMin`/`perKmMax`) and `MOBILE_SHOP` (`callOutMin`/`callOutMax`, `travelPerKmMin`/`travelPerKmMax`). The same bounds are enforced by `POST /providers` and `PUT /providers`.
+
+```json
+{
+  "TOW": { "baseMin": 100000, "baseMax": 300000, "perKmMin": 8000, "perKmMax": 15000 },
+  "MOBILE_SHOP": { "callOutMin": 0, "callOutMax": 100000, "travelPerKmMin": 3000, "travelPerKmMax": 10000 }
+}
+```
 
 ### `POST /providers/near` **(Auth)**
 
@@ -329,11 +352,11 @@ Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercas
 { "lat": 10.7626, "lng": 106.6602, "query": "Thanh Cong", "kind": "SHOP", "vehicleClass": "SOLO_BIKE", "radiusMeters": 10000, "limit": 10, "minRating": 4, "sortBy": "rating" }
 ```
 
-`minRating` (0–5) drops shops below the average; `sortBy` is `distance` (default) or `rating`. Rows carry the provider `services` display price list (`{name, price}` integer VND) and `declined: true` when that shop already declined the ticket, so the picker can mark it (greyed but tappable). Passing `ticketId` scopes the declined marking to that ticket; re-picking a declined shop is refused with `400` for the life of the ticket.
+`minRating` (0–5) drops shops below the average; `sortBy` is `distance` (default) or `rating`. Rows carry the provider `services` catalog (`{code, name, displayPrice, quoteRequired}`) plus `towBaseFee`/`towPerKmFee` or `callOutFee`/`travelPerKmFee` when set, and `declined: true` when that shop already declined the ticket, so the picker can mark it (greyed but tappable). Passing `ticketId` scopes the declined marking to that ticket; re-picking a declined shop is refused with `400` for the life of the ticket.
 
 ### `PUT /providers` **(Auth)**
 
-Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, vehicle classes, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
+Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, vehicle classes, the service catalog, provider pricing within the bounds above, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
 
 ```json
 { "providerId": "shop1", "accepting": false }
@@ -1075,7 +1098,7 @@ Get a diagnostic by ID.
 
 ## Dispatch
 
-Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"` In progress → `"7"` Ready → `"4"` Resolved, with `"5"` Cancelled (rider) and `"8"` Declined (shop, walk-in only) as side exits. Status moves are validated per actor, not just per role: `MATCHED` is set only by `POST /dispatch/accept` (never by the status endpoint), arrival and resolution belong to the rider, work states belong to the helper, and terminal tickets (`4`/`5`/`8`) accept no further moves. Nobody is auto-assigned: providers accept at will, and the rider picks from the offer list.
+Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"` In progress → `"7"` Ready → `"4"` Resolved, with `"5"` Cancelled (rider) and `"8"` Declined (shop, walk-in only) as side exits. Status moves are validated per actor, not just per role: `MATCHED` is set only by `POST /dispatch/accept` (never by the status endpoint), TOW arrival and resolution belong to the assigned tower while SOS and shop-ticket resolution stay with the rider, work states belong to the helper, and terminal tickets (`4`/`5`/`8`) accept no further moves. Nobody is auto-assigned: providers accept at will, and the rider picks from the offer list.
 
 - **Walk:** `POST /providers/near` with `acceptingOnly`/`openOnly` (500–2000 m); open `SHOP` providers only. Hits carry `closesInMinutes` for the closing-time warning.
 - **Walk-in:** the rider confirms arrival at a chosen shop (`ticketType: "WALK_IN"` + `providerId`; manually filed walk-ins are bike-only), the shop is pushed and accepts or declines, then records the repair order (`workType`, quoted/final amounts) through the work states. The walk-in spawned automatically when a TOW resolves at a registered destination may be car-class, so a towed car still gets a repair ticket at the drop-off shop. Rating is gated on the shop marking `READY`.
@@ -1109,7 +1132,7 @@ Open a dispatch ticket, optionally linked to a diagnostic and the rider vehicle.
 { "statusCode": 201, "status": "SUCCESS", "message": "Dispatch created", "data": { "id": "tick1", "status": "1", "...": "..." } }
 ```
 
-Filing while holding any non-terminal ticket for the same `vehicleId` is refused with `409` (`errors: {ticketId, status, createdAt, reason: "VEHICLE_BUSY"}` naming the live ticket). There is no client force bypass; system flows use internal overlap flags. `WALK_IN` without a vehicle keeps the same-type guard. Refiles after terminal states pass freely.
+Filing while holding any non-terminal ticket for the same `vehicleId` is refused with `409` (`errors: {ticketId, status, createdAt, reason: "VEHICLE_BUSY"}` naming the live ticket). A rider may hold only one non-terminal `SOS` across all vehicles, so any second SOS is refused with `409` (`errors: {ticketId, status, createdAt, reason: "SOS_BUSY"}`), even when the vehicle differs. There is no client force bypass; system flows use internal overlap flags. `WALK_IN` without a vehicle keeps the same-type guard. Refiles after terminal states pass freely.
 
 A TOW drop-off shop must be `ACTIVE`, non-suspended, and servicing the towed class. A shop that has switched duty off (`accepting: false`) is rejected as a new or retargeted destination (`400 "Destination shop is not accepting drop-offs"`); a destination already committed before the shop switched off stays valid and is honored at resolve.
 
@@ -1140,7 +1163,7 @@ Get a ticket by ID. Visible to the ticket rider, the assignee, the assigned prov
 
 ### `PUT /dispatch/status` **(Auth)**
 
-Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED`, `ESTIMATED`, `EST_APPROVED`, `FINAL_QUOTED`, `UNFIXABLE`, and `RESOLVED_UNFIXABLE` are sent, not set — dedicated endpoints own them; arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator on shop tickets (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor; `10` In shop is set from `2`/`3`/`9`/`14`); SOS fix completion belongs to the assigned mobile shop (`3→7`, fix fee required); quotes themselves need a shop ticket (SOS tickets stay on money-free work orders); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support) and SOS `7` (fix complete — the fix fee stands); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`/`12`/`15`) accept no further moves. Admins bypass the matrix. Resolving a tow with an unlinked destination validates that the destination shop is still `ACTIVE` and non-suspended (`400 "Destination shop is no longer available — choose another drop-off"` otherwise); an active shop that has switched duty off still resolves and spawns the linked walk-in with an urgent `"Tow drop-off arrived"` push. Setting `READY` stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
+Advance a ticket's status. The enum is validated, and then the transition is validated per actor: `MATCHED` is set only by `POST /dispatch/accept` (the status endpoint refuses it — claiming must be atomic); `QUOTED`, `ESTIMATED`, `EST_APPROVED`, `FINAL_QUOTED`, `UNFIXABLE`, and `RESOLVED_UNFIXABLE` are sent, not set — dedicated endpoints own them; TOW arrival and resolution belong to the assigned tower (`2→3`, `3→4`), while SOS arrival and resolution stay with the rider (`2→3`, `3→4`) and shop-ticket resolution stays with the rider (`7→4`); work states belong to the shop operator on shop tickets (`3→6→7`, plus walk-in `2→6` only when no quote is pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor; `10` In shop is set from `2`/`3`/`9`/`14`); SOS fix quoting belongs to the assigned mobile shop (`3→9`, fix fee required); the rider approves (`9→7`) or declines the quote back to `1`; shop quotes themselves need a shop ticket (SOS uses the separate mobile-fix quote); cancel belongs to the rider from any non-terminal status except `6` (work underway is committed — stalled jobs go through admin support) and SOS `7` (fix complete — the fix fee stands); decline (`8`) belongs to the named shop on a pending walk-in. Terminal tickets (`4`/`5`/`8`/`12`/`15`) accept no further moves. Admins bypass the matrix. Resolving a tow with an unlinked destination validates that the destination shop is still `ACTIVE` and non-suspended (`400 "Destination shop is no longer available — choose another drop-off"` otherwise); an active shop that has switched duty off still resolves and spawns the linked walk-in with an urgent `"Tow drop-off arrived"` push. A resolved TOW stamps `deliveredAt`/`deliveredBy`; the rider confirms receipt via `POST /dispatch/tow/received`. A linked READY WALK_IN is auto-resolved only when its invoice is approved and any CASH charge is confirmed. Setting `READY` — or approving a mobile fix, which moves `9→7` — stamps `fulfilledByShopId`, which gates shop ratings. Push fans out for `2`/`3`/`4`/`6`/`7`/`8`/`9` with a per-type title.
 
 **Request:**
 ```json
@@ -1230,11 +1253,11 @@ Decline a pending walk-in addressed to the caller's shop (`403` for other provid
 
 ### `POST /dispatch/work` **(Auth)**
 
-Record work-done details on an open ticket: free-text `workType` and an external `invoiceRef` for the future payment gateway. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is on an editable leg (matched/arrived/in-progress/in-shop/quoted/estimated/estimate-approved, `400` once closed). Shop-only: tower operators get `403`, even on tows they hold. Details only: `quotedAmount`/`finalAmount` are refused (`400`) — the price is set once by `POST /dispatch/quote`.
+Record work-done details on an open ticket: free-text `workType`, an external `invoiceRef`, and an optional itemized `items` list (`{name, qty, unitPrice}`). When the ticket has an approved quote and the item total matches it, the invoice is auto-approved. A different total before Mark ready stores `invoiceApproval: "PENDING"` and adjusts the pending cash charge; the rider must approve it via `POST /dispatch/invoice/approve` before resolving. SePay/confirmed charges must go through support/refund. Only the assigned (or, for walk-ins, named) shop's operator or an admin, while the ticket is on an editable leg (matched/arrived/in-progress/in-shop/quoted/estimated/estimate-approved, `400` once closed). Shop-only: tower operators get `403`, even on tows they hold. Details only: `quotedAmount`/`finalAmount` are refused (`400`) — the price is set by `POST /dispatch/quote`.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "workType": "Tire change", "invoiceRef": "INV-1042" }
+{ "ticketId": "tick1", "workType": "Tire change", "invoiceRef": "INV-1042", "items": [{ "name": "Tire", "qty": 1, "unitPrice": 150000 }] }
 ```
 
 **Response `200`:**
@@ -1244,13 +1267,29 @@ Record work-done details on an open ticket: free-text `workType` and an external
 
 ---
 
-### `POST /dispatch/quote` **(Auth)**
+### `POST /dispatch/invoice/approve` **(Auth)**
 
-Send the single binding quote for a walk-in or mechanic ticket: `quotedAmount` writes `shopQuotedAmount` and moves the ticket to `"9"` (Quoted) for rider approval. Only the assigned (or, for walk-ins, named) shop's operator or an admin; towers get `403`, and tow tickets are refused (`400`) — their repair price lives on the spawned walk-in. Allowed from `"2"`/`"3"`/`"10"` (plus legacy `"13"`/`"14"`), one-shot: re-sending a recorded amount is refused (`400`). `finalAmount` is refused (`400`): the quote is the price, there is no second stage. Optional `workType` and fault `faultPhotos` (Storage paths) ride along. Work starts only after the rider approves *and* a funded payment exists (`CASH` `PENDING` or `SEPAY` `HELD` — see `POST /dispatch/quote/approve`). A vehicle that cannot be repaired closes via `POST /dispatch/unfixable`; shop tickets refund in full, while an SOS closes call-out-only.
+Approve a revised itemized invoice after the original quote was approved. Rider only, while `invoiceApproval` is `PENDING` (set when the shop submits a different invoice total before Mark ready). Moves the approval to `APPROVED` and stamps `invoiceApprovedAt`; the rider cannot resolve until this happens. The pending cash charge is adjusted to the new total when the invoice changes; SePay/confirmed charges must go through support/refund.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "quotedAmount": 150000, "workType": "Chain" }
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "approved": true } }
+```
+
+---
+
+### `POST /dispatch/quote` **(Auth)**
+
+Send the itemized quote for a walk-in or mechanic ticket: `quotedAmount` plus optional `items` (`{name, qty, unitPrice}`). When `items` is present the service computes each `amount` and requires the total to match `quotedAmount`. The ticket records `shopQuotedAmount`, `quoteItems`, `quoteVersion`, and `quoteHistory`, and moves to `"9"` (Quoted). Only the assigned (or, for walk-ins, named) shop's operator or an admin; towers get `403`, and tow tickets are refused (`400`). Allowed from `"2"`/`"3"`/`"10"` (plus legacy `"13"`/`"14"`). While still `"9"`, the shop may amend: the previous version is appended to `quoteHistory` and `quoteVersion` increments. Approved quotes cannot be amended. `finalAmount` is refused (`400`). Optional `workType` and fault `faultPhotos` ride along. Cash approval creates a `PENDING` cash charge automatically; SePay must be `HELD`/`CONFIRMED` first. A vehicle that cannot be repaired closes via `POST /dispatch/unfixable`; shop tickets refund in full, while an SOS closes call-out-only.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "quotedAmount": 150000, "workType": "Chain", "items": [{ "name": "Chain", "qty": 1, "unitPrice": 150000 }] }
 ```
 
 **Response `200`:**
@@ -1262,7 +1301,7 @@ Send the single binding quote for a walk-in or mechanic ticket: `quotedAmount` w
 
 ### `POST /dispatch/quote/approve` **(Auth)**
 
-Approve the pending quote, moving the ticket to `"6"` (In progress) with the rider as actor: from `"9"` (binding quote), or the legacy variants (`"11"` final quote, matched/arrived carrying a quote, or `"10"`/`"14"`/`"9"` carrying a final). Only the ticket's rider. Requires a funded payment on the ticket — a `PENDING` `CASH` charge or a `HELD` `SEPAY` charge (`400` "Payment required before starting work") — and stamps `paymentArmed` plus `quoteApprovedAt`. Declining a quote is a plain rider cancel (`PUT /dispatch/status` → `"5"`).
+Approve the pending quote, moving the ticket to `"6"` (In progress) with the rider as actor: from `"9"` (binding quote), or the legacy variants (`"11"` final quote, matched/arrived carrying a quote, or `"10"`/`"14"`/`"9"` carrying a final). Only the ticket's rider. **Cash** needs no pre-existing charge: the service creates a `PENDING` cash charge, and the rider confirms it at Mark ready before resolving (`400` "Confirm cash received before resolving" otherwise). **SePay** requires a `HELD` or `CONFIRMED` charge first (`400` "Payment required before starting work"). Stamps `paymentArmed` plus `quoteApprovedAt`. The rider may instead decline the quote with `POST /dispatch/quote/decline`, which clears the quote and returns the ticket to its pre-quote state (`"2"` for a walk-in, `"3"` for a mechanic; a quote sent from `"10"`/`"13"`/`"14"` restores that state) so the shop can re-quote.
 
 **Request:**
 ```json
@@ -1272,6 +1311,22 @@ Approve the pending quote, moving the ticket to `"6"` (In progress) with the rid
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "data": { "approved": true } }
+```
+
+---
+
+### `POST /dispatch/quote/decline` **(Auth, rider)**
+
+Decline the shop's pending quote. Rider only, while the ticket is `"9"` and is a `WALK_IN` or `MECHANIC`. Clears `shopQuotedAmount`, `quoteItems`, the invoice fields, and the approval stamps, records `quoteDeclinedAt`/`quoteDeclineReason`, cancels pending charges, refunds held/confirmed/partial charges, and restores `preQuoteStatus` so the shop can send a revised quote. A walk-in quoted from Matched returns to `"2"`, a mechanic quoted from Arrived returns to `"3"`, and quotes sent from `"10"`/`"13"`/`"14"` restore those states; tickets without a recorded pre-quote status fall back to `"2"` for walk-ins and `"3"` otherwise. The quote history stays on the ticket; the reason is optional (≤280 chars).
+
+**Request:**
+```json
+{ "ticketId": "tick1", "reason": "Price too high" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "declined": true } }
 ```
 
 ---
@@ -1326,11 +1381,11 @@ Rider declines the **tow** estimate: the estimate block clears without touching 
 
 ### `POST /dispatch/mobile-shop/fix` **(Auth, mobile shop)**
 
-Set the repair fee on an assigned SOS mobile-shop visit. Only the mobile shop's operator or an admin, from `"3"` (Arrived) only. `fixAmount` is a non-negative integer stored as `finalAmount`; the mobile shop then marks the fix complete (`3→7`) and the rider resolves the SOS ticket. The bill includes the call-out fee, travel fee, and this fix fee.
+Submit the repair quote on an assigned SOS mobile-shop visit. Only the mobile shop's operator or an admin, from `"3"` (Arrived) only. `fixAmount` is a non-negative integer stored as `finalAmount`; optional `items` (`{name, qty, unitPrice}`) are normalized to `invoiceItems` and their total must match `fixAmount`. The ticket moves to `"9"` (Quoted) for the rider's decision. The fee is immutable after submission — the shop cannot edit it from `"9"`; a declined quote returns to `"1"` and the shop is excluded.
 
 **Request:**
 ```json
-{ "ticketId": "tick1", "fixAmount": 250000 }
+{ "ticketId": "tick1", "fixAmount": 250000, "items": [{ "name": "Battery", "qty": 1, "unitPrice": 250000 }] }
 ```
 
 **Response `200`:**
@@ -1340,9 +1395,41 @@ Set the repair fee on an assigned SOS mobile-shop visit. Only the mobile shop's 
 
 ---
 
+### `POST /dispatch/mobile-shop/fix/approve` **(Auth, rider)**
+
+Approve the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. A `CASH` charge is created `PENDING` automatically when no charge exists; a `SEPAY` charge must already be `HELD`/`CONFIRMED` (`400` "Payment required before approving the fix"). Stamps `mobileFixApprovedAt` and moves the ticket to `"7"` (Ready). The rider resolves at `"4"` after confirming cash.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "approved": true } }
+```
+
+---
+
+### `POST /dispatch/mobile-shop/fix/decline` **(Auth, rider)**
+
+Decline the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. The current call-out/travel and declined fix lines are appended to `mobileFeeHistory`; the shop and its operator are added to `excludedShopIds`/`excludedOperatorUids`; the current chat is archived and the version increments; the assignment and quote fields clear; candidates are recomputed for the other mobile shops; and the ticket returns to `"1"` (Pending). Prior call-out/travel stays payable through `mobileFeeHistory`, while the declined fix amount/items are audit-only. Pending charges are cancelled and held/confirmed/partial charges are refunded.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "reason": "Price too high" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "declined": true } }
+```
+
+---
+
 ### `POST /dispatch/unfixable` **(Auth, shop)**
 
-Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), `"9"` (Quoted), `"10"` (In shop), or `"11"` (Final quoted); SOS is allowed only from `"3"`. Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path under `dispatch/{ticketId}/` (no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, and pushes the rider urgently. Shop tickets cancel pending charges and refund held SePay in full. SOS tickets retain a call-out-only charge (travel and repair are not charged), unless the assigned mobile shop was within 1 km of the pickup at accept (`mobileCallOutWaived: true`, call-out `0`). If a direct same-vehicle TOW or a network TOW is available, a 2-minute grace task waits for the shop to offer or release; otherwise a continuation SOS is created immediately. No `final` is recorded and the shop's `completedJobs` does not increment.
+Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), or `"10"` (In shop); SOS is allowed only from `"3"`. The action disappears once a quote is sent. Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path under `dispatch/{ticketId}/` (no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, and pushes the rider urgently. WALK_IN/MECHANIC tickets also create a pending return-tow offer so the rider can send the vehicle home. Shop tickets cancel pending charges and refund held SePay in full. SOS tickets retain a call-out-only charge (travel and repair are not charged), unless the assigned mobile shop was within 1 km of the pickup at accept (`mobileCallOutWaived: true`, call-out `0`). If a direct same-vehicle TOW or a network TOW is available, a 2-minute grace task waits for the shop to offer or release; otherwise a continuation SOS is created immediately. No `final` is recorded and the shop's `completedJobs` does not increment.
 
 **Request:**
 ```json
@@ -1358,7 +1445,9 @@ Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot r
 
 ### `POST /dispatch/tower/cancel` **(Auth, tower)**
 
-Mid-tow re-match: the engaged tower bows out while the tow is `"2"`/`"3"`. Only the assigned operator/assignee or an admin (`403` otherwise); non-tow or unassigned tickets get `400`. A `reasonCode` (free-form ≤64) is required. Optional fresh `lat`/`lng` (defaults to the ticket pin) freeze the traveled deadhead leg into `towLegs`, restamp a partial `towFare.final` (deadhead only, `partial: true`), and record the pickup in `pickupHistory`. The assignment clears, `towerSearch` goes `"ACTIVE"`, ETAs reset, and the tow returns to `"1"` (Pending) with fresh nearby-tower candidates — the radial tow broadcast resumes and the rider hears "Finding another tower". Auto-files a `TOWER_CANCEL_MID` dispute against the tower, increments the tower's `cancelCount` and the caller's `cancelRate`/`disputesLost`, and pushes nearby towers "Tow request available".
+Mid-tow re-match: the engaged tower bows out while the tow is `"2"`/`"3"`. Only the assigned operator/assignee or an admin (`403` otherwise); non-tow or unassigned tickets get `400`. A `reasonCode` (free-form ≤64) is required. Optional fresh `lat`/`lng` (defaults to the ticket pin) freeze the current assignment's tracked `jobTrack` distance into `towLegs`, restamp a partial `towFare.final` (deadhead only, `partial: true`), and record the pickup in `pickupHistory`. The assignment clears, `towerSearch` goes `"ACTIVE"`, ETAs reset, and the tow returns to `"1"` (Pending) with fresh nearby-tower candidates — the radial tow broadcast resumes and the rider hears "Finding another tower".
+
+`reasonCode: "TOWER_CANCEL_BREAKDOWN"` is a genuine breakdown: the payable partial is `perKm × (traveledDeadheadKm + loadedTraveledKm)` with no base, where loaded distance is 0 when the vehicle was not marked loaded. The original ceiling is stored in `towFeeCap`, the partial is appended to `towFeeHistory`, and no `TOWER_CANCEL_MID` dispute or tower cancel counters are filed. The replacement tower starts from the current breakdown point; its estimate is capped so the old partial plus the new fare never exceeds the original ceiling.
 
 **Request:**
 ```json
@@ -1368,6 +1457,38 @@ Mid-tow re-match: the engaged tower bows out while the tow is `"2"`/`"3"`. Only 
 **Response `200`:**
 ```json
 { "statusCode": 200, "status": "SUCCESS", "message": "Tower search restarted", "data": { "updated": 1, "requeued": true } }
+```
+
+---
+
+### `POST /dispatch/tow/loaded` **(Auth, tower)**
+
+Mark the vehicle loaded at pickup. Only the assigned tower operator/assignee or an admin, while the tow is `"3"` (Arrived). Stamps `loadedAt`; the tower must mark loaded before delivery, and the client starts measuring the loaded leg from that point. A later genuine breakdown bills the tracked loaded distance together with the traveled deadhead, while a normal re-match keeps the prior partial audit-only.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "loaded": true } }
+```
+
+---
+
+### `POST /dispatch/tow/received` **(Auth, rider)**
+
+Confirm receipt after the assigned tower marks a TOW delivered. Rider only, while the TOW is `"4"` (Resolved) with `deliveredAt` set. Stamps `receivedAt`, writes a system event, and pushes the operator. Repeated calls are idempotent.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "received": true } }
 ```
 
 ---
@@ -1420,7 +1541,7 @@ Unified in/out record feed for the Records surface: the caller's own tickets (`d
 ```
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "tick1", "direction": "out", "otherParty": {"id": "shop9", "name": "Fix Shop", "kind": "SHOP", "label": "12 Le Loi", "openNow": true, "ratingAvg": 4.5, "ratingCount": 12}, "...": "..." }] }` — `direction` is `out` for the caller's own tickets, `in` for tickets addressed to them; `otherParty` names the counterparty (assigned shop or tower — `kind` mirrors the provider record, `TOW` for towers — or rider display name; `null` when unassigned or unnamed, including pending tows that only have a drop-off shop). Shop and tower parties carry `lat`/`lng` when the provider record holds them. Tickets with a registered destination additionally carry `destinationParty` in the same shape (shop only). Shop parties additionally carry `label`, `openNow`, `ratingAvg`, and `ratingCount` when the provider record holds them (computed fresh at feed time); rider parties carry names; rider parties additionally carry
-`ratingAvg`/`ratingCount` when the rider record holds them. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, so pending and declined walk-ins already name their shop; the tow drop-off shop is never the counterparty and arrives only via `destinationParty`. Live tickets (`2`/`3`/`4`/`6`/`7`/`9`) additionally carry the counterparty `phone` — the rider's number on inbound rows, the operator's on shop rows — omitted on pending, cancelled, and declined tickets and whenever no number is registered.
+`ratingAvg`/`ratingCount` when the rider record holds them. Display names only. Outbound rows resolve the shop through `assignedShopId`, then the addressed `providerId`, so pending and declined walk-ins already name their shop; the tow drop-off shop is never the counterparty and arrives only via `destinationParty`. Live tickets (`2`/`3`/`4`/`6`/`7`/`9`) additionally carry the counterparty `phone` — the rider's number on inbound rows, the operator's on shop rows — omitted on pending, cancelled, and declined tickets and whenever no number is registered. A provider row for a previous assignment carries `formerAssignment: true`, `formerAssignmentAt`, `formerAssignmentKind` (`TOW` or `MOBILE_SHOP`), and `formerAssignmentReason` (`TOWER_CANCEL` or `RIDER_DECLINED_FIX`) so the client can distinguish a tower cancellation from a declined mobile-fix quote.
 
 ---
 
@@ -1543,22 +1664,38 @@ Ratings filed on one ticket (either direction), so the reply box can bind to the
 
 ## Payments
 
-Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the payee confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits and the refund policy come from `platform_config/global`. Rider charges are itemized per bill: a TOW journey is one bill whose tow item (fare + waiting fee) sits beside the repair quote on its linked drop-off walk-in, and each item is paid by its own charge to its own payee.
+Two rails (full lifecycle in [`PAYMENTS.md`](./PAYMENTS.md)). Charges are created `PENDING`, SePay IPNs move them to `HELD`, the payee confirms cash to `CONFIRMED`, and refunds settle to `REFUNDED`/`PARTIAL`. An unfixable close cancels pending charges (`CANCELLED`). Commission splits and the refund policy come from `platform_config/global`. Rider charges are itemized per bill: a TOW journey is one bill whose tow item (fare + waiting fee) sits beside the repair quote on its linked drop-off walk-in; an SOS that continues into a TOW keeps the SOS call-out and the continuation TOW on the same bill. Each item is paid by its own charge to its own payee.
 
 One active charge per ticket is enforced by `payment_guards/{ticketId}` inside a Firestore transaction. `POST /payments/create` and `POST /payments/confirm-cash` are additionally throttled per `uid + ticketId` (20 attempts/minute by default, `PAYMENT_WRITE_LIMIT_PER_MIN`); `429` carries a stable payment error message. The write limiter is separate from the per-IP limiter mounted in `index.ts`.
 
 ### `POST /payments/create` **(Auth, rider)**
 
-Create a charge for the ticket's payable amount. A TOW bills `towFare.final` (or `towFare.estimate` before settlement) plus `towFare.waitingFee`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`; an SOS bills call-out + travel + fix (`finalAmount`) once resolved, and **call-out only** when unfixable (or nothing when the call-out was waived). Refused when the ticket is cancelled or declined, when a non-SOS ticket is unfixable, or when the method is disabled in platform config (`400` "Payment method is disabled"). Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`) (`400` "Ticket has no payee yet" when none).
+Create a charge for the ticket's payable amount. A TOW bills `towFare.final` (or `towFare.estimate` before settlement) plus `towFare.waitingFee` and any payable `towFeeHistory`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`; an SOS bills call-out + travel + fix (`finalAmount`) at `"9"`/`"7"`/`"4"` plus `mobileFeeHistory`, and **call-out only** when unfixable (or nothing when the call-out was waived). A rider-cancelled TOW bills its traveled partial (and genuine-breakdown history); a rider-cancelled SOS bills call-out + travel plus `mobileFeeHistory`. A normal re-match partial stays audit-only. Refused for a cancelled/declined WALK_IN/MECHANIC, when a non-SOS ticket is unfixable, or when the method is disabled in platform config (`400` "Payment method is disabled"). Status `PENDING`, commission split snapshotted, and the payee resolved to the first shop carrying an operator (`assignedShopId` → `providerId` → `destinationShopId`) (`400` "Ticket has no payee yet" when none).
 
-The create is idempotent per ticket. A retry with the **same** method returns the existing `PENDING`/`HELD`/`CONFIRMED`/`PARTIAL` charge with `reused: true` and HTTP `201`; a different method returns `409` "Ticket already has an active payment". New charges get `201` and `reused: false`. `payment_guards/{ticketId}` backs this check transactionally, and is cleared when a charge is fully refunded or cancelled. SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
+The create is idempotent per ticket. A retry with the **same** method returns the existing `PENDING`/`HELD`/`CONFIRMED`/`PARTIAL` charge with `reused: true` and HTTP `201`. A pending SePay charge can switch to cash: it is cancelled through SePay's Cancel Order API first, and the switch is refused if SePay reports it captured. Other method changes while a charge is active return `409` "Ticket already has an active payment". A `HELD`/`CONFIRMED`/`PARTIAL` charge cannot be switched without a refund. For `SEPAY`, a reused `PENDING` charge also gets a freshly signed checkout bridge URL, so reopening an unpaid QR does not create a duplicate payment. New charges get `201` and `reused: false`. `payment_guards/{ticketId}` backs this check transactionally, and is cleared when a charge is fully refunded or cancelled. SEPAY charges also return a signed `checkout` payload (`action`, `method: "POST"`, `fields`, `qrUrl`).
 
-**Request:**
+**Request (ticket charge):**
 ```json
 { "ticketId": "tick1", "method": "SEPAY" }
 ```
 
+**Request (VIP subscription):**
+```json
+{ "planId": "MONTHLY", "method": "SEPAY" }
+```
+
+Send exactly one of `ticketId` or `planId`. Subscription charges are created against a synthetic `SUB-{uid}-{planId}` guard, use the server-side plan amount, and are only available through SePay. A reused `PENDING` subscription charge returns a freshly signed checkout URL; a `HELD`/`CONFIRMED` one returns `reused: true` without a checkout so the client can refresh `/users/me`. The SePay IPN activates or extends `users/{uid}.subscription` from the plan duration, then clears the payment guard. Subscription charges are excluded from payout settlement and the ticket ledger audit.
+
 **Response `201`:** `{ "statusCode": 201, "status": "SUCCESS", "message": "Payment created", "data": { "id": "pay1", "status": "PENDING", "reused": false, "...": "..." } }`.
+
+### `POST /payments/cancel` **(Auth, rider)**
+
+Cancel the ticket's active `PENDING` charge before payment is captured. Used by the SePay hosted page's "Cancel transaction" action and by the mobile back/cancel flow. A pending SePay charge is cancelled through SePay's Cancel Order API using the charge's `qrRef`; a gateway `404` or an already-cancelled order is treated as success. If SePay reports the order captured, the local charge is left intact and the request is refused. On success the charge becomes `CANCELLED`, the ticket checkout fields are cleared, and `payment_guards/{ticketId}` is removed so a fresh charge can be created. Returns `{ "cancelled": true, "method": "SEPAY" }`; returns `{ "cancelled": false, "method": null }` when there is no active charge.
+
+**Request:**
+```json
+{ "ticketId": "tick1" }
+```
 
 ### `POST /payments/ipn` (SePay only)
 
@@ -1602,7 +1739,7 @@ The caller's payout history and running totals. `batches` are settled payout bat
 
 ### `POST /bills/all` **(Auth)**
 
-The caller's rider bills, newest journey first (default 20, max 50). A bill is the TOW ticket plus the walk-in tickets linked to it (`linkedTicketIds`); a standalone walk-in/mechanic ticket is its own bill, a walk-in linked to a tow never appears twice, and SOS tickets are excluded from this feed (a direct bill lookup by ticket id still returns the SOS item). Each row returns `billId` (the journey ticket), `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), `viewer` (`RIDER`), `canPay`, and itemized `items` — `kind` (`TOW_FARE`/`REPAIR`), `ticketId`, `amount`, `waitingFee`, item `status` (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`), payee, and the latest payment snapshot when present: `method`, `status`, `commissionRate`, `commissionAmount`, `payoutAmount`, `payoutRef`, `payoutAt`, `payoutStatus` (`NONE`/`PENDING`/`PAID`), and `canConfirmCash`. `due` counts unpaid and pending items; settled, refunded, and void items are excluded.
+The caller's rider bills, newest journey first (default 20, max 50). A bill is the journey root plus every linked child (`linkedTicketIds`): a TOW plus its drop-off walk-in/mechanic, or an SOS plus its continuation SOS/TOW and their linked repair tickets. A standalone walk-in/mechanic is its own bill; linked tickets never appear twice. Each item keeps its own payee and charge. Each row returns `billId` (the journey ticket), `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), `viewer` (`RIDER`), `canPay`, and itemized `items` — `kind` (`TOW_FARE`/`REPAIR`), `ticketId`, `amount`, `waitingFee`, `items` (the shop's `[{name, qty, unitPrice, amount}]` invoice/quote lines), `ratingTargetId` (the assigned/destination provider used by the rating sheet), item `status` (`UNPAID`/`PENDING`/`PAID`/`REFUNDED`/`PARTIAL`/`VOID`), payee, and the latest payment snapshot when present: `method`, `status`, `commissionRate`, `commissionAmount`, `payoutAmount`, `payoutRef`, `payoutAt`, `payoutStatus` (`NONE`/`PENDING`/`PAID`), and `canConfirmCash`. `due` counts unpaid and pending items; settled, refunded, and void items are excluded.
 
 **Request:**
 ```json
@@ -1686,8 +1823,17 @@ Read (`POST`) / patch (`PUT`) `platform_config/global`; updates write only provi
 
 **Request:**
 ```json
-{ "waitingCapMin": 60, "paymentMethodsEnabled": ["CASH", "SEPAY"] }
+{
+  "waitingCapMin": 60,
+  "paymentMethodsEnabled": ["CASH", "SEPAY"],
+  "providerPricing": {
+    "TOW": {"baseMin": 100000, "baseMax": 300000, "perKmMin": 8000, "perKmMax": 15000},
+    "MOBILE_SHOP": {"callOutMin": 0, "callOutMax": 100000, "travelPerKmMin": 3000, "travelPerKmMax": 10000}
+  }
+}
 ```
+
+`providerPricing` is validated as ranges (`min ≤ max`, non-negative) and is read live by provider create/update.
 
 ### `POST /admin/payouts` **(Admin, BE-only, legacy)**
 
@@ -1806,7 +1952,7 @@ Create a linked continuation SOS after an unfixable visit. The previous mobile s
 
 ### `POST /dispatch/walk-in/return-tow` **(Auth, rider)**
 
-The rider accepts or declines the return-tow offer created when a WALK_IN reaches READY. Accepting creates a linked TOW from the shop to the rider's current location.
+The rider accepts or declines the return-tow offer created when a WALK_IN reaches READY or UNFIXABLE. Accepting creates a linked TOW with `towKind: "RETURN"` from the shop to the rider's current location, using the supplied `destinationPoint` label when present. A CASH repair charge must be `CONFIRMED` first (`400` otherwise). Tickets that predate the offer are answered lazily: when `returnTowOffer` is missing, the endpoint records the pending offer from the rider's answer instead of refusing. Cancelling the return tow before tower arrival reopens the parent offer.
 
 ### `POST /chat/open` **(Auth)**
 

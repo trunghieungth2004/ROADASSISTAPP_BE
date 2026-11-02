@@ -37,6 +37,10 @@ interface Payment {
   payoutAt: string | null;
   payoutBy: string | null;
   payoutBatchId: string | null;
+  purpose?: string | null;
+  subscriptionUid?: string | null;
+  subscriptionPlanId?: string | null;
+  subscriptionActivatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   [key: string]: unknown;
@@ -64,6 +68,10 @@ type CreatePaymentInput = {
   confirmedBy?: string | null;
   confirmedAt?: string | null;
   receiptUrl?: string | null;
+  purpose?: string | null;
+  subscriptionUid?: string | null;
+  subscriptionPlanId?: string | null;
+  subscriptionActivatedAt?: string | null;
 };
 
 const buildDoc = (id: string, data: CreatePaymentInput): Payment => {
@@ -92,6 +100,16 @@ const buildDoc = (id: string, data: CreatePaymentInput): Payment => {
     payoutAt: null,
     payoutBy: null,
     payoutBatchId: null,
+    ...(data.purpose !== undefined ? {purpose: data.purpose} : {}),
+    ...(data.subscriptionUid !== undefined ?
+      {subscriptionUid: data.subscriptionUid} :
+      {}),
+    ...(data.subscriptionPlanId !== undefined ?
+      {subscriptionPlanId: data.subscriptionPlanId} :
+      {}),
+    ...(data.subscriptionActivatedAt !== undefined ?
+      {subscriptionActivatedAt: data.subscriptionActivatedAt} :
+      {}),
     createdAt: now,
     updatedAt: now,
   };

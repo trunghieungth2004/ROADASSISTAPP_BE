@@ -172,6 +172,7 @@ export const getDispatch = async (id: string, userId: string) => {
         delete out.towCancelHistory;
         delete out.destinationDecline;
         delete out.chatHistory;
+        delete out.mobileFeeHistory;
       }
     }
   }

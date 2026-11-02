@@ -81,6 +81,19 @@ const validatePaymentConfig = (
   for (const key of ["bikeIncludedKm", "carIncludedKm"] as const) {
     if (!Number.isFinite(config[key]) || config[key] < 0) issues.push(key);
   }
+  const pricing = config.providerPricing;
+  for (const [name, range] of [
+    ["towBase", [pricing.TOW.baseMin, pricing.TOW.baseMax]],
+    ["towPerKm", [pricing.TOW.perKmMin, pricing.TOW.perKmMax]],
+    ["callOut", [pricing.MOBILE_SHOP.callOutMin,
+      pricing.MOBILE_SHOP.callOutMax]],
+    ["travelPerKm", [pricing.MOBILE_SHOP.travelPerKmMin,
+      pricing.MOBILE_SHOP.travelPerKmMax]],
+  ] as Array<[string, number[]]>) {
+    if (range[0] < 0 || range[1] < range[0]) {
+      issues.push(`providerPricing.${name}`);
+    }
+  }
   const start = config.nightWindow.start;
   const end = config.nightWindow.end;
   if (!Number.isInteger(start) || start < 0 || start > 23) {

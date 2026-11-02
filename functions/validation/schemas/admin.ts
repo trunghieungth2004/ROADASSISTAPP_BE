@@ -40,6 +40,20 @@ export const adminSchemas = {
     waitingCapMin: Joi.number().integer().min(0).max(1440).optional(),
     detourTolerancePct: Joi.number().min(0).max(100).optional(),
     deadheadPayable: Joi.boolean().optional(),
+    providerPricing: Joi.object({
+      TOW: Joi.object({
+        baseMin: Joi.number().integer().min(0).max(999999999).optional(),
+        baseMax: Joi.number().integer().min(0).max(999999999).optional(),
+        perKmMin: Joi.number().integer().min(0).max(999999).optional(),
+        perKmMax: Joi.number().integer().min(0).max(999999).optional(),
+      }).optional(),
+      MOBILE_SHOP: Joi.object({
+        callOutMin: Joi.number().integer().min(0).max(999999999).optional(),
+        callOutMax: Joi.number().integer().min(0).max(999999999).optional(),
+        travelPerKmMin: Joi.number().integer().min(0).max(999999).optional(),
+        travelPerKmMax: Joi.number().integer().min(0).max(999999).optional(),
+      }).optional(),
+    }).optional(),
     paymentMethodsEnabled: Joi.array()
       .items(Joi.string().valid(...Object.values(PAYMENT_METHOD)))
       .optional(),

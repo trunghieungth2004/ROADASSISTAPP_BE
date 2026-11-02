@@ -287,12 +287,16 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `sortBy` | enum: `distance`, `rating` | opt (default `distance`) |
 | `ticketId` | string | opt (marks rows with `declined: true` for shops that already declined the ticket) |
 
-Provider `services` (display price list, `{name, price}` integer VND) ship
-on `near`/`search` rows. Shops the ticket declined carry `declined: true` on
-the row so the picker can mark them.
+Provider `services` (catalog rows `{code, name, displayPrice, quoteRequired}`)
+ship on `near`/`search` rows, together with the provider's `towBaseFee`/
+`towPerKmFee` or `callOutFee`/`travelPerKmFee` when set. Shops the ticket
+declined carry `declined: true` on the row so the picker can mark them.
 
 ### `POST /providers/mine` — `myProviders`
 No fields. Returns the caller's own records with statuses, denial notes, and suspension state.
+
+### `POST /providers/pricing` — `getProviderPricingLimits`
+No fields. Returns the live `providerPricing` bounds (`TOW` and `MOBILE_SHOP` minimums/maximums) used by provider settings and enforced on create/update.
 
 ### `POST /providers/pending` — `listPending` (admin)
 No fields. Pending providers with applicant name, email, and `openReportCount`.
@@ -343,12 +347,14 @@ No fields. Open reports oldest-first with provider context.
 | `lat` | lat | req |
 | `lng` | lng | req |
 
-Stored provider fields that are not client-writable (ship on `near`/`search`
-rows automatically because rows spread the stored doc):
+Stored provider fields (ship on `near`/`search` rows automatically because
+rows spread the stored doc):
 
 | Field | Shape | Written by |
 |-------|-------|------------|
-| `services` | array of `{name: string, price: integer VND}` — display price list | `POST /providers` (create, `SHOP`) and `PUT /providers` (update) |
+| `services` | array of `{code, name, displayPrice, quoteRequired}` — itemized repair catalog | `POST /providers` (create, `SHOP`) and `PUT /providers` (update) |
+| `towBaseFee` / `towPerKmFee` | integer VND — TOW provider car card; bounded 100k–300k / 8k–15k | `POST /providers` / `PUT /providers` (`TOW`) |
+| `callOutFee` / `travelPerKmFee` | integer VND — mobile-shop SOS card; bounded 0–100k / 3k–10k | `POST /providers` / `PUT /providers` (`MOBILE_SHOP`) |
 | `ratingAvg` / `ratingCount` | denormalized rating aggregate | rating writes |
 | `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy` | suspension state | `POST /providers/suspend` / `/restore` (admin) |
 
@@ -402,20 +408,56 @@ rows automatically because rows spread the stored doc):
 |-------|------|---|
 | `ticketId` | string | req |
 | `workType` | string (allows `""`/`null`) | opt |
-| `quotedAmount` | integer ≥ 0 (VND) | opt (one-shot; refused once `shopQuotedAmount` is on file) |
-| `finalAmount` | integer ≥ 0 (VND) | opt (one-shot; refused once `finalAmount` is on file) |
+| `quotedAmount` | integer ≥ 0 (VND) | refused (`400`) — prices go through the quote endpoint |
+| `finalAmount` | integer ≥ 0 (VND) | refused (`400`) |
 | `invoiceRef` | string (allows `""`/`null`) | opt |
+| `items` | array of `{name, qty, unitPrice}` | opt; invoice total must match the approved quote |
 
 ### `POST /dispatch/quote` — `sendQuote`
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
-| `quotedAmount` | integer ≥ 0 (VND) | opt (one of the two required) |
-| `finalAmount` | integer ≥ 0 (VND) | opt (binding final when an estimate is on file) |
+| `quotedAmount` | integer ≥ 0 (VND) | opt; required unless `items` computes the total; amendable while status `"9"` |
+| `finalAmount` | integer ≥ 0 (VND) | refused (`400`) |
 | `workType` | string (max 280) | opt |
 | `faultPhotos` | string[] Storage paths (0–5) | opt |
+| `items` | array of `{name, qty, unitPrice}` | opt; total must match `quotedAmount` |
 
 ### `POST /dispatch/quote/approve` — `approveQuote`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+### `POST /dispatch/quote/decline` — `declineQuote`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `reason` | string (max 280, allows `""`/`null`) | opt |
+
+### `POST /dispatch/mobile-shop/fix` — `setMobileShopFix`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `fixAmount` | integer ≥ 0 (VND) | req |
+| `items` | array of `{name, qty, unitPrice}` | opt; total must match `fixAmount` |
+
+### `POST /dispatch/mobile-shop/fix/approve` — `approveMobileFix`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+### `POST /dispatch/mobile-shop/fix/decline` — `declineMobileFix`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `reason` | string (max 280, allows `""`/`null`) | opt |
+
+### `POST /dispatch/tow/loaded` — `markTowLoaded`
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+
+### `POST /dispatch/tow/received` — `confirmTowReceived`
 | Field | Type | |
 |-------|------|---|
 | `ticketId` | string | req |
@@ -499,16 +541,25 @@ flows:
 | `quoteRequests` / `quotes` | reserved shapes for a future multi-shop broadcast — no writer yet | — |
 | `suggestedShopId` | string / `null` — the rider's shop pick | `POST /dispatch/select`; cleared when that shop is declined via estimate decline |
 | `declinedShopIds` | string[] — shops that declined and stay declined for the life of the ticket | estimate decline / destination decline |
-| `pickupHistory` | array of `{lat, lng, at, reason}` — pickup-point corrections (`created`, `tower-cancel`, `REMATCH`) | ticket filing, legacy tower cancel, re-match |
+| `pickupHistory` | array of `{lat, lng, at, reason}` — pickup-point corrections (`created`, `tower-cancel`, `REMATCH`, `tower-breakdown`) | ticket filing, legacy tower cancel, re-match |
+| `assignedAt` | ISO timestamp — start of the current provider assignment; scopes `jobTrack` for cancel distance | accept / re-match |
+| `loadedAt` | ISO timestamp — vehicle loaded at pickup; scopes the loaded leg for a genuine-breakdown partial | `POST /dispatch/tow/loaded` |
+| `towKind` | `"NORMAL"` / `"RETURN"` — distinguishes a return tow from the usual tow | return-tow acceptance |
+| `returnTowOffer` | `{status, shopId, by, at}` — rider-facing return-tow offer | WALK_IN/MECHANIC `READY` or `UNFIXABLE` |
+| `deliveredAt` / `deliveredBy` | ISO timestamp / uid — tower marked delivery and closed the tow | TOW resolve by the tower |
+| `receivedAt` | ISO timestamp — rider confirmed receipt | `POST /dispatch/tow/received` |
+| `jobTrack` | array of `{lat, lng, at, shopId}` — provider location trail used for precise traveled distance and GPS haul | provider location pings |
 | `needsNewDestination` | boolean — the rider must pick a new drop-off | destination decline sets `true`; retarget clears it |
 | `destinationDecline` | `{shopId, reasonCode, by, at}` — rider-facing reason for the last drop-off decline; cleared when the rider re-picks | destination decline / destination update |
-| `formerAssignedShopIds` | string[] — towers that cancelled and re-queued this TOW; keeps a read-only history row for that tower | tower cancel |
+| `formerAssignedShopIds` | string[] — towers that cancelled and re-queued a TOW, or mobile shops that were declined; keeps a read-only history row for that provider | tower cancel / mobile fix decline |
 | `towCancelHistory` | array of `{shopId, by, at, reasonCode}` — tower cancellation reasons; returned to the rider and the former tower, stripped for the next tower | tower cancel |
 | `towerSearch` | `"ACTIVE"` / `"PAUSED"` — tow broadcasting state | re-match / retarget |
 | `waiting` | `{active, startedAt, endedAt, fee, withinRadius, accruedAt}` — accrual window + fee (integer VND) | waiting clock (`startWaiting`/`accrue`/`stopWaiting`) |
-| `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, vehicleClass?, waitingFee?}` — stamped at accept, partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve | accept / re-match / waiting / resolve |
-| `towActual` | `{quotedKm, actualKm, cappedKm}` — quoted vs GPS-measured vs ceiling-capped haul | re-match / resolve settle |
-| `towLegs` | array of `{toShopId, km, actual, at}` — traveled legs; `actual` only when the tower fix was fresh | destination decline / re-match freeze |
+| `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, vehicleClass?, baseFee?, perKmFee?, waitingFee?}` — stamped at accept from the provider card when set (platform fallback), partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve; a genuine breakdown clears the partial and leaves the remaining ceiling | accept / re-match / breakdown / waiting / resolve |
+| `towActual` | `{quotedKm, actualKm, cappedKm, loadedTraveledKm?, breakdown?}` — quoted vs GPS-measured vs ceiling-capped haul; the breakdown marker and tracked loaded distance drive the payable partial | re-match / breakdown / resolve settle |
+| `towFeeHistory` | array of `{shopId, shopName, amount, deadheadKm, loadedKm, at, reasonCode}` — genuine-breakdown partials paid to the outgoing tower; added to the journey bill | tower breakdown re-match |
+| `towFeeCap` | integer VND / `null` — original ceiling preserved across a breakdown; the replacement tower's estimate is capped at `towFeeCap − sum(towFeeHistory.amount)` | tower breakdown re-match |
+| `towLegs` | array of `{toShopId, km, traveledKm, actual, at}` — frozen legs; `km` is the remaining distance at freeze, `traveledKm` is the tracked distance traveled on the leg; `actual` only when the tower fix was fresh | destination decline / re-match / cancel freeze |
 | `unfixable` | `{reason, photoUrls, by, at}` — on-site verdict; ticket closes `"15"`; SOS call-out-only, shop tickets refund in full, no `final` | `POST /dispatch/unfixable` |
 | `sosAttempt` | 1-based continuation attempt; missing means `1` | continuation |
 | `continuedFromTicketId` | parent SOS for a continuation | continuation |
@@ -516,14 +567,22 @@ flows:
 | `excludedShopIds` / `excludedOperatorUids` | shops/operators that must not receive a continuation SOS | continuation |
 | `sourceTicketId` | SOS that spawned a TOW | mobile tow |
 | `mobileTowOffer` | `{status, shopId, destinationShopId, mode: DIRECT\|NETWORK, towProviderId, by, at, expiresAt}` — 15-minute offer; `DIRECT` assigns the same-vehicle TOW, `NETWORK` creates a pending broadcast TOW | mobile tow |
-| `chatVersion` | number — current assignment chat room version; tower cancel increments it | tower cancel |
+| `chatVersion` | number — current assignment chat room version; tower cancel or a declined mobile fix increments it | tower cancel / mobile fix decline |
 | `chatHistory` | array of `{version, roomId, shopId, shopName, at}` — archived chat rooms; returned to the rider/former tower, stripped for the next tower | tower cancel |
 | `mobileTowAvailable` / `mobileTowMode` / `mobileTowState` | feed/read flags: `DIRECT` or `NETWORK` availability, with `TOW_OFF_DUTY`, `TOW_BUSY`, `NO_TOW`, or `NONE_NEARBY` | unfixable SOS feed |
 | `mobileCallOutWaived` | true when the shop was within 1 km at accept; call-out is 0 | SOS accept |
+| `mobileFeeHistory` | array of `{shopId, shopName, callOutFee, travelFee, waived, fixAmount, items, declinedAt, reason}` — prior mobile-shop visits kept payable when a fix quote is declined; declined fix amount/items are audit-only | mobile fix decline |
+| `mobileFixApprovedAt` / `mobileFixDeclinedAt` / `mobileFixDeclineReason` | rider decision stamps and optional reason for the current SOS fix quote | `POST /dispatch/mobile-shop/fix/approve` / `/decline` |
 | `unfixGraceAt` | 2-minute grace marker after an eligible unfixable close | unfixable |
-| `shopQuotedAmount` / `finalAmount` / `workType` / `faultPhotos` / `invoiceRef` / `quotedBy` / `quotedAt` | one-shot quote + work-order fields (fault photos are Storage paths) | `sendQuote` / work orders |
+| `shopQuotedAmount` / `finalAmount` / `workType` / `faultPhotos` / `invoiceRef` / `quotedBy` / `quotedAt` | approved quote + work-order fields (fault photos are Storage paths) | `sendQuote` / work orders |
+| `quoteItems` / `invoiceItems` | itemized `[{name, qty, unitPrice, amount}]` lists; quote total must equal `shopQuotedAmount`; invoice total must match the approved quote | `sendQuote` / `updateWorkOrder` |
+| `preQuoteStatus` | status captured when a fresh shop quote is sent; restored when the rider declines | `sendQuote` / `declineQuote` |
+| `quoteVersion` / `quoteHistory` | quote version and prior versions `[{version, amount, items, at, by}]`; amendments are allowed only while status `"9"` | `sendQuote` amendment |
+| `quoteDeclinedAt` / `quoteDeclineReason` | rider's quote-decline stamp and optional reason; the quote fields clear and the ticket returns to `"3"` | `POST /dispatch/quote/decline` |
+| `invoiceAmount` / `invoiceApproval` / `invoiceVersion` / `invoiceApprovedAt` | revised invoice total and rider approval state (`PENDING`/`APPROVED`); a pending invoice blocks resolve | `updateWorkOrder` / `POST /dispatch/invoice/approve` |
 | `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | tow drop-off advisory estimate + 24-hour TTL | `sendEstimate` / `approveEstimate` |
 | `paymentArmed` / `quoteApprovedAt` | work-start gate stamp | `approveQuote` |
+| `fulfilledByShopId` | provider id stamped when the ticket reaches `READY` (including mobile-fix approval); gates destination-shop ratings | `PUT /dispatch/status` / mobile-fix approve |
 | `paymentId` / `paymentMethod` / `paymentStatus` / `checkoutUrl` | latest charge link, stamped on every payment transition | `POST /payments/*` |
 
 ## Payments
@@ -540,9 +599,11 @@ come from `platform_config/global`.
 | `method` | enum: `CASH`, `SEPAY` | req |
 
 Creates a `PENDING` charge for the ticket's payable amount — a TOW bills
-`towFare.final` (or `towFare.estimate`) plus `towFare.waitingFee`;
-WALK_IN/MECHANIC bill `shopQuotedAmount`, else the legacy `finalAmount`; SOS
-has none (`400` when none) — stamped with the commission split
+`towFare.final` (or `towFare.estimate`) plus `towFeeHistory` plus
+`towFare.waitingFee`; WALK_IN/MECHANIC bill `shopQuotedAmount`, else the
+legacy `finalAmount`; SOS bills call-out + travel + fix plus
+`mobileFeeHistory`, or call-out only when unfixable (`400` when none) —
+stamped with the commission split
 (`commissionRate`/`commissionAmount`/`payoutAmount`). Idempotent per ticket:
 the same method reuses the active charge (`201`, `reused: true`), a different
 method is `409` "Ticket already has an active payment", and the
@@ -819,6 +880,7 @@ lands). Single doc id `global` holds the whole card — reads/writes address
 | `waitingCapMin` | integer | 60 | accrual ceiling |
 | `detourTolerancePct` | number | 15 | GPS-vs-quoted detour allowance |
 | `deadheadPayable` | boolean | true | pay empty approach distance |
+| `providerPricing` | `{TOW:{baseMin,baseMax,perKmMin,perKmMax}, MOBILE_SHOP:{callOutMin,callOutMax,travelPerKmMin,travelPerKmMax}}` | 100k–300k / 8k–15k; 0–100k / 3k–10k | live provider price bounds |
 | `paymentMethodsEnabled` | array of `CASH`, `SEPAY` | both | enabled rails |
 | `refundPolicy` | `FULL`, `PARTIAL`, `NONE` | `FULL` | refund stance |
 
@@ -837,7 +899,7 @@ Mark a `HELD`/`CONFIRMED`/`PARTIAL` charge as paid out, stamping `payoutRef`,
 ## Ratings
 
 ### `POST /ratings` — `submitRating`
-Rating a `destinationShopId` requires `fulfilledByShopId` (stamped on `READY`).
+Rating a `destinationShopId` requires `fulfilledByShopId` (stamped on `READY` or mobile-fix approval).
 
 ### `POST /ratings/reply` — `replyRating`
 | Field | Type | |

@@ -194,6 +194,121 @@ describe("billService.getBill", () => {
     expect(bill.canPay).toBe(true);
   });
 
+  it("adds a continuation TOW to the SOS journey", async () => {
+    routeTickets(
+      ticket("sos1", {
+        ticketType: "SOS",
+        status: STATUS_DISPATCH.RESOLVED,
+        assignedShopId: "mobile1",
+        mobileCallOutFee: 50000,
+        finalAmount: 100000,
+        linkedTicketIds: ["tow2"],
+      }),
+      towTicket({
+        id: "tow2",
+        sourceTicketId: "sos1",
+        linkedTicketIds: ["sos1"],
+        towFare: {final: 200000, waitingFee: 0},
+      }),
+    );
+    routeProviders(
+      {id: "mobile1", name: "Mobile Fix", operatorUid: "mobileop"},
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+    );
+    const bill = await getBill({userId: "rider1", ticketId: "sos1"});
+    expect(bill.billId).toBe("sos1");
+    expect(bill.items.map((item) => item.ticketType)).toEqual(["SOS", "TOW"]);
+    expect(bill.total).toBe(350000);
+  });
+
+  it("adds a return tow to the SOS journey", async () => {
+    routeTickets(
+      ticket("sos1", {
+        ticketType: "SOS",
+        status: STATUS_DISPATCH.RESOLVED,
+        assignedShopId: "mobile1",
+        mobileCallOutFee: 50000,
+        finalAmount: 100000,
+        linkedTicketIds: ["tow2"],
+      }),
+      towTicket({
+        id: "tow2",
+        sourceTicketId: "sos1",
+        linkedTicketIds: ["sos1", "walk1"],
+        towFare: {final: 200000, waitingFee: 0},
+      }),
+      walkTicket({
+        id: "walk1",
+        status: STATUS_DISPATCH.READY,
+        linkedTicketIds: ["tow2", "tow3"],
+      }),
+      towTicket({
+        id: "tow3",
+        sourceTicketId: "walk1",
+        towKind: "RETURN",
+        linkedTicketIds: ["walk1"],
+        towFare: {final: 120000, waitingFee: 0},
+      }),
+    );
+    routeProviders(
+      {id: "mobile1", name: "Mobile Fix", operatorUid: "mobileop"},
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    const bill = await getBill({userId: "rider1", ticketId: "tow3"});
+    expect(bill.billId).toBe("sos1");
+    expect(bill.items.map((item) => item.ticketId)).toEqual([
+      "sos1",
+      "tow2",
+      "walk1",
+      "tow3",
+    ]);
+    expect(bill.total).toBe(620000);
+  });
+
+  it("groups a standalone walk-in with its return tow", async () => {
+    routeTickets(
+      walkTicket({id: "walk1", linkedTicketIds: ["tow3"]}),
+      towTicket({
+        id: "tow3",
+        sourceTicketId: "walk1",
+        towKind: "RETURN",
+        linkedTicketIds: ["walk1"],
+        towFare: {final: 120000, waitingFee: 0},
+      }),
+    );
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    const bill = await getBill({userId: "rider1", ticketId: "walk1"});
+    expect(bill.billId).toBe("walk1");
+    expect(bill.items.map((item) => item.ticketId)).toEqual([
+      "walk1",
+      "tow3",
+    ]);
+    expect(bill.total).toBe(270000);
+  });
+
+  it("resolves an old return tow without a source stamp", async () => {
+    routeTickets(
+      walkTicket({id: "walk1", linkedTicketIds: ["tow3"]}),
+      towTicket({
+        id: "tow3",
+        towKind: "RETURN",
+        linkedTicketIds: ["walk1"],
+        towFare: {final: 120000, waitingFee: 0},
+      }),
+    );
+    routeProviders(
+      {id: "tower1", name: "Tow Co", operatorUid: "towerop1"},
+      {id: "shop1", name: "Fix Shop", operatorUid: "shopop1"},
+    );
+    const bill = await getBill({userId: "rider1", ticketId: "tow3"});
+    expect(bill.billId).toBe("walk1");
+    expect(bill.items).toHaveLength(2);
+  });
+
   it("reports a partially paid journey", async () => {
     routeTickets(
       towTicket({
@@ -366,6 +481,24 @@ describe("billService.listBills", () => {
     expect(bills.map((b) => b.billId)).toEqual(["tow1", "walk2"]);
     expect(bills[0].items).toHaveLength(2);
     expect(bills[1].items).toHaveLength(1);
+  });
+
+  it("lists a walk-in and its return tow once", async () => {
+    const walk = walkTicket({id: "walk1", linkedTicketIds: ["tow3"]});
+    const back = towTicket({
+      id: "tow3",
+      sourceTicketId: "walk1",
+      towKind: "RETURN",
+      linkedTicketIds: ["walk1"],
+      towFare: {final: 120000, waitingFee: 0},
+    });
+    routeTickets(walk, back);
+    jest.mocked(dispatchRepository.findByUserId)
+      .mockResolvedValue([back, walk]);
+    const bills = await listBills({userId: "rider1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0].billId).toBe("walk1");
+    expect(bills[0].items).toHaveLength(2);
   });
 
   it("lists an unfixable SOS call-out bill", async () => {

@@ -28,6 +28,15 @@ export default (
     paymentController.createPayment,
   );
   app.post(
+    "/payments/cancel",
+    writeLimited,
+    requireAuth,
+    paymentWriteLimiter,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.cancelPayment}),
+    paymentController.cancelPayment,
+  );
+  app.post(
     "/payments/confirm-cash",
     writeLimited,
     requireAuth,

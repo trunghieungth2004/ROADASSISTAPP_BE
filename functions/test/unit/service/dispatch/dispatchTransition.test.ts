@@ -8,6 +8,7 @@ import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
 import * as fcmTokenRepository from "../../../../repository/fcmTokenRepository";
+import * as paymentRepository from "../../../../repository/paymentRepository";
 import {
   createDispatch,
   updateDispatchStatus,
@@ -69,6 +70,7 @@ describe("dispatchService.updateDispatchStatus", () => {
       status: "3",
       ticketType: "TOW",
       assignedShopId: "tow1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "op1",
@@ -169,7 +171,7 @@ describe("dispatchService.updateDispatchStatus", () => {
     expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
   });
 
-  it("allows rider arrival within 200 m of the helper", async () => {
+  it("allows tower arrival within 200 m of the pickup", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       userId: "rider1",
@@ -180,10 +182,15 @@ describe("dispatchService.updateDispatchStatus", () => {
       lng: 106.6,
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "rider1",
+      id: "op1",
       role: "2",
     } as never);
-    jest.mocked(providerRepository.findById).mockResolvedValue(null);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
     jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
       new Map([
         ["tow1", {
@@ -197,8 +204,70 @@ describe("dispatchService.updateDispatchStatus", () => {
       ]),
     );
     await expect(
-      updateDispatchStatus({id: "t1", status: "3", userId: "rider1"}),
+      updateDispatchStatus({id: "t1", status: "3", userId: "op1"}),
     ).resolves.toEqual({updated: 1});
+    expect(enqueueDispatchPush).toHaveBeenCalledWith(
+      "t1",
+      "-tow-arrived-rider",
+      expect.objectContaining({
+        audience: "rider",
+        title: "Tow arrived at pickup",
+      }),
+    );
+    expect(enqueueDispatchPush).not.toHaveBeenCalledWith("t1", "-status-3");
+  });
+
+  it("requires the tower to mark loaded before delivery", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      lat: 10.7,
+      lng: 106.6,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("rejects rider arrival and resolution on a tow", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "2",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      lat: 10.7,
+      lng: 106.6,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "3", userId: "rider1"}),
+    ).rejects.toMatchObject({statusCode: 403});
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "rider1"}),
+    ).rejects.toMatchObject({statusCode: 403});
   });
 
   it("allows rider arrival when the helper location is stale", async () => {
@@ -276,6 +345,33 @@ describe("dispatchService.updateDispatchStatus", () => {
     );
   });
 
+  it("requires confirmed cash before resolving a shop ticket", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "7",
+      ticketType: "WALK_IN",
+      assignedShopId: "shop1",
+      providerId: "shop1",
+      shopQuotedAmount: 150000,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "p1", method: "CASH", status: "PENDING"},
+    ] as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "rider1"}),
+    ).rejects.toMatchObject({statusCode: 400});
+  });
+
   it("clears ETA fields on resolve and cancel", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
@@ -283,18 +379,20 @@ describe("dispatchService.updateDispatchStatus", () => {
       status: "3",
       ticketType: "TOW",
       assignedShopId: "tow1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "rider1",
+      id: "op1",
       role: "2",
     } as never);
     jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "tow1",
       kind: "TOW",
       accepting: false,
+      operatorUid: "op1",
     } as never);
     await expect(
-      updateDispatchStatus({id: "t1", status: "4", userId: "rider1"}),
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
     ).resolves.toEqual({updated: 1});
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
@@ -305,6 +403,10 @@ describe("dispatchService.updateDispatchStatus", () => {
       userId: "rider1",
       status: "1",
       ticketType: "SOS",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "rider1",
+      role: "2",
     } as never);
     await expect(
       updateDispatchStatus({id: "t1", status: "5", userId: "rider1"}),

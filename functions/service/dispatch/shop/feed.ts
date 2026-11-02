@@ -165,9 +165,13 @@ export const feedTickets = async ({
       const assigned = typeof ticket.assignedShopId === "string" ?
         ticket.assignedShopId :
         "";
-      if (row.direction === "in" &&
-        former.some((id) => ownTowIds.has(id)) &&
-        !ownTowIds.has(assigned)) {
+      const formerTow = former.some((id) => ownTowIds.has(id));
+      const formerMobile = former.some((id) => ownMobileShopIds.has(id));
+      const assignedMine = ownShopIds.has(assigned) ||
+        ownTowIds.has(assigned) ||
+        ownMobileShopIds.has(assigned);
+      if (row.direction === "in" && (formerTow || formerMobile) &&
+        !assignedMine) {
         row.formerAssignment = true;
         const history = Array.isArray(ticket.towCancelHistory) ?
           ticket.towCancelHistory :
@@ -179,22 +183,47 @@ export const feedTickets = async ({
             String((b as {at?: unknown}).at ?? "").localeCompare(
               String((a as {at?: unknown}).at ?? ""),
             ))[0] as {at?: unknown} | undefined;
-        if (own && typeof own.at === "string") {
-          row.formerAssignmentAt = own.at;
+        const mobile = Array.isArray(ticket.mobileFeeHistory) ?
+          ticket.mobileFeeHistory
+            .filter((entry) => entry !== null &&
+              typeof entry === "object" &&
+              ownMobileShopIds.has(String(
+                (entry as {shopId?: unknown}).shopId,
+              )))
+            .sort((a, b) =>
+              String((b as {declinedAt?: unknown}).declinedAt ?? "")
+                .localeCompare(String(
+                  (a as {declinedAt?: unknown}).declinedAt ?? "",
+                )))[0] as {declinedAt?: unknown} | undefined :
+          undefined;
+        const ownAt = typeof own?.at === "string" ? own.at : null;
+        const mobileAt = typeof mobile?.declinedAt === "string" ?
+          mobile.declinedAt :
+          null;
+        const latestMobile = mobileAt !== null &&
+          (ownAt === null || mobileAt > ownAt);
+        const at = latestMobile ? mobileAt : ownAt;
+        if (at !== null) {
+          row.formerAssignmentAt = at;
+          row.formerAssignmentKind = latestMobile ? "MOBILE_SHOP" : "TOW";
+          row.formerAssignmentReason = latestMobile ?
+            "RIDER_DECLINED_FIX" :
+            "TOWER_CANCEL";
         }
       }
       if (row.direction === "in" && row.formerAssignment !== true) {
         delete row.towCancelHistory;
         delete row.destinationDecline;
         delete row.chatHistory;
+        delete row.mobileFeeHistory;
       }
-      const assignedMine =
+      const assignedToMe =
         (typeof ticket.assignedShopId === "string" &&
           (ownShopIds.has(ticket.assignedShopId) ||
             ownTowIds.has(ticket.assignedShopId) ||
             ownMobileShopIds.has(ticket.assignedShopId))) ||
         ticket.assignedUid === userId;
-      if (row.direction === "out" || assignedMine) {
+      if (row.direction === "out" || assignedToMe) {
         const summary = await linkedSummaryFor(ticket);
         if (summary !== null) row.linkedSummary = summary;
       }

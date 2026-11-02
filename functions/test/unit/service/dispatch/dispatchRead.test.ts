@@ -820,6 +820,54 @@ describe("dispatchService feedTickets", () => {
     ]);
   });
 
+  it("labels a declined mobile fix as a rider decline", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {id: "mobile1", kind: "MOBILE_SHOP", status: "ACTIVE"},
+    ] as never);
+    jest.mocked(dispatchRepository.findPendingForShop).mockResolvedValue([]);
+    jest.mocked(dispatchRepository.findRecentForShop).mockResolvedValue([
+      {
+        id: "sos1",
+        userId: "rider1",
+        ticketType: "SOS",
+        status: "1",
+        assignedShopId: null,
+        formerAssignedShopIds: ["mobile1"],
+        mobileFeeHistory: [{
+          shopId: "mobile1",
+          callOutFee: 50000,
+          travelFee: 10000,
+          declinedAt: "2026-01-02T00:00:00.000Z",
+        }],
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+    ] as never);
+    jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([[
+        "rider1",
+        {id: "rider1", displayName: "Rider One", role: "2"},
+      ]]),
+    );
+    const feed = await feedTickets({userId: "op1"}) as Array<{
+      id: string;
+      formerAssignment?: boolean;
+      formerAssignmentKind?: string;
+      formerAssignmentReason?: string;
+      formerAssignmentAt?: string;
+    }>;
+    expect(feed.find((row) => row.id === "sos1")).toMatchObject({
+      formerAssignment: true,
+      formerAssignmentKind: "MOBILE_SHOP",
+      formerAssignmentReason: "RIDER_DECLINED_FIX",
+      formerAssignmentAt: "2026-01-02T00:00:00.000Z",
+    });
+  });
+
   it("withholds rider photos from tow rows", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "op1",

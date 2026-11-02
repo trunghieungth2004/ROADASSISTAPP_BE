@@ -5,6 +5,7 @@ import {
   checkoutToken,
   verifyCheckoutToken,
   verifyIpnAuth,
+  cancelOrder,
 } from "../../../service/sepayService";
 
 const ENV = {
@@ -86,5 +87,71 @@ describe("sepayService auth and tokens", () => {
     expect(verifyCheckoutToken("pay1", token)).toBe(true);
     expect(verifyCheckoutToken("pay2", token)).toBe(false);
     expect(verifyCheckoutToken("pay1", token.slice(0, -1))).toBe(false);
+  });
+});
+
+describe("sepayService cancelOrder", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("calls the gateway cancel endpoint", async () => {
+    const mock = jest.fn(async () => ({
+      status: 200,
+      ok: true,
+      text: async () => "",
+    }));
+    global.fetch = mock as unknown as typeof fetch;
+    await expect(cancelOrder("INV-1")).resolves.toEqual({
+      ok: true,
+      missing: false,
+    });
+    expect(mock).toHaveBeenCalledWith(
+      "https://pgapi-sandbox.sepay.vn/v1/order/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({order_invoice_number: "INV-1"}),
+      }),
+    );
+  });
+
+  it("treats a missing gateway order as already gone", async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 404,
+      ok: false,
+      text: async () => "not found",
+    })) as unknown as typeof fetch;
+    await expect(cancelOrder("INV-2")).resolves.toEqual({
+      ok: true,
+      missing: true,
+    });
+  });
+
+  it("treats an already cancelled order as success", async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 400,
+      ok: false,
+      text: async () => "Đơn hàng đã được hủy",
+    })) as unknown as typeof fetch;
+    await expect(cancelOrder("INV-4")).resolves.toEqual({
+      ok: true,
+      missing: false,
+      alreadyCancelled: true,
+      message: "Đơn hàng đã được hủy",
+    });
+  });
+
+  it("reports a captured order instead of silently cancelling", async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 400,
+      ok: false,
+      text: async () => "order already captured",
+    })) as unknown as typeof fetch;
+    await expect(cancelOrder("INV-3")).resolves.toEqual({
+      ok: false,
+      missing: false,
+      message: "order already captured",
+    });
   });
 });

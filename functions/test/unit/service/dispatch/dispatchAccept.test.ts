@@ -147,10 +147,67 @@ describe("dispatchService.acceptDispatch", () => {
       expect.objectContaining({assignedKind: "TOW"}),
       "op1",
     );
+    expect(enqueueDispatchPush).toHaveBeenCalledTimes(1);
     expect(enqueueDispatchPush).toHaveBeenCalledWith(
       "t1",
       "-status-2-rider",
-      expect.objectContaining({audience: "rider"}),
+      expect.objectContaining({
+        audience: "rider",
+        title: "Tow accepted",
+        body: "Tow accepted.",
+      }),
+    );
+  });
+
+  it("sends one rider push when a mobile shop accepts an SOS", async () => {
+    const sos = {
+      id: "s1",
+      status: "1",
+      ticketType: "SOS",
+      userId: "rider1",
+      lat: 10.7,
+      lng: 106.6,
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce(sos as never)
+      .mockResolvedValueOnce({
+        ...sos,
+        mobileCallOutFee: 50000,
+        mobileTravelFee: 12000,
+      } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      callOutFee: 50000,
+      travelPerKmFee: 10000,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "s1",
+        shopId: "mobile1",
+      }),
+    ).resolves.toEqual({matched: true, kind: "MOBILE_SHOP"});
+    expect(enqueueDispatchPush).toHaveBeenCalledTimes(1);
+    expect(enqueueDispatchPush).toHaveBeenCalledWith(
+      "s1",
+      "-status-2-rider",
+      expect.objectContaining({
+        audience: "rider",
+        title: "Mobile shop accepted",
+        body: expect.stringContaining("Mobile shop accepted."),
+      }),
     );
   });
 

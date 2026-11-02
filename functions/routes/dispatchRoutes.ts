@@ -92,11 +92,25 @@ export default (
     dispatchController.updateWorkOrder,
   );
   app.post(
+    "/dispatch/invoice/approve",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.approveInvoice}),
+    dispatchController.approveInvoice,
+  );
+  app.post(
     "/dispatch/quote",
     writeLimited,
     requireAuth,
     validate({body: schemas.sendQuote}),
     dispatchController.sendQuote,
+  );
+  app.post(
+    "/dispatch/quote/decline",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.declineQuote}),
+    dispatchController.declineQuote,
   );
   app.post(
     "/dispatch/quote/approve",
@@ -134,6 +148,20 @@ export default (
     requireAuth,
     validate({body: schemas.setMobileShopFix}),
     dispatchController.setMobileShopFix,
+  );
+  app.post(
+    "/dispatch/mobile-shop/fix/approve",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.approveMobileFix}),
+    dispatchController.approveMobileFix,
+  );
+  app.post(
+    "/dispatch/mobile-shop/fix/decline",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.declineMobileFix}),
+    dispatchController.declineMobileFix,
   );
   app.post(
     "/dispatch/mobile-shop/tow-offer",
@@ -178,6 +206,20 @@ export default (
     requireAuth,
     validate({body: schemas.declineDestination}),
     dispatchController.declineDestination,
+  );
+  app.post(
+    "/dispatch/tow/loaded",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.markTowLoaded}),
+    dispatchController.markTowLoaded,
+  );
+  app.post(
+    "/dispatch/tow/received",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.confirmTowReceived}),
+    dispatchController.confirmTowReceived,
   );
   app.post(
     "/dispatch/tower/cancel",

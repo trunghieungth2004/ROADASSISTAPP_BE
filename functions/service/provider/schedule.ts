@@ -1,6 +1,9 @@
 
 
 import {
+  PROVIDER_PRICING_BOUNDS,
+} from "../../constants/dispatch";
+import {
   PROVIDER_SERVICE_CODE_MAX,
   PROVIDER_SERVICE_NAME_MAX,
   PROVIDER_SERVICE_PRICE_MAX,
@@ -136,6 +139,72 @@ type ShopService = {
   name: string;
   displayPrice: number;
   quoteRequired: boolean;
+};
+
+export const normalizeTowPricing = ({
+  towBaseFee,
+  towPerKmFee,
+  bounds = PROVIDER_PRICING_BOUNDS.TOW,
+}: {
+  towBaseFee?: number;
+  towPerKmFee?: number;
+  bounds?: {
+    baseMin: number;
+    baseMax: number;
+    perKmMin: number;
+    perKmMax: number;
+  };
+}): {towBaseFee?: number; towPerKmFee?: number} => {
+  if (towBaseFee !== undefined &&
+    (towBaseFee < bounds.baseMin || towBaseFee > bounds.baseMax)) {
+    throw new ValidationError(
+      `Tow base fee must be ${bounds.baseMin}-${bounds.baseMax}`,
+    );
+  }
+  if (towPerKmFee !== undefined &&
+    (towPerKmFee < bounds.perKmMin || towPerKmFee > bounds.perKmMax)) {
+    throw new ValidationError(
+      `Tow per-km fee must be ${bounds.perKmMin}-${bounds.perKmMax}`,
+    );
+  }
+  return {
+    ...(towBaseFee !== undefined ? {towBaseFee} : {}),
+    ...(towPerKmFee !== undefined ? {towPerKmFee} : {}),
+  };
+};
+
+export const normalizeMobileShopPricing = ({
+  callOutFee,
+  travelPerKmFee,
+  bounds = PROVIDER_PRICING_BOUNDS.MOBILE_SHOP,
+}: {
+  callOutFee?: number;
+  travelPerKmFee?: number;
+  bounds?: {
+    callOutMin: number;
+    callOutMax: number;
+    travelPerKmMin: number;
+    travelPerKmMax: number;
+  };
+}): {callOutFee?: number; travelPerKmFee?: number} => {
+  if (callOutFee !== undefined &&
+    (callOutFee < bounds.callOutMin || callOutFee > bounds.callOutMax)) {
+    throw new ValidationError(
+      `Call-out fee must be ${bounds.callOutMin}-${bounds.callOutMax}`,
+    );
+  }
+  if (travelPerKmFee !== undefined &&
+    (travelPerKmFee < bounds.travelPerKmMin ||
+      travelPerKmFee > bounds.travelPerKmMax)) {
+    throw new ValidationError(
+      `Travel per-km fee must be ${bounds.travelPerKmMin}-` +
+      `${bounds.travelPerKmMax}`,
+    );
+  }
+  return {
+    ...(callOutFee !== undefined ? {callOutFee} : {}),
+    ...(travelPerKmFee !== undefined ? {travelPerKmFee} : {}),
+  };
 };
 
 export const normalizeShopServices = (services: unknown): ShopService[] => {

@@ -19,6 +19,21 @@ interface NightWindow {
   end: number;
 }
 
+interface ProviderPricing {
+  TOW: {
+    baseMin: number;
+    baseMax: number;
+    perKmMin: number;
+    perKmMax: number;
+  };
+  MOBILE_SHOP: {
+    callOutMin: number;
+    callOutMax: number;
+    travelPerKmMin: number;
+    travelPerKmMax: number;
+  };
+}
+
 interface PlatformConfig {
   commissionRate: CommissionRate;
   towBaseFee: number;
@@ -39,6 +54,7 @@ interface PlatformConfig {
   waitingBlockMinutes: number;
   detourTolerancePct: number;
   deadheadPayable: boolean;
+  providerPricing: ProviderPricing;
   paymentMethodsEnabled: string[];
   refundPolicy: string;
   updatedAt?: string | null;
@@ -80,6 +96,9 @@ const get = async (): Promise<PlatformConfig> => {
   const raw = doc.exists ? asRecord(doc.data()) : {};
   const commission = asRecord(raw.commissionRate);
   const nightWindow = asRecord(raw.nightWindow);
+  const providerPricing = asRecord(raw.providerPricing);
+  const towPricing = asRecord(providerPricing.TOW);
+  const mobilePricing = asRecord(providerPricing.MOBILE_SHOP);
   const defaults = PLATFORM_CONFIG_DEFAULTS;
   const waitingGraceMin = asNumber(
     raw.waitingGraceMin,
@@ -144,6 +163,44 @@ const get = async (): Promise<PlatformConfig> => {
       raw.deadheadPayable,
       defaults.deadheadPayable,
     ),
+    providerPricing: {
+      TOW: {
+        baseMin: asNumber(
+          towPricing.baseMin,
+          defaults.providerPricing.TOW.baseMin,
+        ),
+        baseMax: asNumber(
+          towPricing.baseMax,
+          defaults.providerPricing.TOW.baseMax,
+        ),
+        perKmMin: asNumber(
+          towPricing.perKmMin,
+          defaults.providerPricing.TOW.perKmMin,
+        ),
+        perKmMax: asNumber(
+          towPricing.perKmMax,
+          defaults.providerPricing.TOW.perKmMax,
+        ),
+      },
+      MOBILE_SHOP: {
+        callOutMin: asNumber(
+          mobilePricing.callOutMin,
+          defaults.providerPricing.MOBILE_SHOP.callOutMin,
+        ),
+        callOutMax: asNumber(
+          mobilePricing.callOutMax,
+          defaults.providerPricing.MOBILE_SHOP.callOutMax,
+        ),
+        travelPerKmMin: asNumber(
+          mobilePricing.travelPerKmMin,
+          defaults.providerPricing.MOBILE_SHOP.travelPerKmMin,
+        ),
+        travelPerKmMax: asNumber(
+          mobilePricing.travelPerKmMax,
+          defaults.providerPricing.MOBILE_SHOP.travelPerKmMax,
+        ),
+      },
+    },
     paymentMethodsEnabled: asMethods(raw.paymentMethodsEnabled),
     refundPolicy: asText(raw.refundPolicy, defaults.refundPolicy),
   };
@@ -165,4 +222,11 @@ const update = async (
   return get();
 };
 
-export {CommissionRate, NightWindow, PlatformConfig, get, update};
+export {
+  CommissionRate,
+  NightWindow,
+  PlatformConfig,
+  ProviderPricing,
+  get,
+  update,
+};

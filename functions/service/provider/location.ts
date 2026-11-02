@@ -53,6 +53,7 @@ export const updateProviderLocation = async ({
           lat,
           lng,
           at: new Date().toISOString(),
+          shopId: provider.id,
         });
       } catch {
         continue;

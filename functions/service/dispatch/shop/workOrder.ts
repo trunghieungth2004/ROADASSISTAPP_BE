@@ -17,6 +17,9 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
+import * as paymentRepository from "../../../repository/paymentRepository";
+import * as paymentService from "../../paymentService";
+import {normalizeWorkItems, workItemsTotal} from "./items";
 
 
 export const updateWorkOrder = async ({
@@ -26,6 +29,7 @@ export const updateWorkOrder = async ({
   quotedAmount,
   finalAmount,
   invoiceRef,
+  items,
 }: {
   userId: string;
   ticketId: string;
@@ -33,6 +37,7 @@ export const updateWorkOrder = async ({
   quotedAmount?: number;
   finalAmount?: number;
   invoiceRef?: string;
+  items?: unknown;
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
@@ -73,10 +78,73 @@ export const updateWorkOrder = async ({
   if (quotedAmount !== undefined || finalAmount !== undefined) {
     throw new ValidationError("Quote amounts are sent via the quote endpoint");
   }
+  const invoiceItems = items === undefined ? null : normalizeWorkItems(items);
+  let invoiceAmount = typeof ticket.shopQuotedAmount === "number" ?
+    ticket.shopQuotedAmount :
+    null;
+  let invoiceApproval: string | null = null;
+  if (invoiceItems !== null) {
+    const total = workItemsTotal(invoiceItems);
+    invoiceAmount = total;
+    invoiceApproval = "APPROVED";
+    if (typeof ticket.shopQuotedAmount === "number" &&
+      total !== ticket.shopQuotedAmount) {
+      const payments = await paymentRepository.findByTicketId(ticketId);
+      const funded = payments.some((p) =>
+        (p.method === "CASH" && p.status === "CONFIRMED") ||
+        (p.method === "SEPAY" &&
+          (p.status === "HELD" || p.status === "CONFIRMED")));
+      if (funded) {
+        throw new ValidationError(
+          "Invoice is already funded — contact support to adjust",
+        );
+      }
+      await paymentService.adjustPendingCashAmount({
+        ticketId,
+        amount: total,
+        ticketType: ticket.ticketType,
+      });
+      invoiceApproval = "PENDING";
+    }
+  }
   await dispatchRepository.update(ticketId, {
     ...(workType !== undefined ? {workType} : {}),
     ...(invoiceRef !== undefined ? {invoiceRef} : {}),
+    ...(invoiceItems !== null ? {
+      invoiceItems,
+      ...(invoiceAmount !== null ? {invoiceAmount} : {}),
+      ...(invoiceApproval !== null ? {invoiceApproval} : {}),
+      invoiceVersion: (typeof ticket.invoiceVersion === "number" ?
+        ticket.invoiceVersion :
+        0) + 1,
+      invoiceApprovedAt: invoiceApproval === "APPROVED" ?
+        new Date().toISOString() :
+        null,
+    } : {}),
   });
   cacheManager.del(NS);
   return {updated: 1};
+};
+
+export const approveInvoice = async ({
+  userId,
+  ticketId,
+}: {
+  userId: string;
+  ticketId: string;
+}) => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  if (ticket.userId !== userId) {
+    throw new ForbiddenError("Only the rider approves the invoice");
+  }
+  if (ticket.invoiceApproval !== "PENDING") {
+    throw new ValidationError("No invoice awaiting approval");
+  }
+  await dispatchRepository.update(ticketId, {
+    invoiceApproval: "APPROVED",
+    invoiceApprovedAt: new Date().toISOString(),
+  });
+  cacheManager.del(NS);
+  return {approved: true};
 };

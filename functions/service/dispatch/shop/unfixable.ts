@@ -30,6 +30,27 @@ import {validatePhotoPaths} from "../../../utils/media";
 import {DISPATCH_PHOTO_PREFIX} from "../../../constants/media";
 
 
+const returnTowOfferPatch = (
+  ticket: dispatchRepository.DispatchTicket,
+  userId: string,
+  nowIso: string,
+): Record<string, unknown> => {
+  if (ticket.ticketType === "SOS") return {};
+  const shopId = typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "" ?
+    ticket.assignedShopId :
+    typeof ticket.providerId === "string" ? ticket.providerId : "";
+  if (shopId === "") return {};
+  return {
+    returnTowOffer: {
+      status: "PENDING",
+      shopId,
+      by: userId,
+      at: nowIso,
+    },
+  };
+};
+
 export const markUnfixable = async ({
   userId,
   ticketId,
@@ -97,6 +118,7 @@ export const markUnfixable = async ({
       by: userId,
       at: nowIso,
     },
+    ...returnTowOfferPatch(ticket, userId, nowIso),
   });
   await dispatchRepository.updateStatus(
     ticketId,
@@ -120,12 +142,7 @@ export const markUnfixable = async ({
     "UNFIXABLE",
     {reason, photos: paths.length},
   );
-  await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.UNFIXABLE}`, {
-    audience: "rider",
-    urgent: "true",
-    title: "Marked unfixable",
-    body: "The shop marked your vehicle unfixable — tap to view",
-  });
+  let riderNotified = false;
   if (ticket.ticketType === "SOS") {
     try {
       const availability = await mobileTowAvailabilityFor(ticket);
@@ -138,6 +155,7 @@ export const markUnfixable = async ({
             auto: true,
           });
           if (continuation.ticketId !== undefined) {
+            riderNotified = true;
             return {
               unfixable: true,
               continuationTicketId: continuation.ticketId,
@@ -184,6 +202,20 @@ export const markUnfixable = async ({
     } catch {
       void 0;
     }
+  }
+  if (!riderNotified) {
+    await enqueueDispatchPush(
+      ticketId,
+      `-status-${STATUS_DISPATCH.UNFIXABLE}`,
+      {
+        audience: "rider",
+        urgent: "true",
+        title: "Marked unfixable",
+        body: ticket.ticketType === "SOS" ?
+          "The shop marked your vehicle unfixable — tap to view" :
+          "The shop marked your vehicle unfixable — tow it back to you?",
+      },
+    );
   }
   return {unfixable: true};
 };

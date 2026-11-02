@@ -17,6 +17,13 @@ import {
 import {SHOP_DECLINE_REASON} from "../../constants/dispatch";
 
 
+const workItemList = (): Joi.ArraySchema =>
+  Joi.array().items(Joi.object({
+    name: Joi.string().trim().min(1).max(120).required(),
+    qty: Joi.number().integer().min(1).max(99).required(),
+    unitPrice: Joi.number().integer().min(0).max(999999999).required(),
+  })).max(20);
+
 export const dispatchSchemas = {
   createDispatch: Joi.object({
     ticketType: Joi.string().valid("MECHANIC", "TOW", "SOS", "WALK_IN")
@@ -72,10 +79,14 @@ export const dispatchSchemas = {
     quotedAmount: Joi.number().integer().min(0).max(999999999).optional(),
     finalAmount: Joi.number().integer().min(0).max(999999999).optional(),
     invoiceRef: Joi.string().trim().max(120).allow("", null).optional(),
+    items: workItemList().optional(),
   }),
   shopTickets: Joi.object({
     shopId: strReq(),
     limit: Joi.number().integer().min(1).max(50).optional(),
+  }),
+  approveInvoice: Joi.object({
+    ticketId: strReq(),
   }),
   sendQuote: Joi.object({
     ticketId: strReq(),
@@ -83,7 +94,8 @@ export const dispatchSchemas = {
     finalAmount: Joi.number().integer().min(0).max(999999999).optional(),
     workType: Joi.string().trim().max(280).allow("", null).optional(),
     faultPhotos: photoList().optional(),
-  }).or("quotedAmount", "finalAmount"),
+    items: workItemList().optional(),
+  }).or("quotedAmount", "finalAmount", "items"),
   sendEstimate: Joi.object({
     ticketId: strReq(),
     estimateAmount: Joi.number().integer().min(0).max(999999999).required(),
@@ -103,9 +115,17 @@ export const dispatchSchemas = {
     reason: Joi.string().trim().min(1).max(500).required(),
     photoUrls: photoList().min(1).required(),
   }),
+  approveMobileFix: Joi.object({
+    ticketId: strReq(),
+  }),
+  declineMobileFix: Joi.object({
+    ticketId: strReq(),
+    reason: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
   setMobileShopFix: Joi.object({
     ticketId: strReq(),
     fixAmount: Joi.number().integer().min(0).max(999999999).required(),
+    items: workItemList().optional(),
   }),
   mobileShopTowOffer: Joi.object({
     ticketId: strReq(),
@@ -136,11 +156,21 @@ export const dispatchSchemas = {
   approveQuote: Joi.object({
     ticketId: strReq(),
   }),
+  declineQuote: Joi.object({
+    ticketId: strReq(),
+    reason: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
   declineDestination: Joi.object({
     ticketId: strReq(),
     reasonCode: Joi.string()
       .valid(...Object.values(SHOP_DECLINE_REASON))
       .required(),
+  }),
+  markTowLoaded: Joi.object({
+    ticketId: strReq(),
+  }),
+  confirmTowReceived: Joi.object({
+    ticketId: strReq(),
   }),
   cancelTowerSearch: Joi.object({
     ticketId: strReq(),

@@ -16,8 +16,11 @@ import {
   markUnfixable,
   approveQuote,
   updateWorkOrder,
+  approveInvoice,
 } from "../../../../service/dispatchService";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
+import {continueSos} from "../../../../service/dispatch/sos";
+import * as paymentService from "../../../../service/paymentService";
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -34,6 +37,7 @@ jest.mock("../../../../utils/valhalla", () => ({
   postRoute: jest.fn(),
 }));
 jest.mock("../../../../service/taskQueueService");
+jest.mock("../../../../service/dispatch/sos");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -413,6 +417,44 @@ describe("dispatchService markUnfixable", () => {
     );
   });
 
+  it("keeps the continuation push as the only rider alert", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "SOS",
+      assignedShopId: "mobile1",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(dispatchRepository.updateStatus).mockResolvedValue(undefined);
+    jest.mocked(continueSos).mockResolvedValue({
+      ticketId: "sos2",
+      attempt: 2,
+    } as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toMatchObject({
+      unfixable: true,
+      continuationTicketId: "sos2",
+    });
+    expect(enqueueDispatchPush).not.toHaveBeenCalledWith(
+      "t1",
+      "-status-15",
+      expect.anything(),
+    );
+  });
+
   it("voids pending payments on an in-progress ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
@@ -463,6 +505,15 @@ describe("dispatchService markUnfixable", () => {
       "t1",
       expect.objectContaining({checkoutUrl: null}),
     );
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        returnTowOffer: expect.objectContaining({
+          status: "PENDING",
+          shopId: "shop9",
+        }),
+      }),
+    );
   });
 });
 
@@ -488,7 +539,7 @@ describe("dispatchService quote approval", () => {
     } as never);
     await expect(
       sendQuote({userId: "op1", ticketId: "t1", quotedAmount: 150000}),
-    ).resolves.toEqual({quoted: true});
+    ).resolves.toEqual({quoted: true, version: 1});
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
       expect.objectContaining({shopQuotedAmount: 150000}),
@@ -497,6 +548,45 @@ describe("dispatchService quote approval", () => {
       "t1",
       "9",
       "op1",
+    );
+  });
+
+  it("stores itemized quote lines and rejects a mismatched total", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "2",
+      ticketType: "WALK_IN",
+      providerId: "shop9",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    await expect(sendQuote({
+      userId: "op1",
+      ticketId: "t1",
+      quotedAmount: 100000,
+      items: [{name: "Part", qty: 1, unitPrice: 120000}],
+    })).rejects.toMatchObject({statusCode: 400});
+    await expect(sendQuote({
+      userId: "op1",
+      ticketId: "t1",
+      quotedAmount: 240000,
+      items: [{name: "Part", qty: 2, unitPrice: 120000}],
+    })).resolves.toEqual({quoted: true, version: 1});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        shopQuotedAmount: 240000,
+        quoteItems: [{name: "Part", qty: 2, unitPrice: 120000, amount: 240000}],
+      }),
     );
   });
 
@@ -566,8 +656,74 @@ describe("dispatchService quote approval", () => {
     );
     expect(enqueueDispatchPush).toHaveBeenCalledWith(
       "t1",
-      expect.stringContaining("operator"),
-      expect.objectContaining({audience: "operator"}),
+      expect.stringMatching(/^-quote-approved-/),
+      expect.objectContaining({
+        audience: "operator",
+        urgent: "true",
+      }),
+    );
+  });
+
+  it("marks a revised invoice for rider approval", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "6",
+      ticketType: "WALK_IN",
+      providerId: "shop9",
+      assignedShopId: "shop9",
+      shopQuotedAmount: 150000,
+      invoiceVersion: 0,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "p1", method: "CASH", status: "PENDING"},
+    ] as never);
+    const adjust = jest.spyOn(paymentService, "adjustPendingCashAmount")
+      .mockResolvedValue("p1");
+    await expect(updateWorkOrder({
+      userId: "op1",
+      ticketId: "t1",
+      items: [{name: "Extra part", qty: 1, unitPrice: 180000}],
+    })).resolves.toEqual({updated: 1});
+    expect(adjust).toHaveBeenCalledWith({
+      ticketId: "t1",
+      amount: 180000,
+      ticketType: "WALK_IN",
+    });
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        invoiceAmount: 180000,
+        invoiceApproval: "PENDING",
+      }),
+    );
+    adjust.mockRestore();
+  });
+
+  it("lets the rider approve a revised invoice", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "7",
+      ticketType: "WALK_IN",
+      invoiceApproval: "PENDING",
+    } as never);
+    await expect(approveInvoice({
+      userId: "rider1",
+      ticketId: "t1",
+    })).resolves.toEqual({approved: true});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({invoiceApproval: "APPROVED"}),
     );
   });
 
@@ -583,7 +739,7 @@ describe("dispatchService quote approval", () => {
     ).rejects.toMatchObject({statusCode: 400});
   });
 
-  it("refuses approval without a qualifying payment", async () => {
+  it("starts cash work without a pre-existing payment", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       userId: "rider1",
@@ -593,10 +749,22 @@ describe("dispatchService quote approval", () => {
       shopQuotedAmount: 150000,
     } as never);
     jest.mocked(paymentRepository.findByTicket).mockResolvedValue([]);
+    const createPayment = jest.spyOn(paymentService, "createPaymentForTicket")
+      .mockResolvedValue({} as never);
     await expect(
       approveQuote({userId: "rider1", ticketId: "t1"}),
-    ).rejects.toMatchObject({statusCode: 400});
-    expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
+    ).resolves.toEqual({approved: true});
+    expect(paymentService.createPaymentForTicket).toHaveBeenCalledWith({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    });
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t1",
+      "6",
+      "rider1",
+    );
+    createPayment.mockRestore();
   });
 
   it("approves a final quote on a held sepay payment", async () => {

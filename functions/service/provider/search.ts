@@ -19,6 +19,7 @@ import {normalizeVehicleType} from "../../utils/vehicleType";
 
 import {NotFoundError} from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
+import * as platformConfigService from "../platformConfigService";
 
 
 const myProvidersInner = async ({userId}: {userId: string}) => {
@@ -40,6 +41,11 @@ const myProvidersCached = cacheManager.wrap(myProvidersInner, {
 
 export const getMyProviders = async ({userId}: {userId: string}) =>
   myProvidersCached({userId});
+
+export const getProviderPricingLimits = async () => {
+  const config = await platformConfigService.getConfig();
+  return config.providerPricing;
+};
 
 const declinedSetForTicket = async (
   ticketId?: string,

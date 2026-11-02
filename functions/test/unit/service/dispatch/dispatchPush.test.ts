@@ -324,6 +324,40 @@ describe("dispatchService.deliverDispatchPush", () => {
     expect(providerRepository.findById).toHaveBeenCalledWith("shop-old");
   });
 
+  it("delivers a targeted shop push after the assignment clears", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "1",
+      ticketType: "SOS",
+      assignedShopId: null,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      operatorUid: "op1",
+      accepting: false,
+    } as never);
+    jest.mocked(fcmTokenRepository.findByUserId).mockResolvedValue({
+      userId: "op1",
+      tokens: ["tok1"],
+      updatedAt: "now",
+    });
+    await expect(
+      deliverDispatchPush("t1", "shop", {
+        title: "Fix quote declined",
+        body: "The rider declined your fix quote",
+      }, "mobile1", true),
+    ).resolves.toEqual({delivered: 0, skipped: false});
+    expect(providerRepository.findById).toHaveBeenCalledWith("mobile1");
+    const {messaging} = jest.requireMock("../../../../config/firebase") as {
+      messaging: {sendEach: jest.Mock};
+    };
+    const payload = messaging.sendEach.mock.calls.at(-1)?.[0]?.[0];
+    expect(payload?.notification?.title).toBe("Fix quote declined");
+    expect(payload?.data).toMatchObject({ticketId: "t1", urgent: "true"});
+  });
+
   it("delivers rider-audience pushes at pending status", async () => {
     process.env.FCM_ENABLED = "true";
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
@@ -789,6 +823,7 @@ describe("dispatchService.deliverDispatchPush", () => {
       status: "3",
       ticketType: "TOW",
       assignedShopId: "tow1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
       towFare: {
         estimate: 200000,
         ceiling: 220000,
@@ -800,7 +835,7 @@ describe("dispatchService.deliverDispatchPush", () => {
       },
     } as never);
     jest.mocked(userRepository.findById).mockResolvedValue({
-      id: "rider1",
+      id: "op1",
       role: "2",
     } as never);
     jest.mocked(providerRepository.findById).mockResolvedValue({
@@ -811,7 +846,7 @@ describe("dispatchService.deliverDispatchPush", () => {
       operatorUid: "op1",
     } as never);
     await expect(
-      updateDispatchStatus({id: "t1", status: "4", userId: "rider1"}),
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
     ).resolves.toEqual({updated: 1});
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",

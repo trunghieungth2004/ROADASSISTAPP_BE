@@ -303,12 +303,14 @@ const deliverDispatchPushInner = async (
   if (audience === "tower-candidates") {
     return deliverTowWithdrawn(ticketId, notice);
   }
-  if (audience === "destination-shop") {
+  if (audience === "destination-shop" || audience === "shop") {
     const target = typeof shopId === "string" && shopId !== "" ?
       shopId :
-      typeof ticket.destinationShopId === "string" ?
-        ticket.destinationShopId :
-        "";
+      audience === "shop" ?
+        "" :
+        typeof ticket.destinationShopId === "string" ?
+          ticket.destinationShopId :
+          "";
     if (target === "") return {delivered: 0, skipped: true};
     return deliverShopPush(ticket, target, notice, urgent);
   }
@@ -325,6 +327,12 @@ const deliverDispatchPushInner = async (
       lat: ticket.lat,
       lng: ticket.lng,
       vehicleType: ticket.vehicleType as string | undefined,
+      excludeOperatorUids: Array.isArray(ticket.excludedOperatorUids) ?
+        ticket.excludedOperatorUids as string[] :
+        [],
+      excludeShopIds: Array.isArray(ticket.excludedShopIds) ?
+        ticket.excludedShopIds as string[] :
+        [],
     });
   }
   if (candidates.length === 0 && ticket.ticketType === "TOW") {

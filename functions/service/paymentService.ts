@@ -5,6 +5,11 @@ import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
+import * as subscriptionService from "./subscriptionService";
+import {
+  cancelActiveForSwitch,
+  cancelPendingPayment,
+} from "./paymentMethodSwitch";
 import {ROLE_ADMIN} from "../constants/roles";
 import {
   MOBILE_SHOP_CALL_OUT_FEE,
@@ -29,6 +34,7 @@ import {
   SEPAY_IPN_REF_KEYS,
   SEPAY_QR_REF_KEYS,
 } from "../constants/sepay";
+import {SUBSCRIPTION_PURPOSE} from "../constants/subscriptions";
 import {
   ConflictError,
   ForbiddenError,
@@ -46,10 +52,17 @@ export type TicketLike = {
   providerId?: string | null;
   assignedUid?: string | null;
   shopQuotedAmount?: number | null;
+  invoiceAmount?: number | null;
+  invoiceApproval?: string | null;
   finalAmount?: number | null;
   mobileCallOutFee?: number | null;
   mobileTravelFee?: number | null;
+  mobileFeeHistory?: Array<{
+    callOutFee?: number | null;
+    travelFee?: number | null;
+  }>;
   cancelledBy?: string | null;
+  towFeeHistory?: Array<{amount?: number | null}>;
   towFare?: {
     final?: number | null;
     estimate?: number | null;
@@ -83,39 +96,71 @@ const billableAmountFor = (
       return null;
     }
     const fare = ticket.towFare;
-    const base = fare && typeof fare === "object" ?
-      (typeof fare.final === "number" ? fare.final :
-        typeof fare.estimate === "number" ? fare.estimate : null) :
-      (typeof ticket.finalAmount === "number" ? ticket.finalAmount : null);
-    if (base === null) return null;
+    const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
+      ticket.cancelledBy === ticket.userId;
+    const reMatched = riderCancelled && !nonEmpty(ticket.assignedShopId);
+    const base = reMatched ?
+      null :
+      fare && typeof fare === "object" ?
+        (typeof fare.final === "number" ? fare.final :
+          typeof fare.estimate === "number" ? fare.estimate : null) :
+        (typeof ticket.finalAmount === "number" ? ticket.finalAmount : null);
+    const historyAmount = Array.isArray(ticket.towFeeHistory) ?
+      ticket.towFeeHistory.reduce((sum, entry) =>
+        sum + (typeof entry.amount === "number" ? entry.amount : 0), 0) :
+      0;
+    if (base === null && historyAmount === 0) return null;
     const waitingFee = fare && typeof fare.waitingFee === "number" ?
       fare.waitingFee :
       0;
-    return {amount: base + waitingFee, waitingFee};
+    return {amount: (base ?? 0) + historyAmount + waitingFee, waitingFee};
   }
   if (ticket.ticketType === "SOS") {
-    if (!nonEmpty(ticket.assignedShopId)) return null;
+    const history = Array.isArray(ticket.mobileFeeHistory) ?
+      ticket.mobileFeeHistory.reduce((sum, entry) => {
+        const callOut = typeof entry.callOutFee === "number" ?
+          entry.callOutFee :
+          0;
+        const travel = typeof entry.travelFee === "number" ?
+          entry.travelFee :
+          0;
+        return sum + callOut + travel;
+      }, 0) :
+      0;
+    const assigned = nonEmpty(ticket.assignedShopId);
     const callOut = typeof ticket.mobileCallOutFee === "number" ?
       ticket.mobileCallOutFee :
       MOBILE_SHOP_CALL_OUT_FEE;
     const travel = typeof ticket.mobileTravelFee === "number" ?
       ticket.mobileTravelFee :
       0;
-    if (ticket.status === STATUS_DISPATCH.RESOLVED) {
-      const fix = typeof ticket.finalAmount === "number" ?
-        ticket.finalAmount :
-        0;
-      return {amount: callOut + travel + fix, waitingFee: 0};
+    if (!assigned && history === 0) return null;
+    const fix = typeof ticket.finalAmount === "number" ?
+      ticket.finalAmount :
+      0;
+    if (assigned &&
+      (ticket.status === STATUS_DISPATCH.RESOLVED ||
+        ticket.status === STATUS_DISPATCH.READY ||
+        ticket.status === STATUS_DISPATCH.QUOTED) &&
+      typeof ticket.finalAmount === "number") {
+      return {amount: history + callOut + travel + fix, waitingFee: 0};
     }
     if (ticket.status === STATUS_DISPATCH.UNFIXABLE ||
       ticket.status === STATUS_DISPATCH.RESOLVED_UNFIXABLE) {
-      return {amount: callOut, waitingFee: 0};
+      return {amount: history + (assigned ? callOut : 0), waitingFee: 0};
     }
     if (ticket.status === STATUS_DISPATCH.CANCELLED &&
       ticket.cancelledBy === ticket.userId) {
-      return {amount: callOut + travel, waitingFee: 0};
+      return {
+        amount: history + (assigned ? callOut + travel : 0),
+        waitingFee: 0,
+      };
     }
     return null;
+  }
+  if (ticket.invoiceApproval === "APPROVED" &&
+    typeof ticket.invoiceAmount === "number") {
+    return {amount: ticket.invoiceAmount, waitingFee: 0};
   }
   if (typeof ticket.shopQuotedAmount === "number") {
     return {amount: ticket.shopQuotedAmount, waitingFee: 0};
@@ -124,6 +169,26 @@ const billableAmountFor = (
     return {amount: ticket.finalAmount, waitingFee: 0};
   }
   return null;
+};
+
+export const assertCashConfirmedForResolve = async ({
+  ticketId,
+  ticketType,
+  isAdmin,
+}: {
+  ticketId: string;
+  ticketType: string;
+  isAdmin: boolean;
+}): Promise<void> => {
+  if (isAdmin || (ticketType !== "WALK_IN" &&
+    ticketType !== "MECHANIC" && ticketType !== "SOS")) {
+    return;
+  }
+  const payments = await paymentRepository.findByTicketId(ticketId);
+  const cash = payments.find((p) => p.method === "CASH");
+  if (cash && cash.status !== PAYMENT_STATUS.CONFIRMED) {
+    throw new ValidationError("Confirm cash received before resolving");
+  }
 };
 
 const expectedAmountFor = (ticket: TicketLike): number => {
@@ -248,15 +313,61 @@ const asReused = async (
   return {...payment, reused: true};
 };
 
+export const adjustPendingCashAmount = async ({
+  ticketId,
+  amount,
+  ticketType,
+}: {
+  ticketId: string;
+  amount: number;
+  ticketType: string;
+}): Promise<string | null> => {
+  const payments = await paymentRepository.findByTicketId(ticketId);
+  const cash = payments.find((p) =>
+    p.method === PAYMENT_METHOD.CASH &&
+    p.status === PAYMENT_STATUS.PENDING);
+  if (!cash) return null;
+  const rate = await platformConfigService.getCommissionRate(ticketType);
+  const commissionAmount = Math.round(amount * rate / 100);
+  const payoutAmount = amount - commissionAmount;
+  await paymentRepository.update(cash.id, {
+    amount,
+    commissionRate: rate,
+    commissionAmount,
+    payoutAmount,
+  });
+  await stampTicketPayment(ticketId, {
+    ...cash,
+    amount,
+    commissionRate: rate,
+    commissionAmount,
+    payoutAmount,
+  });
+  return cash.id;
+};
+
+
 const createPaymentForTicket = async ({
   userId,
   ticketId,
+  planId,
   method,
 }: {
   userId: string;
-  ticketId: string;
+  ticketId?: string;
+  planId?: string;
   method: string;
 }): Promise<PaymentWithCheckout> => {
+  if (planId) {
+    return subscriptionService.createSubscriptionPayment({
+      userId,
+      planId,
+      method,
+    });
+  }
+  if (!ticketId) {
+    throw new ValidationError("Ticket or subscription plan required");
+  }
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   if (ticket.userId !== userId) {
@@ -301,7 +412,15 @@ const createPaymentForTicket = async ({
   const active = existing.find(
     (payment) => PAYMENT_ACTIVE_STATUSES.includes(payment.status),
   );
-  if (active) return asReused(active, method);
+  if (active) {
+    if (active.method === method) return asReused(active, method);
+    if (active.method === PAYMENT_METHOD.SEPAY &&
+      method === PAYMENT_METHOD.CASH) {
+      await cancelActiveForSwitch({active, ticketId});
+    } else {
+      throw new ConflictError("Ticket already has an active payment");
+    }
+  }
   const payeeId = await resolvePayeeId(ticket);
   const rate = await platformConfigService.getCommissionRate(
     ticket.ticketType,
@@ -403,6 +522,7 @@ const handleSepayIpn = async (
   if (!payment) throw new NotFoundError("Payment not found");
   if (payment.status === PAYMENT_STATUS.HELD ||
     payment.status === PAYMENT_STATUS.CONFIRMED) {
+    await subscriptionService.activateFromPayment(payment);
     return payment;
   }
   if (payment.status !== PAYMENT_STATUS.PENDING) {
@@ -431,8 +551,12 @@ const handleSepayIpn = async (
     },
   );
   if (held) {
-    await stampTicketPayment(payment.ticketId, held);
-    await notify(paymentPush.deliverReceived(held));
+    if (held.purpose === SUBSCRIPTION_PURPOSE) {
+      await subscriptionService.activateFromPayment(held);
+    } else {
+      await stampTicketPayment(payment.ticketId, held);
+      await notify(paymentPush.deliverReceived(held));
+    }
   }
   return held;
 };
@@ -640,7 +764,8 @@ const auditLedger = async ({
   const capped = typeof limit === "number" ?
     Math.min(limit, PAYMENT_LIST_MAX) :
     PAYMENT_LIST_MAX;
-  const payments = await paymentRepository.findAll(capped);
+  const payments = (await paymentRepository.findAll(capped))
+    .filter((payment) => payment.purpose !== SUBSCRIPTION_PURPOSE);
   const latest = new Map<string, paymentRepository.Payment>();
   for (const payment of payments) {
     if (!latest.has(payment.ticketId)) latest.set(payment.ticketId, payment);
@@ -681,6 +806,7 @@ export {
   PaymentWithCheckout,
   billableAmountFor,
   cancelPendingPayments,
+  cancelPendingPayment,
   createPaymentForTicket,
   confirmCash,
   buildSepayOrder,

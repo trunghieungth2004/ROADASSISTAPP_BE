@@ -55,10 +55,10 @@ Stored in the `status` field of `flags` docs. New flags are created as `"1"`; th
 
 Stored in the `status` field of `dispatch_tickets` docs. New tickets are created as `"1"`. The table above is helper-neutral on purpose — who can hold a ticket differs per kind (see below); the served `description` strings mirror this table verbatim.
 
-Terminal codes (`4`/`5`/`8`/`12`/`15`) accept no further moves. `2` is set only by `POST /dispatch/accept` (claiming stays atomic); `9`/`11`/`13`/`14`/`15` come only from the quote/estimate/unfixable endpoints — `PUT /dispatch/status` refuses them. Arrival and resolution belong to the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator (`3→6→7`, plus walk-in `2→6` only with no quote pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor and requires a funded payment); SOS fix completion belongs to the assigned mobile shop (`3→7`, fix fee required) and the rider then confirms (`7→4`). Cancel belongs to the rider from any non-terminal status except `6` (committed — stalled jobs go through admin support) and SOS `7` (fix complete — the fix fee stands); decline (`8`) belongs to the named shop on a pending walk-in. Admins bypass the matrix. See `API.md` → Dispatch for the full matrix and `PIPELINE.md` for the push fired per move.
+Terminal codes (`4`/`5`/`8`/`12`/`15`) accept no further moves. `2` is set only by `POST /dispatch/accept` (claiming stays atomic); `9`/`11`/`13`/`14`/`15` come only from the quote/mobile-fix/estimate/unfixable endpoints — `PUT /dispatch/status` refuses them. TOW arrival and resolution belong to the assigned tower (`2→3`, `3→4`), with the rider confirming receipt via `POST /dispatch/tow/received`; SOS arrival and shop-ticket resolution stay with the rider (`2→3`, `3→4`, `7→4`); work states belong to the shop operator (`3→6→7`, plus walk-in `2→6` only with no quote pending — quoted/final-quoted tickets start via `POST /dispatch/quote/approve`, which moves `9→6` or `11→6` with the rider as actor; cash creates a pending charge automatically, SePay must be funded first); SOS fix quoting belongs to the assigned mobile shop (`3→9`, fix fee required); the rider approves (`9→7`) or declines back to `1` with prior call-out/travel kept payable; a shop quote declines back to its recorded pre-quote state (`2` for walk-ins, `3` for mechanics, or `10`/`13`/`14` when quoted from there), defaulting to `2`/`3` for legacy tickets. Cancel belongs to the rider from any non-terminal status except `6` (committed — stalled jobs go through admin support) and SOS `7` (fix complete — the fix fee stands); decline (`8`) belongs to the named shop on a pending walk-in. Admins bypass the matrix. See `API.md` → Dispatch for the full matrix and `PIPELINE.md` for the push fired per move.
 
-Shop tickets use a single binding quote: the shop sends `POST /dispatch/quote`
-(`"9"` Quoted, amount immutable), the rider approves with a funded charge, and
+Shop tickets use one itemized quote: the shop sends `POST /dispatch/quote`
+(`"9"` Quoted, itemized and amendable while still `9`), the rider approves (cash creates a pending charge; SePay must be funded), and
 the ticket moves to `"6"` In progress. Codes `"11"` Final quoted, `"13"`
 Estimated, and `"14"` Estimate approved are reserved for legacy records and
 have no current writer. `approveQuote` still accepts old `"11"` tickets and
@@ -78,11 +78,11 @@ Reachability per ticket kind (all else is rejected by the transition matrix):
 
 | Kind | Reachable codes |
 |------|-----------------|
-| SOS | `1` → `2` (mobile shop claim) → `3` → `7` (mobile shop fix complete, fix fee required) → `4` (rider confirms); `15` from `3` when the shop cannot fix, call-out-only (or waived within 1 km), then an automatic continuation SOS when neither a same-vehicle TOW nor a network TOW is available, otherwise a 2-minute grace for the shop to offer/release; `5` by rider cancel except at `7`. No work or quotes. |
-| TOW | `1` (pickup + destination mandatory) → `2` (tower claim, ETA on fresh fix) → `3` (at pickup) → `4`, which auto-spawns a linked `WALK_IN` at a registered destination. `5` by rider cancel pre-work. No `6`/`7`/`9` on this row — that lifecycle runs on the linked walk-in. Destination decline freezes the leg without touching status. The drop-off shop can pre-quote the repair while inbound (`POST /dispatch/estimate`; rider approve/decline, status untouched). |
+| SOS | `1` → `2` (mobile shop claim) → `3` → `9` (mobile shop fix quote, itemized, fix fee required) → `7` (rider approves) → `4` (rider confirms); `9 → 1` when the rider declines (shop excluded, chat archived, prior call-out/travel kept payable); `15` from `3` when the shop cannot fix, call-out-only (or waived within 1 km), then an automatic continuation SOS when neither a same-vehicle TOW nor a network TOW is available, otherwise a 2-minute grace for the shop to offer/release; `5` by rider cancel except at `7`. No work states. |
+| TOW | `1` (pickup + destination mandatory) → `2` (tower claim, ETA on fresh fix) → `3` (tower marks arrival at pickup/hangar; tower marks `loadedAt` before delivery) → `4` (tower marks delivered), which auto-spawns a linked `WALK_IN` at a registered destination. The rider confirms receipt via `POST /dispatch/tow/received`. `5` by rider cancel pre-work. No `6`/`7`/`9` on this row — that lifecycle runs on the linked walk-in. Destination decline freezes the leg without touching status. The drop-off shop can pre-quote the repair while inbound (`POST /dispatch/estimate`; rider approve/decline, status untouched). A genuine tower breakdown re-matches to `1` with a payable `towFeeHistory` partial (loaded distance included when `loadedAt` is set); a normal tower cancel keeps its partial audit-only. |
 | TOW destination accept | A tow naming a registered shop drop-off tells that shop (`"Incoming tow"`); the shop can accept implicitly or bow out (`POST /dispatch/destination/decline`), which needs a reason code and auto-files a `SHOP_DECLINE_DROPOFF` dispute. A decline clears the destination (+ any estimate on file), sets `needsNewDestination: true`, and keeps the engaged tower on the job — the rider picks a new drop-off (`POST /dispatch/destination`, which also clears any estimate on file), clearing `needsNewDestination` and restamping ETAs. Re-picking a declined shop is refused for the life of the ticket. |
 | MECHANIC | `1` → `2` (shop accept) → `3` → `4`, with the full `9`/`6`/`7` workbench on shop-held tickets. `5` by rider cancel (not from `6`). No `8` (decline is walk-in-only). |
-| WALK_IN | `1` → `2` (shop accept) → `9` (binding quote) → `6` (funded approval) → `7` → `4`, plus `2` → `6` when no quote is pending, `10` In shop, `8` (pending + operator only), and sweep expiry → `5`. Linked-spawn target on tow resolve. |
+| WALK_IN | `1` → `2` (shop accept) → `9` (itemized quote) → `6` (cash or funded SePay approval) → `7` → `4`, plus `9 → 3` when the rider declines the quote (shop may re-quote), `2` → `6` when no quote is pending, `10` In shop, `8` (pending + operator only), and sweep expiry → `5`. Linked-spawn target on tow resolve. |
 | `10` In shop | Marks vehicle receipt at the shop before work starts (operator, from `2`/`3`/`9`/`14`). |
 | `12` Resolved unfixable | Reserved terminal close-out code — no writer; on-site unfixable verdicts close at `15` instead (SOS call-out-only, shop tickets refund in full, no `final`, no `completedJobs` increment). |
 
@@ -96,7 +96,9 @@ The diagrams below show the reachable transitions in the current code. Dashed/le
 flowchart TD
   S1["1 Pending"] -->|mobile shop accepts| S2["2 Matched"]
   S2 -->|rider marks arrived| S3["3 Arrived"]
-  S3 -->|mobile shop sets fix fee + ready| S7["7 Ready"]
+  S3 -->|mobile shop sends fix quote| S9["9 Quoted"]
+  S9 -->|rider approves| S7["7 Ready"]
+  S9 -->|rider declines| S1
   S7 -->|rider confirms| S4["4 Resolved"]
   S3 -->|mobile shop marks unfixable| S15["15 Unfixable"]
   S15 -->|shop offers tow| TOW["TOW ticket (linked)"]
@@ -106,7 +108,7 @@ flowchart TD
   S2 -->|rider or mobile shop cancels| S5
 ```
 
-ASCII fallback: `1 -> 2 -> 3 -> 7 -> 4`; `3 -> 15 -> (TOW | new SOS | 2-min grace)`; `1/2 -> 5`.
+ASCII fallback: `1 -> 2 -> 3 -> 9 -> 7 -> 4`; `9 -> 1` on decline; `3 -> 15 -> (TOW | new SOS | 2-min grace)`; `1/2 -> 5`.
 
 - A call-out is charged when the mobile shop accepts; an unfixable close keeps call-out only, waived when the shop was within 1 km at accept on a fresh fix. Each continuation attempt has its own call-out; prior call-outs remain payable.
 - After `15`, a direct same-vehicle TOW or a network TOW may be offered. If neither is available, the continuation is created automatically. If either is available, the shop has a 2-minute grace to offer or release it. A network offer creates a pending broadcast TOW only after the rider confirms a drop-off; no tower is auto-assigned.
@@ -117,8 +119,10 @@ ASCII fallback: `1 -> 2 -> 3 -> 7 -> 4`; `3 -> 15 -> (TOW | new SOS | 2-min grac
 ```mermaid
 flowchart TD
   T1["1 Pending"] -->|tower accepts| T2["2 Matched"]
-  T2 -->|rider marks arrived| T3["3 Arrived"]
-  T3 -->|rider resolves| T4["4 Resolved"]
+  T2 -->|tower marks arrived| T3["3 Arrived"]
+  T3 -->|tower marks loaded| L["loadedAt (status unchanged)"]
+  T3 -->|tower delivers| T4["4 Resolved"]
+  T4 -->|rider confirms receipt| RC["receivedAt (status unchanged)"]
   T4 -->|registered drop-off| W["WALK_IN spawned"]
   T1 -->|destination declined| D["Destination cleared (status unchanged)"]
   T2 -->|destination declined| D
@@ -128,9 +132,10 @@ flowchart TD
   T2 -->|rider or tower cancels| T5
   T3 -->|rider or tower cancels| T5
   T2 -->|tower cancels| R["Rematch / towerSearch ACTIVE"]
+  T3 -->|tower breakdown| R
 ```
 
-ASCII fallback: `1 -> 2 -> 3 -> 4 -> WALK_IN`; destination decline keeps the status and sets `needsNewDestination`; cancel -> `5`; tower cancel -> rematch.
+ASCII fallback: `1 -> 2 -> 3 -> 4 -> WALK_IN`; destination decline keeps the status and sets `needsNewDestination`; cancel -> `5`; tower cancel -> rematch; a genuine breakdown -> `1` with a payable `towFeeHistory` partial.
 
 - Pickup + destination are mandatory at creation.
 - `2` stamps pickup/drop-off ETA from a fresh tower fix.
@@ -180,9 +185,9 @@ flowchart TD
 
 ASCII fallback: `1 -> 2 -> (9 -> 6 | 6 | 10 -> 9/6) -> 7 -> 4`; `1 -> 8`; `1 -> 5` on expiry; `7 -> TOW` via return-tow.
 
-- `7` creates a pending return-tow offer; accepting it creates a linked TOW from the shop to the rider's current point.
+- `7` creates a pending return-tow offer; accepting it creates a linked `towKind: "RETURN"` TOW from the shop to the rider's current point. Cancelling before tower arrival reopens the offer; an unconfirmed CASH repair charge blocks acceptance.
 - A system-spawned drop-off walk-in is forced and may be car-class; a manually filed walk-in stays bike-only.
-- `15` closes an unfixable walk-in/mechanic ticket with a full refund; `12` is reserved.
+- `15` closes an unfixable walk-in/mechanic ticket with a full refund and a pending return-tow offer; `12` is reserved.
 
 ## Dispatch status reference
 
@@ -190,19 +195,19 @@ ASCII fallback: `1 -> 2 -> (9 -> 6 | 6 | 10 -> 9/6) -> 7 -> 4`; `1 -> 8`; `1 -> 
 |---|---|---|---|---|---|
 | `1` | Pending | `POST /dispatch` | — | TOW needs a destination; WALK_IN needs a shop; candidates/shop notified | candidates / walk-in shop |
 | `2` | Matched | `POST /dispatch/accept` | `1` | TOW needs an approved plate; ETA stamped from a fresh fix; one active job per provider | rider + operator |
-| `3` | Arrived | `PUT /dispatch/status` (rider) | `2` | TOW starts waiting accrual | rider + operator |
-| `4` | Resolved | `PUT /dispatch/status` (rider) | `3`, `7` | TOW spawns the drop-off WALK_IN; bills finalize; linked READY walk-in auto-resolves | rider + operator |
+| `3` | Arrived | `PUT /dispatch/status` (TOW tower, SOS rider) | `2` | NORMAL TOW starts waiting accrual; RETURN TOW does not; the tower can mark `loadedAt` without moving status | rider |
+| `4` | Resolved | `PUT /dispatch/status` (TOW tower, other kinds rider) | `3`, `7` | TOW requires `loadedAt`, stamps `deliveredAt`/`deliveredBy`, and the rider confirms receipt; TOW spawns the drop-off WALK_IN; bills finalize; WALK_IN/MECHANIC/SOS cash and any revised invoice must be approved first; linked READY walk-in auto-resolves only when those gates pass | rider |
 | `5` | Cancelled | rider/operator/sweep | non-terminal except committed work | refunds/cancels charges; TOW may freeze a partial leg | rider/operator/destination |
-| `6` | In progress | quote approval or status (shop) | `3`, `9`, `10`, `11`, `14` | quote path requires a funded charge; waiting stops | rider |
-| `7` | Ready | status (shop/mobile shop) | `3`, `6` | SOS needs the fix fee; WALK_IN creates the return-tow offer | rider |
+| `6` | In progress | quote approval or status (shop) | `3`, `9`, `10`, `11`, `14` | cash approval creates a pending charge; SePay approval requires a held charge; waiting stops | rider |
+| `7` | Ready | status (shop) or mobile-fix approval (rider) | `3`, `6`, `9` | SOS `9→7` needs the fix fee and rider approval; WALK_IN creates the return-tow offer | rider |
 | `8` | Declined | `POST /dispatch/decline` (shop) | `1` WALK_IN only | decline reason/note recorded | rider |
-| `9` | Quoted | `POST /dispatch/quote` (shop) | `2`, `3`, `10` | one binding quote; amount is immutable | rider |
+| `9` | Quoted | `POST /dispatch/quote` (shop) / `POST /dispatch/mobile-shop/fix` (mobile shop) | shop `2`, `3`, `10`; SOS `3` | itemized quote; amendable while still `9` on shop tickets; SOS fee is immutable; rider approves (`6` shop / `7` SOS) or declines (`3` shop / `1` SOS) | rider |
 | `10` | In shop | `PUT /dispatch/status` (shop) | `2`, `3`, `9`, `14` | shop tickets only | — |
 | `11` | Final quoted | reserved legacy | — | no current writer; `approveQuote` still accepts old records | — |
 | `12` | Resolved unfixable | reserved legacy | — | terminal, no writer | — |
 | `13` | Estimated | reserved legacy | — | no current writer; tow estimates are advisory fields | — |
 | `14` | Estimate approved | reserved legacy | — | no current writer; `approveEstimate` accepts old `13` records | — |
-| `15` | Unfixable | `POST /dispatch/unfixable` (shop/mobile shop) | `3` SOS/shop tickets | evidence photos required; SOS keeps call-out only (waived ≤1 km), shop tickets refund in full; no `final`, no `completedJobs` | rider |
+| `15` | Unfixable | `POST /dispatch/unfixable` (shop/mobile shop) | SOS `3`; shop `2`/`3`/`6`/`10` | evidence photos required; WALK_IN/MECHANIC opens a return-tow offer; SOS keeps call-out only (waived ≤1 km), shop tickets refund in full; no `final`, no `completedJobs` | rider |
 
 ### `PENDING_TOWER` rematch pattern (not a status)
 
@@ -220,7 +225,7 @@ Re-picking a shop the ticket declined (estimate decline or destination decline) 
 | Field | Shape | Meaning |
 |-------|-------|---------|
 | `waiting.active` | boolean | Waiting-time accrual running (tower on site, work not started) |
-| `waiting.startedAt` / `waiting.endedAt` | ISO timestamps / `null` | Accrual window; bills per started minute (rate per 15-minute block ÷ 15) after the 10-minute grace, capped at 60 minutes, only while the tower fix sits within 200 m of the rider pin (see `PRICING.md`) |
+| `waiting.startedAt` / `waiting.endedAt` | ISO timestamps / `null` | Accrual window; bills per started minute (rate per 15-minute block ÷ 15) after the 10-minute grace, capped at 60 minutes, only while the tower fix sits within 200 m of the rider pin (see `PAYMENTS.md`) |
 | `waiting.fee` / `waiting.withinRadius` / `waiting.accruedAt` | integer VND / boolean / ISO timestamp | Accrued waiting fee, proximity gate result, last accrual stamp; folds into `towFare.waitingFee` on tow tickets |
 
 ### providers

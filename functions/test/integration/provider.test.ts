@@ -105,6 +105,33 @@ describe("provider endpoints", () => {
     expect(res.body.data).toEqual([]);
   });
 
+  it("POST /providers/pricing returns the platform fee bounds", async () => {
+    const res = await request(app)
+      .post("/providers/pricing")
+      .set("Authorization", bearer(USER))
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({
+      TOW: {
+        baseMin: 100000,
+        baseMax: 300000,
+        perKmMin: 8000,
+        perKmMax: 15000,
+      },
+      MOBILE_SHOP: {
+        callOutMin: 0,
+        callOutMax: 100000,
+        travelPerKmMin: 3000,
+        travelPerKmMax: 10000,
+      },
+    });
+  });
+
+  it("POST /providers/pricing requires a signed-in provider", async () => {
+    const res = await request(app).post("/providers/pricing").send({});
+    expect(res.status).toBe(401);
+  });
+
   it("POST /providers/pending lists tow requests for admins", async () => {
     const res = await request(app)
       .post("/providers/pending")

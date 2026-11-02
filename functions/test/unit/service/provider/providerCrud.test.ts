@@ -1,6 +1,7 @@
 import * as providerRepository from "../../../../repository/providerRepository";
 import * as userRepository from "../../../../repository/userRepository";
 import {
+  createMobileShopProvider,
   createShopProvider,
   createTowProvider,
   updateProvider,
@@ -20,6 +21,7 @@ jest.mock("../../../../repository/providerRepository", () => {
     ...actual,
     createShop: jest.fn(),
     createTow: jest.fn(),
+    createMobileShop: jest.fn(),
     findById: jest.fn(),
     findByOperator: jest.fn(),
     findPending: jest.fn(),
@@ -414,16 +416,57 @@ describe("providerService fee fields", () => {
       lng: 2,
       plate: "30A-12345",
       vehicleType: "VAN",
-      towBaseFee: 500000,
-      towPerKmFee: 20000,
+      towBaseFee: 200000,
+      towPerKmFee: 12000,
     });
     expect(providerRepository.createTow).toHaveBeenCalledWith(
       expect.objectContaining({
-        towBaseFee: 500000,
-        towPerKmFee: 20000,
+        towBaseFee: 200000,
+        towPerKmFee: 12000,
       }),
     );
   });
+  it("rejects tow fees outside the platform bounds", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({id: "u1"} as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+    await expect(createTowProvider({
+      userId: "u1",
+      name: "T",
+      lat: 1,
+      lng: 2,
+      plate: "30A-12345",
+      vehicleType: "CAR",
+      towBaseFee: 50000,
+      towPerKmFee: 12000,
+    })).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("stores mobile-shop call-out and travel fees", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({id: "u1"} as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+    jest.mocked(providerRepository.findByPlate).mockResolvedValue(null);
+    jest.mocked(providerRepository.createMobileShop).mockResolvedValue({
+      id: "m1",
+    } as never);
+    await createMobileShopProvider({
+      userId: "u1",
+      name: "M",
+      lat: 1,
+      lng: 2,
+      plate: "59A-12345",
+      vehicleType: "BIKE",
+      licenseNumber: "L1",
+      callOutFee: 50000,
+      travelPerKmFee: 5000,
+    });
+    expect(providerRepository.createMobileShop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callOutFee: 50000,
+        travelPerKmFee: 5000,
+      }),
+    );
+  });
+
   it("lets the operator update fees", async () => {
     jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "s1",

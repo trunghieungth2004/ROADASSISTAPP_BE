@@ -73,6 +73,8 @@ export type TowFareQuote = {
   loadedKm: number;
   night: boolean;
   vehicleClass: string;
+  baseFee?: number;
+  perKmFee?: number;
 };
 
 export const nightMult = (
@@ -111,6 +113,8 @@ export const quoteTowFare = ({
     loadedKm,
     night,
     vehicleClass: vehicleClass ?? VEHICLE_CLASS.SOLO_BIKE,
+    baseFee: table.base,
+    perKmFee: table.perKm,
   };
 };
 
@@ -121,20 +125,23 @@ export const partialTowFare = ({
   vehicleClass,
   night,
   deadheadKm,
+  perKmFee,
   rates = DEFAULT_TOW_RATES,
 }: {
   vehicleClass?: string;
   night: boolean;
   deadheadKm: number;
+  perKmFee?: number;
   rates?: TowRates;
 }): number => {
   if (!rates.deadheadPayable) return 0;
   const table = vehicleClass === VEHICLE_CLASS.CAR ?
     rates.CAR :
     rates.SOLO_BIKE;
+  const perKm = typeof perKmFee === "number" ? perKmFee : table.perKm;
   return roundFare(
     nightMult(night, rates.nightMultiplier) *
-      table.perKm * Math.max(0, deadheadKm),
+      perKm * Math.max(0, deadheadKm),
   );
 };
 
@@ -201,10 +208,28 @@ export const actualDeadheadKm = (towLegs: unknown): number => {
   if (!Array.isArray(towLegs)) return 0;
   return towLegs.reduce((sum, leg) => {
     if (typeof leg !== "object" || leg === null) return sum;
-    const entry = leg as {km?: unknown; actual?: unknown};
-    if (entry.actual !== true || typeof entry.km !== "number") return sum;
-    return sum + entry.km / 1000;
+    const entry = leg as {traveledKm?: unknown; actual?: unknown};
+    if (entry.actual !== true || typeof entry.traveledKm !== "number") {
+      return sum;
+    }
+    return sum + entry.traveledKm;
   }, 0);
+};
+
+export const towRatesForProvider = (
+  rates: TowRates,
+  provider: {towBaseFee?: unknown; towPerKmFee?: unknown},
+): TowRates => {
+  const base = typeof provider.towBaseFee === "number" ?
+    provider.towBaseFee :
+    rates.CAR.base;
+  const perKm = typeof provider.towPerKmFee === "number" ?
+    provider.towPerKmFee :
+    rates.CAR.perKm;
+  return {
+    ...rates,
+    CAR: {...rates.CAR, base, perKm},
+  };
 };
 
 export const stampTowFare = async (
@@ -216,12 +241,16 @@ export const stampTowFare = async (
     destinationShopId?: unknown;
     destinationPoint?: unknown;
     towFare?: {ceiling?: unknown} | null;
+    towFeeCap?: unknown;
+    towFeeHistory?: unknown;
   },
   shopId: string,
 ): Promise<void> => {
   try {
-    const rates = await platformConfigService.getTowRates()
+    const baseRates = await platformConfigService.getTowRates()
       .catch(() => DEFAULT_TOW_RATES);
+    const shop = await providerRepository.findById(shopId);
+    const rates = shop ? towRatesForProvider(baseRates, shop) : baseRates;
     const fixes = await providerLocationRepository.findByIds([shopId]);
     const fix = fixes.get(shopId);
     const fresh = fix && typeof fix.lat === "number" &&
@@ -268,18 +297,26 @@ export const stampTowFare = async (
       rates,
     });
     if (!quote) return;
-    const priorCeiling = ticket.towFare &&
-      typeof ticket.towFare.ceiling === "number" ?
-      ticket.towFare.ceiling :
-      null;
-    const estimate = priorCeiling === null ?
+    const historyAmount = Array.isArray(ticket.towFeeHistory) ?
+      ticket.towFeeHistory.reduce((sum, entry) => {
+        if (typeof entry !== "object" || entry === null) return sum;
+        const amount = (entry as {amount?: unknown}).amount;
+        return sum + (typeof amount === "number" ? amount : 0);
+      }, 0) :
+      0;
+    const cap = typeof ticket.towFeeCap === "number" ?
+      Math.max(0, ticket.towFeeCap - historyAmount) :
+      ticket.towFare && typeof ticket.towFare.ceiling === "number" ?
+        ticket.towFare.ceiling :
+        null;
+    const estimate = cap === null ?
       quote.estimate :
-      Math.min(quote.estimate, priorCeiling);
+      Math.min(quote.estimate, cap);
     await dispatchRepository.update(ticketId, {
       towFare: {
         ...quote,
         estimate,
-        ceiling: priorCeiling ?? quote.ceiling,
+        ceiling: cap ?? quote.ceiling,
         final: null,
       },
     });

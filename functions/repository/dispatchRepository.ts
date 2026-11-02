@@ -49,8 +49,15 @@ interface DispatchTicket {
     quotedKm: number | null;
     actualKm: number | null;
     cappedKm: number | null;
+    loadedTraveledKm?: number | null;
+    breakdown?: boolean;
   } | null;
-  jobTrack?: Array<{lat: number; lng: number; at: string}>;
+  jobTrack?: Array<{
+    lat: number;
+    lng: number;
+    at: string;
+    shopId?: string | null;
+  }>;
   providerId?: string | null;
   providerSnapshot?: Record<string, unknown> | null;
   destinationShopId?: string | null;
@@ -68,6 +75,35 @@ interface DispatchTicket {
   vehicleClass?: string | null;
   vehicleLabel?: string | null;
   workType?: string | null;
+  quoteItems?: Array<{
+    name: string;
+    qty: number;
+    unitPrice: number;
+    amount: number;
+  }> | null;
+  invoiceItems?: Array<{
+    name: string;
+    qty: number;
+    unitPrice: number;
+    amount: number;
+  }> | null;
+  quoteVersion?: number;
+  invoiceAmount?: number | null;
+  invoiceApproval?: string | null;
+  invoiceVersion?: number;
+  invoiceApprovedAt?: string | null;
+  quoteHistory?: Array<{
+    version: number;
+    amount: number;
+    items: Array<{
+      name: string;
+      qty: number;
+      unitPrice: number;
+      amount: number;
+    }>;
+    at: string;
+    by: string;
+  }>;
   priceEstimate?: number | null;
   priceCurrency?: string | null;
   shopQuotedAmount?: number | null;
@@ -77,6 +113,38 @@ interface DispatchTicket {
   mobileCallOutFee?: number | null;
   mobileCallOutWaived?: boolean | null;
   mobileTravelFee?: number | null;
+  mobileFeeHistory?: Array<{
+    shopId: string;
+    shopName?: string | null;
+    callOutFee: number;
+    travelFee: number;
+    waived: boolean;
+    fixAmount?: number | null;
+    items?: Array<{
+      name: string;
+      qty: number;
+      unitPrice: number;
+      amount: number;
+    }>;
+    declinedAt: string;
+    reason?: string | null;
+  }>;
+  mobileFixApprovedAt?: string | null;
+  mobileFixDeclinedAt?: string | null;
+  mobileFixDeclineReason?: string | null;
+  quoteDeclinedAt?: string | null;
+  quoteDeclineReason?: string | null;
+  preQuoteStatus?: string | null;
+  towFeeHistory?: Array<{
+    shopId: string;
+    shopName?: string | null;
+    amount: number;
+    deadheadKm: number;
+    loadedKm: number;
+    at: string;
+    reasonCode?: string | null;
+  }>;
+  towFeeCap?: number | null;
   chatVersion?: number;
   chatHistory?: Array<{
     version: number;
@@ -154,6 +222,12 @@ interface DispatchTicket {
   expiresAt?: string | null;
   suggestedShopId?: string | null;
   assignedUid?: string | null;
+  assignedAt?: string | null;
+  loadedAt?: string | null;
+  towKind?: "NORMAL" | "RETURN" | null;
+  deliveredAt?: string | null;
+  deliveredBy?: string | null;
+  receivedAt?: string | null;
   assignedShopId?: string | null;
   assignedKind?: string | null;
   formerAssignedShopIds?: string[];
@@ -211,6 +285,7 @@ const create = async (data: {
   vehicleWidth?: number;
   vehicleClass?: string;
   vehicleLabel?: string;
+  towKind?: "NORMAL" | "RETURN";
   expiresAt?: string;
   sosAttempt?: number;
   continuedFromTicketId?: string | null;
@@ -268,6 +343,14 @@ const create = async (data: {
     chatVersion: 0,
     chatHistory: [],
     workType: null,
+    quoteItems: null,
+    invoiceItems: null,
+    quoteVersion: 0,
+    invoiceAmount: null,
+    invoiceApproval: null,
+    invoiceVersion: 0,
+    invoiceApprovedAt: null,
+    quoteHistory: [],
     priceEstimate: null,
     priceCurrency: "VND",
     shopQuotedAmount: null,
@@ -281,6 +364,12 @@ const create = async (data: {
     expiresAt: data.expiresAt ?? null,
     suggestedShopId: null,
     assignedUid: null,
+    assignedAt: null,
+    loadedAt: null,
+    towKind: data.towKind ?? null,
+    deliveredAt: null,
+    deliveredBy: null,
+    receivedAt: null,
     assignedShopId: null,
     assignedKind: null,
     candidates: [],
@@ -592,7 +681,7 @@ const findBusyUids = async (uids: string[]): Promise<Set<string>> => {
 
 const appendJobTrack = async (
   ticketId: string,
-  point: {lat: number; lng: number; at: string},
+  point: {lat: number; lng: number; at: string; shopId?: string | null},
 ): Promise<void> => {
   await db.collection("dispatch_tickets").doc(ticketId).update({
     jobTrack: FieldValue.arrayUnion(point),

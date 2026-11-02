@@ -10,6 +10,7 @@ export {
   getMyProviders as myProviders,
   getNearbyProviders,
   getNearbyProviders as nearProviders,
+  getProviderPricingLimits,
   searchProviders,
 } from "./search";
 export {

@@ -111,7 +111,7 @@ describe("payment create", () => {
     expect(reused).toHaveLength(1);
   });
 
-  it("rejects a different method while a charge is active", async () => {
+  it("rejects a cash-to-SePay switch while cash is active", async () => {
     const ticketId = await makeTicket();
     await create(ticketId, "CASH");
     const res = await create(ticketId, "SEPAY");
@@ -122,6 +122,24 @@ describe("payment create", () => {
       .where("ticketId", "==", ticketId)
       .get();
     expect(snaps.size).toBe(1);
+  });
+
+  it("cancels a pending charge and clears its guard", async () => {
+    const ticketId = await makeTicket();
+    const created = await create(ticketId, "CASH");
+    const res = await request(app)
+      .post("/payments/cancel")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId});
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({cancelled: true, method: "CASH"});
+    const old = await paymentDoc(created.body.data.id);
+    expect(old.status).toBe("CANCELLED");
+    const guard = await db.collection("payment_guards").doc(ticketId).get();
+    expect(guard.exists).toBe(false);
+    const fresh = await create(ticketId, "CASH");
+    expect(fresh.status).toBe(201);
+    expect(fresh.body.data.id).not.toBe(created.body.data.id);
   });
 
   it("requires the rider service to open a charge", async () => {

@@ -62,6 +62,27 @@ describe("dispatchService.createDispatch", () => {
     ).resolves.toBe(ticket);
   });
 
+  it("starts a new SOS with no inherited shop exclusions", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    const ticket = {id: "t1", status: "1"};
+    jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
+    await createDispatch({
+      userId: "u1",
+      ticketType: "SOS",
+      vehicleId: "v1",
+      lat: 1,
+      lng: 2,
+    });
+    expect(dispatchRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludedShopIds: [],
+        excludedOperatorUids: [],
+      }),
+    );
+  });
+
   it("rejects tow tickets without a destination", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
@@ -253,6 +274,66 @@ describe("dispatchService.createDispatch", () => {
       providerLocationRepository.findByGeohashPrefixes,
     ).mockResolvedValue([]);
     const ticket = {id: "t1", status: "1"};
+    jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
+    await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "SOS",
+        vehicleId: "v2",
+        lat: 1,
+        lng: 2,
+      }),
+    ).resolves.toBe(ticket);
+  });
+
+  it("refuses a second live SOS on another vehicle", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([
+      {
+        id: "sos1",
+        userId: "u1",
+        ticketType: "SOS",
+        status: "2",
+        vehicleId: "v1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ] as never);
+    await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "SOS",
+        vehicleId: "v2",
+        lat: 1,
+        lng: 2,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: "Rider already has a live SOS",
+      errors: {
+        ticketId: "sos1",
+        status: "2",
+        reason: "SOS_BUSY",
+      },
+    });
+    expect(dispatchRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("allows a new SOS after the previous SOS is terminal", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([
+      {
+        id: "sos1",
+        userId: "u1",
+        ticketType: "SOS",
+        status: "15",
+        vehicleId: "v1",
+      },
+    ] as never);
+    const ticket = {id: "t2", status: "1"};
     jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);
     await expect(
       createDispatch({

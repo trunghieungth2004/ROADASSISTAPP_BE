@@ -1,4 +1,6 @@
 import {spawnShopTicket} from "./tow";
+import {assertTransition} from "./assertTransition";
+export {assertTransition} from "./assertTransition";
 import type {PickupHistoryEntry} from "./types";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
@@ -15,7 +17,6 @@ import {autoFile, bumpCancelCounters} from "../../disputeService";
 import {startWaiting, stopWaiting} from "../waiting";
 import {
   NS,
-  TERMINAL_STATUSES,
   TOWER_CANCEL_SOURCE,
   VALID_STATUSES,
   TOWER_SEARCH_ACTIVE,
@@ -27,7 +28,7 @@ import {
   DISPUTE_TYPE,
 } from "../../../constants/disputes";
 import {PAYMENT_STATUS} from "../../../constants/payments";
-import {freezeTowLeg} from "../helpers";
+import {freezeTowLeg, trackedDeadheadKm} from "../helpers";
 
 import {
   actualDeadheadKm,
@@ -58,117 +59,6 @@ import {db, FieldValue} from "../../../config/firebase";
 import * as cacheManager from "../../../utils/cacheManager";
 
 import {logError} from "../../../utils/logger";
-
-
-export const assertTransition = ({
-  ticket,
-  status,
-  isRider,
-  isOperator,
-  isAssignee,
-  isAdmin,
-}: {
-  ticket: {status: string; ticketType: string; shopQuotedAmount?: unknown};
-  status: string;
-  isRider: boolean;
-  isOperator: boolean;
-  isAssignee: boolean;
-  isAdmin: boolean;
-}): void => {
-  if (isAdmin) return;
-  const from = ticket.status;
-  if (TERMINAL_STATUSES.has(from)) {
-    throw new ValidationError("Ticket is already closed");
-  }
-  const shopFlow = isOperator;
-  if (status === STATUS_DISPATCH.MATCHED) {
-    throw new ValidationError("Use accept to match a ticket");
-  }
-  if (status === STATUS_DISPATCH.ARRIVED) {
-    if (from === STATUS_DISPATCH.MATCHED && isRider) return;
-    throw new ForbiddenError("Only the rider marks arrival");
-  }
-  if (status === STATUS_DISPATCH.QUOTED ||
-    status === STATUS_DISPATCH.ESTIMATED ||
-    status === STATUS_DISPATCH.EST_APPROVED ||
-    status === STATUS_DISPATCH.FINAL_QUOTED ||
-    status === STATUS_DISPATCH.UNFIXABLE ||
-    status === STATUS_DISPATCH.RESOLVED_UNFIXABLE) {
-    throw new ValidationError("Quotes are sent, not set");
-  }
-  if (status === STATUS_DISPATCH.IN_SHOP) {
-    if (ticket.ticketType === "SOS" || ticket.ticketType === "TOW") {
-      throw new ForbiddenError("Work states are shop-ticket only");
-    }
-    if ((from === STATUS_DISPATCH.ARRIVED ||
-      from === STATUS_DISPATCH.MATCHED ||
-      from === STATUS_DISPATCH.QUOTED ||
-      from === STATUS_DISPATCH.EST_APPROVED) && shopFlow) return;
-    throw new ForbiddenError("Only the helper receives the vehicle");
-  }
-  if (status === STATUS_DISPATCH.IN_PROGRESS) {
-    if (ticket.ticketType === "SOS" || ticket.ticketType === "TOW") {
-      throw new ForbiddenError("Work states are shop-ticket only");
-    }
-    if (from === STATUS_DISPATCH.QUOTED) {
-      throw new ForbiddenError("Quote needs rider approval");
-    }
-    if (from === STATUS_DISPATCH.FINAL_QUOTED) {
-      throw new ForbiddenError("Quote needs rider approval");
-    }
-    const quoted = typeof ticket.shopQuotedAmount === "number";
-    const arrived = from === STATUS_DISPATCH.MATCHED &&
-      ticket.ticketType === "WALK_IN" && !quoted;
-    if ((from === STATUS_DISPATCH.ARRIVED || arrived) && shopFlow) return;
-    throw new ForbiddenError("Only the helper starts work");
-  }
-  if (status === STATUS_DISPATCH.READY) {
-    if (ticket.ticketType === "SOS") {
-      if (from === STATUS_DISPATCH.ARRIVED && shopFlow) return;
-      throw new ForbiddenError("Only the mobile shop marks the fix complete");
-    }
-    if (ticket.ticketType === "TOW") {
-      throw new ForbiddenError("Work states are shop-ticket only");
-    }
-    if (from === STATUS_DISPATCH.IN_PROGRESS && shopFlow) return;
-    throw new ForbiddenError("Only the helper marks work ready");
-  }
-  if (status === STATUS_DISPATCH.RESOLVED) {
-    if ((from === STATUS_DISPATCH.ARRIVED ||
-      from === STATUS_DISPATCH.READY) && isRider) {
-      return;
-    }
-    throw new ForbiddenError("Only the rider resolves a ticket");
-  }
-  if (status === STATUS_DISPATCH.CANCELLED) {
-    if (isRider && ticket.ticketType === "SOS" &&
-      from === STATUS_DISPATCH.READY) {
-      throw new ForbiddenError("The mobile shop has completed the fix");
-    }
-    if (isRider && from !== STATUS_DISPATCH.IN_PROGRESS &&
-      from !== STATUS_DISPATCH.IN_SHOP) return;
-    if ((isOperator || isAssignee) && ticket.ticketType === "TOW" &&
-      (from === STATUS_DISPATCH.MATCHED || from === STATUS_DISPATCH.ARRIVED)) {
-      return;
-    }
-    if (isOperator && ticket.ticketType === "SOS" &&
-      from === STATUS_DISPATCH.MATCHED) {
-      return;
-    }
-    throw new ForbiddenError(
-      "Cannot cancel once work is underway",
-    );
-  }
-  if (status === STATUS_DISPATCH.DECLINED) {
-    if (from === STATUS_DISPATCH.PENDING &&
-      ticket.ticketType === "WALK_IN" && isOperator) {
-      return;
-    }
-    throw new ForbiddenError("Only the shop declines a walk-in");
-  }
-  throw new ValidationError("Invalid dispatch status");
-};
-
 
 export const updateDispatchStatus = async ({
   id,
@@ -238,6 +128,17 @@ export const updateDispatchStatus = async ({
       );
     }
   }
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.invoiceApproval === "PENDING") {
+    throw new ValidationError("Approve the updated invoice first");
+  }
+  if (status === STATUS_DISPATCH.RESOLVED) {
+    await paymentService.assertCashConfirmedForResolve({
+      ticketId: id,
+      ticketType: ticket.ticketType,
+      isAdmin,
+    });
+  }
   assertTransition({
     ticket: {
       status: ticket.status,
@@ -250,8 +151,17 @@ export const updateDispatchStatus = async ({
     isAssignee,
     isAdmin,
   });
-  if (status === STATUS_DISPATCH.ARRIVED && isRider &&
-    (ticket.ticketType === "SOS" || ticket.ticketType === "TOW")) {
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW" &&
+    ticket.status === STATUS_DISPATCH.ARRIVED &&
+    !isAdmin &&
+    (typeof ticket.loadedAt !== "string" || ticket.loadedAt === "")) {
+    throw new ValidationError("Mark loaded before delivering");
+  }
+  if (status === STATUS_DISPATCH.ARRIVED &&
+    (ticket.ticketType === "SOS" || ticket.ticketType === "TOW") &&
+    (isRider ||
+      (ticket.ticketType === "TOW" && (isOperator || isAssignee)))) {
     const providerId = typeof ticket.assignedShopId === "string" &&
       ticket.assignedShopId !== "" ?
       ticket.assignedShopId :
@@ -292,13 +202,15 @@ export const updateDispatchStatus = async ({
       ticket.destinationShopId !== "" ?
       ticket.destinationShopId as string :
       null;
+    const priorBefore = ticket.towFare as TowFareQuote | null | undefined;
+    const tracked = trackedDeadheadKm(ticket, towerId) ?? 0;
     await freezeTowLeg(id, {
       towLegs: ticket.towLegs,
       towDistanceMeters: ticket.towDistanceMeters,
       assignedShopId: ticket.assignedShopId,
       lat: ticket.lat,
       lng: ticket.lng,
-    }, destId);
+    }, destId, tracked);
     const fresh = await dispatchRepository.findById(id);
     const partialKm = actualDeadheadKm(fresh?.towLegs);
     const partial = partialTowFare({
@@ -307,6 +219,9 @@ export const updateDispatchStatus = async ({
         {}),
       night: isNightFare(new Date(), towRates.nightWindow),
       deadheadKm: partialKm,
+      ...(typeof priorBefore?.perKmFee === "number" ?
+        {perKmFee: priorBefore.perKmFee} :
+        {}),
       rates: towRates,
     });
     const prior = fresh?.towFare as TowFareQuote | null | undefined;
@@ -515,6 +430,15 @@ export const updateDispatchStatus = async ({
     }
   }
   await dispatchRepository.updateStatus(id, status, userId);
+  if (status === STATUS_DISPATCH.RESOLVED &&
+    ticket.ticketType === "TOW" &&
+    (isOperator || isAssignee)) {
+    await dispatchRepository.update(id, {
+      deliveredAt: new Date().toISOString(),
+      deliveredBy: userId,
+      receivedAt: null,
+    });
+  }
   await chatService.addSystemEvent(
     id,
     `Status changed: ${ticket.status} -> ${status}`,
@@ -554,12 +478,22 @@ export const updateDispatchStatus = async ({
       try {
         const linked = await dispatchRepository.findById(linkedId);
         if (linked && linked.ticketType === "WALK_IN" &&
-          linked.status === STATUS_DISPATCH.READY) {
-          await dispatchRepository.updateStatus(
-            linked.id,
-            STATUS_DISPATCH.RESOLVED,
-            userId,
-          );
+          linked.status === STATUS_DISPATCH.READY &&
+          linked.invoiceApproval !== "PENDING") {
+          try {
+            await paymentService.assertCashConfirmedForResolve({
+              ticketId: linked.id,
+              ticketType: linked.ticketType,
+              isAdmin,
+            });
+            await dispatchRepository.updateStatus(
+              linked.id,
+              STATUS_DISPATCH.RESOLVED,
+              userId,
+            );
+          } catch {
+            continue;
+          }
         }
       } catch {
         continue;
@@ -588,6 +522,7 @@ export const updateDispatchStatus = async ({
     }
   }
   if (status === STATUS_DISPATCH.ARRIVED && ticket.ticketType === "TOW" &&
+    ticket.towKind !== "RETURN" &&
     typeof ticket.assignedShopId === "string" && ticket.assignedShopId !== "") {
     try {
       await startWaiting(id);
@@ -596,18 +531,43 @@ export const updateDispatchStatus = async ({
     }
   }
   cacheManager.del(NS);
-  if (
+  const towerTowEvent = ticket.ticketType === "TOW" &&
+    (isOperator || isAssignee) &&
+    (status === STATUS_DISPATCH.ARRIVED ||
+      status === STATUS_DISPATCH.RESOLVED);
+  if (!towerTowEvent && (
     status === STATUS_DISPATCH.MATCHED ||
     status === STATUS_DISPATCH.ARRIVED ||
     status === STATUS_DISPATCH.RESOLVED ||
     status === STATUS_DISPATCH.IN_PROGRESS ||
     status === STATUS_DISPATCH.READY ||
     status === STATUS_DISPATCH.DECLINED
-  ) {
+  )) {
     await enqueueDispatchPush(id, `-status-${status}`);
   }
-  if (status === STATUS_DISPATCH.ARRIVED ||
-    status === STATUS_DISPATCH.RESOLVED) {
+  if (towerTowEvent) {
+    const arrived = status === STATUS_DISPATCH.ARRIVED;
+    const returnTow = ticket.towKind === "RETURN";
+    await enqueueDispatchPush(
+      id,
+      arrived ? "-tow-arrived-rider" : "-tow-delivered-rider",
+      {
+        audience: "rider",
+        urgent: "true",
+        title: arrived ?
+          (returnTow ? "Tow arrived at hangar" : "Tow arrived at pickup") :
+          (returnTow ? "Delivered to rider" : "Tow delivered"),
+        body: arrived ?
+          (returnTow ?
+            "The tower arrived at the hangar — tap to view" :
+            "The tower arrived at the pickup — tap to view") :
+          "The vehicle was delivered — confirm receipt",
+      },
+    );
+  }
+  if (!towerTowEvent && (
+    status === STATUS_DISPATCH.ARRIVED ||
+    status === STATUS_DISPATCH.RESOLVED)) {
     const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
       (v): v is string => typeof v === "string" && v !== "",
     );
@@ -633,13 +593,16 @@ export const updateDispatchStatus = async ({
         ticket.destinationShopId !== "" ?
         ticket.destinationShopId as string :
         null;
+      const priorBefore = ticket.towFare as TowFareQuote | null | undefined;
+      const towerId = ticket.assignedShopId as string;
+      const tracked = trackedDeadheadKm(ticket, towerId) ?? 0;
       await freezeTowLeg(id, {
         towLegs: ticket.towLegs,
         towDistanceMeters: ticket.towDistanceMeters,
         assignedShopId: ticket.assignedShopId,
         lat: ticket.lat,
         lng: ticket.lng,
-      }, destId);
+      }, destId, tracked);
       const fresh = await dispatchRepository.findById(id);
       partialKm = actualDeadheadKm(fresh?.towLegs);
       const partial = partialTowFare({
@@ -648,6 +611,9 @@ export const updateDispatchStatus = async ({
           {}),
         night: isNightFare(new Date(), towRates.nightWindow),
         deadheadKm: partialKm,
+        ...(typeof priorBefore?.perKmFee === "number" ?
+          {perKmFee: priorBefore.perKmFee} :
+          {}),
         rates: towRates,
       });
       const prior = fresh?.towFare as TowFareQuote | null | undefined;
@@ -674,6 +640,35 @@ export const updateDispatchStatus = async ({
       ticket.cancelledBy !== userId;
     if (!preserveTowerCancel) {
       await dispatchRepository.update(id, {cancelledBy: userId});
+    }
+    if (ticket.ticketType === "TOW" &&
+      ticket.towKind === "RETURN" &&
+      ticket.status !== STATUS_DISPATCH.ARRIVED) {
+      const links = Array.isArray(ticket.linkedTicketIds) ?
+        ticket.linkedTicketIds as string[] :
+        [];
+      for (const linkedId of links) {
+        const linked = await dispatchRepository.findById(linkedId);
+        if (!linked || linked.ticketType !== "WALK_IN" ||
+          (linked.status !== STATUS_DISPATCH.READY &&
+            linked.status !== STATUS_DISPATCH.UNFIXABLE)) {
+          continue;
+        }
+        const offer = linked.returnTowOffer;
+        if (!offer || offer.status !== "ACCEPTED") continue;
+        await dispatchRepository.update(linked.id, {
+          returnTowOffer: {
+            ...offer,
+            status: "PENDING",
+            at: new Date().toISOString(),
+          },
+        });
+        await enqueueDispatchPush(linked.id, "-return-tow-offer-again", {
+          audience: "rider",
+          title: "Return tow cancelled",
+          body: "Tap to request a return tow again",
+        });
+      }
     }
     await enqueueDispatchPush(id, "-cancelled-rider", {
       title: "Request cancelled",

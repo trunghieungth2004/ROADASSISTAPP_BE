@@ -99,14 +99,21 @@ export const acceptAsShop = async (
       haversineMeters(ticket.lat, ticket.lng, fix.lat, fix.lng) :
       null;
     const waived = meters !== null && meters <= MOBILE_SHOP_CALL_OUT_WAIVER_M;
-    mobileFees.mobileCallOutFee = waived ? 0 : MOBILE_SHOP_CALL_OUT_FEE;
+    const callOutFee = typeof shop.callOutFee === "number" ?
+      shop.callOutFee :
+      MOBILE_SHOP_CALL_OUT_FEE;
+    const travelPerKm = typeof shop.travelPerKmFee === "number" ?
+      shop.travelPerKmFee :
+      MOBILE_SHOP_TRAVEL_PER_KM;
+    mobileFees.mobileCallOutFee = waived ? 0 : callOutFee;
     mobileFees.mobileCallOutWaived = waived;
     mobileFees.mobileTravelFee = meters !== null ?
-      roundFare((meters / 1000) * MOBILE_SHOP_TRAVEL_PER_KM) :
+      roundFare((meters / 1000) * travelPerKm) :
       0;
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {
     assignedShopId: shopId,
+    assignedAt: new Date().toISOString(),
     assignedKind: shop.kind === PROVIDER_KIND.TOW ?
       HELPER_KIND.TOW :
       shop.kind === PROVIDER_KIND.MOBILE_SHOP ?
@@ -137,6 +144,7 @@ export const acceptAsShop = async (
     await stampTowFare(ticketId, ticket, shopId);
   }
   const fresh = await dispatchRepository.findById(ticketId);
+  let acceptNotice: {title: string; body: string} | null = null;
   if (fresh && ticket.ticketType === "TOW") {
     const fare = fresh.towFare as {estimate?: unknown} | null | undefined;
     const estimate = typeof fare?.estimate === "number" ? fare.estimate : null;
@@ -147,11 +155,7 @@ export const acceptAsShop = async (
       `Tow accepted. Estimated fare ${fareText} VND.` :
       "Tow accepted.";
     await chatService.addSystemEvent(ticketId, feeText);
-    await enqueueDispatchPush(ticketId, "-accepted-fee-rider", {
-      audience: "rider",
-      title: "Tow accepted",
-      body: feeText,
-    });
+    acceptNotice = {title: "Tow accepted", body: feeText};
   }
   if (fresh && ticket.ticketType === "SOS") {
     const callOut = typeof fresh.mobileCallOutFee === "number" ?
@@ -166,11 +170,7 @@ export const acceptAsShop = async (
       `Mobile shop accepted. Call-out ${callOutText} VND, ` +
       `travel ${travelText} VND.`;
     await chatService.addSystemEvent(ticketId, feeText);
-    await enqueueDispatchPush(ticketId, "-accepted-fee-rider", {
-      audience: "rider",
-      title: "Mobile shop accepted",
-      body: feeText,
-    });
+    acceptNotice = {title: "Mobile shop accepted", body: feeText};
   }
   cacheManager.del(NS);
   cacheManager.del("shop");
@@ -178,7 +178,7 @@ export const acceptAsShop = async (
   await enqueueDispatchPush(
     ticketId,
     `-status-${STATUS_DISPATCH.MATCHED}-rider`,
-    {audience: "rider"},
+    {audience: "rider", ...(acceptNotice ?? {})},
   );
   return {
     matched: true,

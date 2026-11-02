@@ -93,6 +93,16 @@ export const providersSchemas = {
       then: Joi.number().integer().min(0).max(99999).optional(),
       otherwise: Joi.forbidden(),
     }),
+    callOutFee: Joi.when("kind", {
+      is: "MOBILE_SHOP",
+      then: Joi.number().integer().min(0).max(999999999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    travelPerKmFee: Joi.when("kind", {
+      is: "MOBILE_SHOP",
+      then: Joi.number().integer().min(0).max(99999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
   }),
   updateProvider: Joi.object({
     providerId: strReq(),
@@ -116,6 +126,8 @@ export const providersSchemas = {
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
     towBaseFee: Joi.number().integer().min(0).max(999999999).optional(),
     towPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
+    callOutFee: Joi.number().integer().min(0).max(999999999).optional(),
+    travelPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
     accepting: Joi.boolean().optional(),
     lat: latAttr().optional(),
     lng: langAttr().optional(),

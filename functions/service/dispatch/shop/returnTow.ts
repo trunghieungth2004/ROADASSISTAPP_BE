@@ -1,10 +1,12 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
+import * as paymentRepository from "../../../repository/paymentRepository";
 
 
 import {NS} from "../constants";
 
 
 import {STATUS_DISPATCH} from "../../../constants/status";
+import {PAYMENT_METHOD, PAYMENT_STATUS} from "../../../constants/payments";
 
 
 import {createDispatch} from "../tickets";
@@ -35,13 +37,23 @@ export const respondReturnTow = async ({
     throw new ForbiddenError("Only the rider answers the return tow");
   }
   if (ticket.ticketType !== "WALK_IN" ||
-    ticket.status !== STATUS_DISPATCH.READY) {
+    (ticket.status !== STATUS_DISPATCH.READY &&
+      ticket.status !== STATUS_DISPATCH.UNFIXABLE)) {
     throw new ValidationError("The walk-in is not ready for a return tow");
   }
-  const offer = ticket.returnTowOffer;
-  if (!offer || offer.status !== "PENDING") {
+  const existing = ticket.returnTowOffer;
+  if (existing && existing.status !== "PENDING") {
     throw new ValidationError("No return tow awaiting an answer");
   }
+  const offer = existing ?? {
+    status: "PENDING",
+    shopId: typeof ticket.assignedShopId === "string" &&
+      ticket.assignedShopId !== "" ?
+      ticket.assignedShopId :
+      typeof ticket.providerId === "string" ? ticket.providerId : "",
+    by: userId,
+    at: new Date().toISOString(),
+  };
   if (!accept) {
     await dispatchRepository.update(ticketId, {
       returnTowOffer: {...offer, status: "DECLINED"},
@@ -52,12 +64,24 @@ export const respondReturnTow = async ({
   if (!destinationPoint) {
     throw new ValidationError("Rider location is required for a return tow");
   }
+  const payments = await paymentRepository.findByTicketId(ticketId);
+  const unconfirmedCash = payments.some((payment) =>
+    payment.method === PAYMENT_METHOD.CASH &&
+    (payment.status === PAYMENT_STATUS.PENDING ||
+      payment.status === PAYMENT_STATUS.PARTIAL));
+  if (unconfirmedCash) {
+    throw new ValidationError(
+      "Confirm the repair cash payment before requesting a return tow",
+    );
+  }
   const created = await createDispatch({
     userId,
     ticketType: "TOW",
     lat: ticket.lat,
     lng: ticket.lng,
     destinationPoint,
+    towKind: "RETURN",
+    sourceTicketId: ticketId,
     ...(typeof ticket.vehicleId === "string" ?
       {vehicleId: ticket.vehicleId} :
       {}),

@@ -4,11 +4,16 @@ import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as platformConfigService from
   "../../../service/platformConfigService";
+import * as sepayService from "../../../service/sepayService";
+import * as subscriptionService from
+  "../../../service/subscriptionService";
 import {
   auditLedger,
+  cancelPendingPayment,
   cancelPendingPayments,
   confirmCash,
   createPaymentForTicket,
+  handleSepayIpn,
   refund,
 } from "../../../service/paymentService";
 import {ForbiddenError} from "../../../utils/errors";
@@ -19,6 +24,7 @@ jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../service/platformConfigService");
 jest.mock("../../../service/sepayService");
+jest.mock("../../../service/subscriptionService");
 jest.mock("../../../service/push/payment", () => ({
   deliverOpened: jest.fn(async () => undefined),
   deliverReceived: jest.fn(async () => undefined),
@@ -68,6 +74,8 @@ beforeEach(() => {
   jest.mocked(paymentRepository.updateStatus).mockImplementation(
     async (id, status, fields) =>
       payment({id, status, ...fields}) as never);
+  jest.mocked(sepayService.cancelOrder)
+    .mockResolvedValue({ok: true, missing: false});
 });
 
 describe("createPaymentForTicket", () => {
@@ -105,6 +113,24 @@ describe("createPaymentForTicket", () => {
     );
   });
 
+  it("does not charge a normal re-match partial on rider cancel", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "TOW",
+      status: "5",
+      cancelledBy: "rider1",
+      assignedShopId: null,
+      towFare: {final: 20000, estimate: 200000, partial: true, waitingFee: 0},
+    } as never);
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    })).rejects.toMatchObject({statusCode: 400});
+    expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
+  });
+
   it("refuses a cancelled walk-in", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
@@ -119,6 +145,50 @@ describe("createPaymentForTicket", () => {
       ticketId: "t1",
       method: "CASH",
     })).rejects.toMatchObject({statusCode: 400});
+  });
+
+  it("bills prior mobile call-outs with the current fix", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "SOS",
+      status: "7",
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 15000,
+      finalAmount: 120000,
+      mobileFeeHistory: [
+        {shopId: "mobile0", callOutFee: 30000, travelFee: 5000},
+      ],
+    } as never);
+    await createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    });
+    expect(paymentRepository.createGuarded).toHaveBeenCalledWith(
+      expect.objectContaining({amount: 220000}),
+    );
+  });
+
+  it("bills a breakdown tow partial with the replacement fare", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "TOW",
+      status: "4",
+      assignedShopId: "tow1",
+      towFare: {final: 200000, estimate: 400000, waitingFee: 0},
+      towFeeHistory: [{shopId: "tow0", amount: 50000}],
+    } as never);
+    await createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    });
+    expect(paymentRepository.createGuarded).toHaveBeenCalledWith(
+      expect.objectContaining({amount: 250000}),
+    );
   });
 
   it("refuses a zero-amount waived SOS", async () => {
@@ -273,5 +343,238 @@ describe("auditLedger", () => {
       expected: "CONFIRMED",
       actual: "PENDING",
     }]);
+  });
+});
+
+describe("subscription payments", () => {
+  it("routes a planId request to the subscription service", async () => {
+    jest.mocked(subscriptionService.createSubscriptionPayment)
+      .mockResolvedValue({
+        ...payment({purpose: "SUBSCRIPTION"}),
+        checkout: {qrUrl: "https://bridge/checkout/pay1"},
+        reused: false,
+      } as never);
+    await createPaymentForTicket({
+      userId: "u1",
+      planId: "MONTHLY",
+      method: "SEPAY",
+    });
+    expect(subscriptionService.createSubscriptionPayment).toHaveBeenCalledWith({
+      userId: "u1",
+      planId: "MONTHLY",
+      method: "SEPAY",
+    });
+    expect(dispatchRepository.findById).not.toHaveBeenCalled();
+  });
+
+  it("activates a subscription from a paid SePay IPN", async () => {
+    const pending = payment({
+      id: "sub1",
+      ticketId: "SUB-u1-MONTHLY",
+      method: "SEPAY",
+      status: "PENDING",
+      amount: 200000,
+      qrRef: "RASUB1",
+      purpose: "SUBSCRIPTION",
+      subscriptionUid: "u1",
+      subscriptionPlanId: "MONTHLY",
+    });
+    const held = {
+      ...pending,
+      status: "HELD",
+      ipnRef: "tx1",
+    };
+    jest.mocked(paymentRepository.findByQrRef).mockResolvedValue(pending);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue(held);
+    await handleSepayIpn({
+      order: {
+        order_invoice_number: "RASUB1",
+        order_amount: "200000",
+      },
+      transaction: {
+        transaction_amount: "200000",
+        transaction_id: "tx1",
+      },
+    });
+    expect(paymentRepository.updateStatus).toHaveBeenCalledWith(
+      "sub1",
+      "HELD",
+      {ipnRef: "tx1"},
+    );
+    expect(subscriptionService.activateFromPayment)
+      .toHaveBeenCalledWith(held);
+  });
+
+  it("keeps subscription charges out of the ticket ledger audit", async () => {
+    jest.mocked(paymentRepository.findAll).mockResolvedValue([
+      payment({id: "sub1", ticketId: "SUB-u1-MONTHLY",
+        purpose: "SUBSCRIPTION"}),
+      payment({
+        id: "p1",
+        ticketId: "t1",
+        createdAt: "2026-10-01T00:00:00.000Z",
+      }),
+    ] as never);
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      {paymentStatus: "HELD"} as never);
+    const result = await auditLedger({});
+    expect(result.scanned).toBe(1);
+    expect(result.tickets).toBe(1);
+  });
+});
+
+describe("payment method switching", () => {
+  const ticket = {
+    id: "t1",
+    userId: "rider1",
+    ticketType: "WALK_IN",
+    status: "6",
+    shopQuotedAmount: 100000,
+    assignedUid: "payee1",
+  };
+
+  it("switches pending SePay to cash", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "SEPAY", status: "PENDING", qrRef: "QR1"}),
+    ] as never);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue(
+      payment({method: "SEPAY", status: "CANCELLED", qrRef: "QR1"}) as never);
+    jest.mocked(paymentRepository.createGuarded).mockResolvedValue({
+      payment: payment({method: "CASH", status: "PENDING"}),
+      reused: false,
+    } as never);
+    const result = await createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    });
+    expect(sepayService.cancelOrder).toHaveBeenCalledWith("QR1");
+    expect(paymentRepository.updateStatus).toHaveBeenCalledWith(
+      "pay1",
+      "CANCELLED",
+    );
+    expect(paymentRepository.clearGuard).toHaveBeenCalledWith("t1", "pay1");
+    expect(paymentRepository.createGuarded).toHaveBeenCalledWith(
+      expect.objectContaining({method: "CASH"}),
+    );
+    expect(result.method).toBe("CASH");
+  });
+
+  it("does not switch when SePay is already captured", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "SEPAY", status: "PENDING", qrRef: "QR1"}),
+    ] as never);
+    jest.mocked(sepayService.cancelOrder).mockResolvedValue({
+      ok: false,
+      missing: false,
+      message: "order already captured",
+    });
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    })).rejects.toThrow("order already captured");
+    expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
+    expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
+  });
+
+  it("does not switch a held charge", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "SEPAY", status: "HELD", qrRef: "QR1"}),
+    ] as never);
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "CASH",
+    })).rejects.toThrow("refund required");
+    expect(sepayService.cancelOrder).not.toHaveBeenCalled();
+    expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
+  });
+
+  it("rejects switching cash to SePay", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "CASH", status: "PENDING"}),
+    ] as never);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue(
+      payment({method: "CASH", status: "CANCELLED"}) as never);
+    jest.mocked(paymentRepository.createGuarded).mockResolvedValue({
+      payment: payment({method: "SEPAY", status: "PENDING"}),
+      reused: false,
+    } as never);
+    await expect(createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "SEPAY",
+    })).rejects.toThrow("active payment");
+    expect(sepayService.cancelOrder).not.toHaveBeenCalled();
+    expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelPendingPayment", () => {
+  const ticket = {
+    id: "t1",
+    userId: "rider1",
+    ticketType: "WALK_IN",
+    status: "6",
+    shopQuotedAmount: 100000,
+  };
+
+  it("cancels a pending SePay charge and clears its guard", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "SEPAY", status: "PENDING", qrRef: "QR1"}),
+    ] as never);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue(
+      payment({method: "SEPAY", status: "CANCELLED"}) as never);
+    await expect(cancelPendingPayment({userId: "rider1", ticketId: "t1"}))
+      .resolves.toEqual({cancelled: true, method: "SEPAY"});
+    expect(sepayService.cancelOrder).toHaveBeenCalledWith("QR1");
+    expect(paymentRepository.updateStatus).toHaveBeenCalledWith(
+      "pay1",
+      "CANCELLED",
+    );
+    expect(paymentRepository.clearGuard).toHaveBeenCalledWith("t1", "pay1");
+  });
+
+  it("cancels a pending cash charge without calling SePay", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "CASH", status: "PENDING"}),
+    ] as never);
+    jest.mocked(paymentRepository.updateStatus).mockResolvedValue(
+      payment({method: "CASH", status: "CANCELLED"}) as never);
+    await expect(cancelPendingPayment({userId: "rider1", ticketId: "t1"}))
+      .resolves.toEqual({cancelled: true, method: "CASH"});
+    expect(sepayService.cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns false when there is no active charge", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({status: "CANCELLED"}),
+    ] as never);
+    await expect(cancelPendingPayment({userId: "rider1", ticketId: "t1"}))
+      .resolves.toEqual({cancelled: false, method: null});
+  });
+
+  it("refuses to cancel a held charge", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      payment({method: "SEPAY", status: "HELD"}),
+    ] as never);
+    await expect(cancelPendingPayment({userId: "rider1", ticketId: "t1"}))
+      .rejects.toThrow("refund required");
+    expect(paymentRepository.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses another rider", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
+    await expect(cancelPendingPayment({userId: "other", ticketId: "t1"}))
+      .rejects.toMatchObject({statusCode: 403});
   });
 });

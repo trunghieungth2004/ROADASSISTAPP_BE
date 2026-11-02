@@ -2,6 +2,7 @@ import * as userRepository from "../repository/userRepository";
 import * as vehicleProfileRepository from
   "../repository/vehicleProfileRepository";
 import * as providerRepository from "../repository/providerRepository";
+import * as subscriptionService from "./subscriptionService";
 import {normalizeVehicleType} from "../utils/vehicleType";
 import * as providerLocationRepository from
   "../repository/providerLocationRepository";
@@ -230,6 +231,8 @@ const me = async (userId: string) => {
         baseHeight: activeProfile.baseHeight,
       } :
       null,
+    subscription: subscriptionService.normalizeSubscription(user.subscription),
+    subscriptionPlans: subscriptionService.listPlans(),
   };
 };
 

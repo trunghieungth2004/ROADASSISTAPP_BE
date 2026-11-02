@@ -1,4 +1,9 @@
-import {normalizeShopServices, vehicleClassOf} from "./schedule";
+import {
+  normalizeMobileShopPricing,
+  normalizeShopServices,
+  normalizeTowPricing,
+  vehicleClassOf,
+} from "./schedule";
 import * as providerRepository from "../../repository/providerRepository";
 import * as dispatchRepository from "../../repository/dispatchRepository";
 
@@ -27,11 +32,51 @@ import {
   ValidationError,
 } from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
+import * as platformConfigService from "../platformConfigService";
 
 
 export const PLATE_SHAPE = /^\d{2}[A-Z0-9]{1,3}\d{4,6}$/;
 export const SHOP_NS = "shop";
 export const PROVIDER_NS = "provider";
+
+const applyProviderPricing = (
+  patch: Record<string, unknown>,
+  fields: {towBaseFee?: number; towPerKmFee?: number; callOutFee?: number;
+    travelPerKmFee?: number},
+  pricing: {
+    TOW: {baseMin: number; baseMax: number; perKmMin: number; perKmMax: number};
+    MOBILE_SHOP: {
+      callOutMin: number;
+      callOutMax: number;
+      travelPerKmMin: number;
+      travelPerKmMax: number;
+    };
+  },
+): void => {
+  if (fields.towBaseFee !== undefined || fields.towPerKmFee !== undefined) {
+    Object.assign(patch, normalizeTowPricing({
+      ...(fields.towBaseFee !== undefined ?
+        {towBaseFee: fields.towBaseFee} :
+        {}),
+      ...(fields.towPerKmFee !== undefined ?
+        {towPerKmFee: fields.towPerKmFee} :
+        {}),
+      bounds: pricing.TOW,
+    }));
+  }
+  if (fields.callOutFee !== undefined ||
+    fields.travelPerKmFee !== undefined) {
+    Object.assign(patch, normalizeMobileShopPricing({
+      ...(fields.callOutFee !== undefined ?
+        {callOutFee: fields.callOutFee} :
+        {}),
+      ...(fields.travelPerKmFee !== undefined ?
+        {travelPerKmFee: fields.travelPerKmFee} :
+        {}),
+      bounds: pricing.MOBILE_SHOP,
+    }));
+  }
+};
 
 export const createShopProvider = async ({
   userId,
@@ -102,6 +147,8 @@ export const createMobileShopProvider = async ({
   vehicleType,
   licenseNumber,
   licensePhotoUrl,
+  callOutFee,
+  travelPerKmFee,
 }: {
   userId: string;
   name: string;
@@ -112,6 +159,8 @@ export const createMobileShopProvider = async ({
   vehicleType: string;
   licenseNumber: string;
   licensePhotoUrl?: string;
+  callOutFee?: number;
+  travelPerKmFee?: number;
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
@@ -125,6 +174,12 @@ export const createMobileShopProvider = async ({
   if (!PLATE_SHAPE.test(normalizedPlate)) {
     throw new ValidationError("Plate number has an invalid shape");
   }
+  const config = await platformConfigService.getConfig();
+  const pricing = normalizeMobileShopPricing({
+    callOutFee,
+    travelPerKmFee,
+    bounds: config.providerPricing.MOBILE_SHOP,
+  });
   const operated = await providerRepository.findByOperator(userId);
   if (operated.some((p) => p.kind === PROVIDER_KIND.MOBILE_SHOP &&
     p.status !== PROVIDER_STATUS.DENIED)) {
@@ -154,6 +209,7 @@ export const createMobileShopProvider = async ({
     vehicleType,
     vehicleWidth: VEHICLE_DEFAULT_WIDTH[vehicleType] ?? null,
     vehicleProfileId: linkedProfileId,
+    ...pricing,
   });
   let vehicleProfileId = linkedProfileId;
   if (!vehicleProfileId) {
@@ -208,6 +264,12 @@ export const createTowProvider = async ({
   if (!PLATE_SHAPE.test(normalized)) {
     throw new ValidationError("Plate number has an invalid shape");
   }
+  const config = await platformConfigService.getConfig();
+  const pricing = normalizeTowPricing({
+    towBaseFee,
+    towPerKmFee,
+    bounds: config.providerPricing.TOW,
+  });
   const operated = await providerRepository.findByOperator(userId);
   if (operated.some((p) => p.kind === PROVIDER_KIND.TOW &&
     p.status !== PROVIDER_STATUS.DENIED)) {
@@ -235,8 +297,7 @@ export const createTowProvider = async ({
       vehicleType,
       vehicleWidth: vehicleWidth ?? VEHICLE_DEFAULT_WIDTH.CAR,
       vehicleProfileId: linkedProfileId,
-      towBaseFee,
-      towPerKmFee,
+      ...pricing,
     });
     let vehicleProfileId = linkedProfileId;
     if (!vehicleProfileId) {
@@ -286,6 +347,8 @@ export const updateProvider = async ({
     vehicleWidth?: number;
     towBaseFee?: number;
     towPerKmFee?: number;
+    callOutFee?: number;
+    travelPerKmFee?: number;
     accepting?: boolean;
     lat?: number;
     lng?: number;
@@ -374,6 +437,11 @@ export const updateProvider = async ({
     provider.kind !== PROVIDER_KIND.TOW) {
     throw new ValidationError("Tow fees are tow-only");
   }
+  if ((fields.callOutFee !== undefined ||
+    fields.travelPerKmFee !== undefined) &&
+    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+    throw new ValidationError("Mobile-shop fees are mobile-shop-only");
+  }
   const patch: Record<string, unknown> = {};
   if (fields.name !== undefined) {
     patch.name = fields.name;
@@ -396,6 +464,8 @@ export const updateProvider = async ({
     patch.services = normalizeShopServices(fields.services);
   }
   if (fields.serviceFee !== undefined) patch.serviceFee = fields.serviceFee;
+  const config = await platformConfigService.getConfig();
+  applyProviderPricing(patch, fields, config.providerPricing);
   if (fields.licenseNumber !== undefined) {
     patch.licenseNumber = fields.licenseNumber;
   }

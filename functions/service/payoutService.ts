@@ -9,6 +9,7 @@ import {
   PAYOUT_LIST_LIMIT,
   PAYOUT_LIST_MAX,
 } from "../constants/payments";
+import {SUBSCRIPTION_PURPOSE} from "../constants/subscriptions";
 import {NotFoundError, ValidationError} from "../utils/errors";
 
 type Payment = paymentRepository.Payment;
@@ -39,6 +40,7 @@ const byCreatedDesc = (a: Payment, b: Payment): number => {
 };
 
 const isSettleable = (payment: Payment): boolean =>
+  payment.purpose !== SUBSCRIPTION_PURPOSE &&
   PAYMENT_RECEIVED_STATUSES.includes(payment.status) &&
   !nonEmpty(payment.payoutAt) &&
   !nonEmpty(payment.payoutBatchId);

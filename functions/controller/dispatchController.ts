@@ -190,7 +190,7 @@ const declineDispatch = async (req: Request, res: Response) => {
 const updateWorkOrder = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, workType, quotedAmount, finalAmount, invoiceRef} =
+    const {ticketId, workType, quotedAmount, finalAmount, invoiceRef, items} =
       req.body;
     const result = await dispatchService.updateWorkOrder({
       userId,
@@ -199,7 +199,34 @@ const updateWorkOrder = async (req: Request, res: Response) => {
       quotedAmount,
       finalAmount,
       invoiceRef,
+      items,
     });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const declineQuote = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason} = req.body;
+    const result = await dispatchService.declineQuote({
+      userId,
+      ticketId,
+      reason,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const approveInvoice = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.approveInvoice({userId, ticketId});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -209,7 +236,7 @@ const updateWorkOrder = async (req: Request, res: Response) => {
 const sendQuote = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, quotedAmount, finalAmount, workType, faultPhotos} =
+    const {ticketId, quotedAmount, finalAmount, workType, faultPhotos, items} =
       req.body;
     const result = await dispatchService.sendQuote({
       userId,
@@ -218,6 +245,7 @@ const sendQuote = async (req: Request, res: Response) => {
       finalAmount,
       workType,
       faultPhotos,
+      items,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -271,11 +299,38 @@ const declineEstimate = async (req: Request, res: Response) => {
 const setMobileShopFix = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, fixAmount} = req.body;
+    const {ticketId, fixAmount, items} = req.body;
     const result = await dispatchService.setMobileShopFix({
       userId,
       ticketId,
       fixAmount,
+      items,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const approveMobileFix = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.approveMobileFix({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const declineMobileFix = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason} = req.body;
+    const result = await dispatchService.declineMobileFix({
+      userId,
+      ticketId,
+      reason,
     });
     sendSuccess(res, result);
   } catch (error) {
@@ -381,6 +436,28 @@ const declineDestination = async (req: Request, res: Response) => {
       ticketId,
       reasonCode,
     });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const markTowLoaded = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.markTowLoaded({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const confirmTowReceived = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.confirmTowReceived({userId, ticketId});
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -538,12 +615,15 @@ export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
   sendQuote, sendEstimate, approveEstimate, declineEstimate, markUnfixable,
   setMobileShopFix,
+  approveMobileFix,
+  declineMobileFix,
   offerMobileShopTow,
   respondMobileShopTow,
   respondReturnTow,
   continueSos,
-  approveQuote, declineDestination, cancelTowerSearch, waitingStatus,
+  approveQuote, declineQuote, declineDestination, cancelTowerSearch,
+  markTowLoaded, confirmTowReceived, waitingStatus,
   refreshTowEta, estimateTowFare,
-  updateWorkOrder, shopRequests, shopRecords, feedTickets,
+  updateWorkOrder, approveInvoice, shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
   deliverDispatch};

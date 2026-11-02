@@ -12,6 +12,10 @@ const valid = (): PlatformConfig => ({
   commissionRate: {...PLATFORM_CONFIG_DEFAULTS.commissionRate},
   nightWindow: {...PLATFORM_CONFIG_DEFAULTS.nightWindow},
   paymentMethodsEnabled: [...PLATFORM_CONFIG_DEFAULTS.paymentMethodsEnabled],
+  providerPricing: {
+    TOW: {...PLATFORM_CONFIG_DEFAULTS.providerPricing.TOW},
+    MOBILE_SHOP: {...PLATFORM_CONFIG_DEFAULTS.providerPricing.MOBILE_SHOP},
+  },
   waitingGraceMinutes: PLATFORM_CONFIG_DEFAULTS.waitingGraceMin,
   waitingCapMinutes: PLATFORM_CONFIG_DEFAULTS.waitingCapMin,
   waitingBlockMinutes: 15,
@@ -36,6 +40,16 @@ describe("validatePaymentConfig", () => {
       "refundPolicy",
       "towBaseFee",
       "waitingCapMin",
+    ]));
+  });
+
+  it("rejects inverted provider pricing bounds", () => {
+    const config = valid();
+    config.providerPricing.TOW.baseMin = 400000;
+    config.providerPricing.MOBILE_SHOP.travelPerKmMax = 1000;
+    expect(validatePaymentConfig(config)).toEqual(expect.arrayContaining([
+      "providerPricing.towBase",
+      "providerPricing.travelPerKm",
     ]));
   });
 

@@ -9,7 +9,8 @@ const createProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {kind, name, lat, lng, label, openHours, vehicleClasses,
       services, serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
-      towPerKmFee, licenseNumber, licensePhotoUrl} = req.body;
+      towPerKmFee, callOutFee, travelPerKmFee, licenseNumber,
+      licensePhotoUrl} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
         userId,
@@ -34,6 +35,8 @@ const createProvider = async (req: Request, res: Response) => {
           vehicleType,
           licenseNumber,
           licensePhotoUrl,
+          callOutFee,
+          travelPerKmFee,
         }) :
         await providerService.createShopProvider({
           userId,
@@ -57,7 +60,8 @@ const updateProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {providerId, name, label, openHours, vehicleClasses, services,
       serviceFee, licenseNumber, licensePhotoUrl, plate, vehicleType,
-      vehicleWidth, towBaseFee, towPerKmFee, accepting, lat, lng} = req.body;
+      vehicleWidth, towBaseFee, towPerKmFee, callOutFee, travelPerKmFee,
+      accepting, lat, lng} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
@@ -75,6 +79,8 @@ const updateProvider = async (req: Request, res: Response) => {
         vehicleWidth,
         towBaseFee,
         towPerKmFee,
+        callOutFee,
+        travelPerKmFee,
         accepting,
         lat,
         lng,
@@ -90,6 +96,15 @@ const myProviders = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const result = await providerService.getMyProviders({userId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const getPricingLimits = async (_req: Request, res: Response) => {
+  try {
+    const result = await providerService.getProviderPricingLimits();
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -278,7 +293,7 @@ const providerRatings = async (req: Request, res: Response) => {
   }
 };
 
-export {createProvider, updateProvider, myProviders, nearProviders,
-  searchProviders, providerRatings,
+export {createProvider, updateProvider, myProviders, getPricingLimits,
+  nearProviders, searchProviders, providerRatings,
   listPending, reviewProvider, reportProvider, listReports, dismissReport,
   suspendProvider, restoreProvider, revokeProvider, updateProviderLocation};

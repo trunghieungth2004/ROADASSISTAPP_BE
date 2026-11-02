@@ -1,3 +1,4 @@
+export {confirmTowReceived, markTowLoaded} from "./tow";
 export {createDispatch} from "./create";
 export {getMyTickets, getDispatch} from "./read";
 export {assertTransition, updateDispatchStatus} from "./transition";

@@ -2,13 +2,16 @@ import {beforeEach, describe, expect, jest, test} from "@jest/globals";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
+import * as paymentRepository from "../../../repository/paymentRepository";
 import {
   offerMobileShopTow,
   respondMobileShopTow,
+  respondReturnTow,
 } from "../../../service/dispatch/shop";
 import {createDispatch} from "../../../service/dispatch/tickets";
 import {acceptDispatch} from "../../../service/dispatch/accept";
 import {continueSos} from "../../../service/dispatch/sos";
+import {enqueueDispatchPush} from "../../../service/taskQueueService";
 
 jest.mock("../../../repository/dispatchRepository");
 jest.mock("../../../repository/providerRepository");
@@ -58,6 +61,7 @@ beforeEach(() => {
   jest.mocked(dispatchRepository.findActiveForShop).mockResolvedValue([]);
   jest.mocked(dispatchRepository.update).mockResolvedValue(undefined);
   jest.mocked(dispatchRepository.updateStatus).mockResolvedValue(undefined);
+  jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([]);
   jest.mocked(userRepository.findById).mockResolvedValue({
     id: "op1",
     role: "2",
@@ -273,6 +277,17 @@ describe("respondMobileShopTow", () => {
         ticketId: "towNew",
         shopId: "tow1",
       });
+      expect(enqueueDispatchPush).toHaveBeenCalledTimes(1);
+      expect(enqueueDispatchPush).toHaveBeenCalledWith(
+        "towNew",
+        "-mobile-tow-assigned",
+        expect.objectContaining({audience: "operator"}),
+      );
+      expect(enqueueDispatchPush).not.toHaveBeenCalledWith(
+        "sos1",
+        "-mobile-tow-accepted-shop",
+        expect.anything(),
+      );
     });
 
   test("creates a pending broadcast TOW for a network offer", async () => {
@@ -367,5 +382,105 @@ describe("respondMobileShopTow", () => {
       ticketId: "sos1",
       accept: true,
     })).rejects.toMatchObject({statusCode: 400});
+  });
+});
+
+describe("respondReturnTow", () => {
+  const walkIn = {
+    id: "walk1",
+    userId: "rider1",
+    ticketType: "WALK_IN",
+    status: "7",
+    lat: 10.7,
+    lng: 106.6,
+    returnTowOffer: {
+      status: "PENDING",
+      shopId: "shop1",
+      by: "op1",
+      at: "2026-01-01T00:00:00.000Z",
+    },
+  };
+
+  test("creates a return tow with a label", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(walkIn as never);
+    jest.mocked(createDispatch).mockResolvedValue({id: "towReturn"} as never);
+    await expect(respondReturnTow({
+      userId: "rider1",
+      ticketId: "walk1",
+      accept: true,
+      destinationPoint: {lat: 10.8, lng: 106.7, label: "Home street"},
+    })).resolves.toEqual({accepted: true, ticketId: "towReturn"});
+    expect(createDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      ticketType: "TOW",
+      towKind: "RETURN",
+      destinationPoint: {lat: 10.8, lng: 106.7, label: "Home street"},
+    }));
+  });
+
+  test("accepts a return tow from an unfixable walk-in", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      ...walkIn,
+      status: "15",
+    } as never);
+    jest.mocked(createDispatch).mockResolvedValue({id: "towReturn"} as never);
+    await expect(respondReturnTow({
+      userId: "rider1",
+      ticketId: "walk1",
+      accept: true,
+      destinationPoint: {lat: 10.8, lng: 106.7, label: "Home street"},
+    })).resolves.toEqual({accepted: true, ticketId: "towReturn"});
+  });
+
+  test("accepts an old return tow without a stored offer", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      ...walkIn,
+      status: "15",
+      returnTowOffer: null,
+    } as never);
+    jest.mocked(createDispatch).mockResolvedValue({id: "towReturn"} as never);
+    await expect(respondReturnTow({
+      userId: "rider1",
+      ticketId: "walk1",
+      accept: true,
+      destinationPoint: {lat: 10.8, lng: 106.7, label: "Home street"},
+    })).resolves.toEqual({accepted: true, ticketId: "towReturn"});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "walk1",
+      expect.objectContaining({
+        returnTowOffer: expect.objectContaining({status: "ACCEPTED"}),
+      }),
+    );
+  });
+
+  test("declines an old return tow without a stored offer", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      ...walkIn,
+      status: "15",
+      returnTowOffer: null,
+    } as never);
+    await expect(respondReturnTow({
+      userId: "rider1",
+      ticketId: "walk1",
+      accept: false,
+    })).resolves.toEqual({accepted: false});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "walk1",
+      {returnTowOffer: expect.objectContaining({status: "DECLINED"})},
+    );
+    expect(createDispatch).not.toHaveBeenCalled();
+  });
+
+  test("blocks an unconfirmed cash walk-in", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(walkIn as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "p1", method: "CASH", status: "PENDING"},
+    ] as never);
+    await expect(respondReturnTow({
+      userId: "rider1",
+      ticketId: "walk1",
+      accept: true,
+      destinationPoint: {lat: 10.8, lng: 106.7, label: "Home street"},
+    })).rejects.toMatchObject({statusCode: 400});
+    expect(createDispatch).not.toHaveBeenCalled();
   });
 });

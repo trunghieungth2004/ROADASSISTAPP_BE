@@ -24,7 +24,7 @@ describe("docs drift guard", () => {
       "enum: SHOP, MOBILE, TOW",
     ];
     const docs = ["API.md", "SCHEMA.md", "ARCHITECTURE.md", "TESTING.md",
-      "DEPLOY.md", "PRICING.md"].map(readDoc).join("\n");
+      "DEPLOY.md", "PAYMENTS.md"].map(readDoc).join("\n");
     for (const token of retired) {
       expect(docs).not.toContain(token);
     }

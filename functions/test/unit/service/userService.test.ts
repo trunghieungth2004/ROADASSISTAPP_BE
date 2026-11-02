@@ -231,6 +231,27 @@ describe("userService.me", () => {
     const result = await me("u1");
     expect(result.user.services).toEqual(["RIDER"]);
   });
+
+  it("returns the subscription and the plan catalog", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      activeVehicleId: null,
+      subscription: {
+        planId: "MONTHLY",
+        startedAt: "2026-11-01T00:00:00.000Z",
+        expiresAt: new Date(Date.now() + 86400000).toISOString(),
+        lastPaymentId: "pay1",
+      },
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([]);
+    const result = await me("u1");
+    expect(result.subscription).toMatchObject({
+      planId: "MONTHLY",
+      status: "ACTIVE",
+    });
+    expect(result.subscriptionPlans).toHaveLength(3);
+  });
 });
 
 describe("userService.setActiveVehicle", () => {

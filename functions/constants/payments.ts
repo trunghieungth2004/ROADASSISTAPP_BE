@@ -115,6 +115,20 @@ const PLATFORM_CONFIG_DEFAULTS = {
   deadheadPayable: true,
   paymentMethodsEnabled: [PAYMENT_METHOD.CASH, PAYMENT_METHOD.SEPAY],
   refundPolicy: REFUND_POLICY.FULL,
+  providerPricing: {
+    TOW: {
+      baseMin: 100000,
+      baseMax: 300000,
+      perKmMin: 8000,
+      perKmMax: 15000,
+    },
+    MOBILE_SHOP: {
+      callOutMin: 0,
+      callOutMax: 100000,
+      travelPerKmMin: 3000,
+      travelPerKmMax: 10000,
+    },
+  },
 };
 
 const PLATFORM_CONFIG_COLLECTION = "platform_config";
@@ -139,6 +153,7 @@ const PLATFORM_CONFIG_UPDATABLE_KEYS: string[] = [
   "deadheadPayable",
   "paymentMethodsEnabled",
   "refundPolicy",
+  "providerPricing",
 ];
 
 export {

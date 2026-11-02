@@ -204,26 +204,32 @@ the name (a repeated suffix silently swallows the later push):
 | Tow resolves at an off-duty shop | `-dropoff-arrived` | destination shop (carried) | "Tow drop-off arrived" | destination shop active but off-duty; forced walk-in spawn |
 | Destination retargeted to shop | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | new destinationShopId set |
 | Destination moved away from shop | `-dropped-<shopId>` | previous shop (carried) | "Drop-off changed" | previous ≠ new, both set |
-| Accept (shop/tower/mobile shop) | `-status-2-rider` | rider (explicit) | per-type matched body | always on accept |
-| Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | listed statuses only |
-| Arrived/resolved + engaged shop | `-status-3/4-operator` | operator (urgent) | "Arrival confirmed" / "Ticket resolved" | assigned/addressed |
-| Quote approved | `-status-6-operator` | operator | "Quote approved" | always on approve |
+| Accept (shop/tower/mobile shop) | `-status-2-rider` | rider (explicit) | per-type matched body; TOW/SOS carry the fare or call-out/travel in the same push | always on accept, one rider push |
+| Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | non-TOW listed statuses only |
+| Tower arrived | `-tow-arrived-rider` | rider (urgent) | "Tow arrived at pickup" / "Tow arrived at hangar" | TOW tower marks `2→3`; no generic status push |
+| Tower delivered | `-tow-delivered-rider` | rider (urgent) | "Tow delivered" / "Delivered to rider" | TOW tower marks `3→4` after `loadedAt`; no generic status push |
+| Rider confirmed receipt | `-tow-received-operator` | operator | "Rider confirmed receipt" | `POST /dispatch/tow/received` |
+| Arrived/resolved + engaged shop | `-status-3/4-operator` | operator (urgent) | "Arrival confirmed" / "Ticket resolved" | non-TOW rider actions only |
+| Quote approved | `-quote-approved-<timestamp>` | operator (urgent) | "Quote approved" | always on approve |
 | Estimate sent | `-status-13` | rider | per-status body (`ESTIMATED`) | always on send |
 | Estimate approved | `-status-14-operator` | operator | "Estimate approved" | always on approve |
 | Estimate declined | `-estimate-declined-operator` | operator | "Estimate declined" | always on decline |
-| Quote sent (first stage) | `-status-9` | rider | "Your shop sent a quote" | always on send |
+| Quote sent (first stage) | `-status-9-<version/timestamp>` | rider | "Your shop sent a quote" | shop quote (version suffix) or SOS mobile-fix quote (timestamp suffix) |
+| Quote declined | `-quote-declined-operator-<timestamp>` | operator (urgent) | "Quote declined" | rider declines a WALK_IN/MECHANIC quote; ticket returns to `3`; no rider push |
+| Mobile fix approved | `-status-7` / `-mobile-fix-approved-operator-<timestamp>` | rider / operator (urgent) | per-status body (`READY`) / "Fix quote approved" | rider approves an SOS fix quote |
+| Mobile fix declined | `-mobile-fix-declined-<timestamp>` / `-mobile-fix-declined-shop-<timestamp>` | mobile-shop candidates / declined shop (urgent) | "SOS request near you" / "Fix quote declined" | rider declines an SOS fix quote; shop excluded and chat archived |
 | Binding final sent | `-status-11` | rider | per-status body (`FINAL_QUOTED`) | always on final |
-| Unfixable close | `-status-15` | rider (urgent) | "Marked unfixable" | always on mark |
+| Unfixable close | `-status-15` | rider (urgent) | "Marked unfixable" / "Tow it back to you?" | only when no continuation-specific rider alert follows; WALK_IN/MECHANIC also creates a return-tow offer |
 | Unfixable continuation | `-unfix-grace-*` / `-unfix-continued-rider` / `-unfix-no-candidates` | rider | "Requesting another mobile shop" / "No other mobile shops nearby" | immediate when no direct or network TOW is available; otherwise 2-minute grace |
 | Mobile tow offer | `-mobile-tow-offer` | rider (urgent) | "Tow offer" / "Tow request" + `action: mobile-tow-offer` | `DIRECT` (same-vehicle TOW) or `NETWORK`; 15-minute expiry task |
 | Mobile tow network requested | `-mobile-tow-network-shop` / `-mobile-tow-network-rider` | mobile-shop operator / rider | "Tow requested" / "Finding a tow truck" | rider confirms a `NETWORK` offer; pending TOW broadcast |
-| Mobile tow accepted | `-mobile-tow-accepted-shop` | mobile shop operator | "Tow offer accepted" | rider accepts |
-| Mobile tow assigned | `-mobile-tow-assigned` | same-vehicle TOW operator | "Tow job assigned" | direct accept succeeds |
+| Mobile tow assigned | `-mobile-tow-assigned` | same-vehicle TOW operator | "Tow job assigned" | direct accept succeeds; this is the single operator alert |
+| Return tow reopened | `-return-tow-offer-again` | rider | "Return tow cancelled" | rider cancels the return TOW before tower arrival |
 | Mobile tow declined/expired | `-mobile-tow-declined-shop` / `-mobile-tow-expired-shop` | mobile shop operator | "Tow offer declined" / "Tow offer expired" | rider declines or task fires |
 | SOS continuation | `-sos-continued-rider` / `-mobile-tow-expired-rider` | rider | "Requesting another mobile shop" | automatic attempt 1, explicit attempt 3+ |
 | Work saved without quote | — | none | — | silent by design |
 | Manual cancel | `-cancelled-rider` | rider | "Request cancelled" | always |
-| Tower mid-trip re-match | `-rematch-rider` / `-rematch-towers` | rider (urgent) + tower-candidates | "Finding another tower" (+ km on record) / "Tow request available" | engaged tower at `2`/`3` via `POST /dispatch/tower/cancel`; freezes the leg + partial, requeues to `1` with `towerSearch: "ACTIVE"`, auto-files a dispute |
+| Tower mid-trip re-match | `-rematch-rider` / `-rematch-towers` | rider (urgent) + tower-candidates | "Finding another tower" (+ km on record) / "Tow request available" | engaged tower at `2`/`3` via `POST /dispatch/tower/cancel`; freezes the leg + partial, requeues to `1` with `towerSearch: "ACTIVE"`, auto-files a dispute. A genuine breakdown says "The tower broke down", appends `towFeeHistory` (loaded distance included when `loadedAt` is set), and skips the dispute/counters. |
 | Legacy status-path tower cancel | `-cancelled-rider` / `-requeue-towers` | rider (explicit) + towers (recomputed), leg freeze | "Tow cancelled by tower" (+ km on record) | engaged tower at `2`/`3` via `PUT /dispatch/status`; writes `cancelledBy`, freezes the traveled leg, requeues, operator + destination copies name the tower |
 | Tow fare estimate | — | viewer (ephemeral) | `POST /dispatch/fare/estimate` | pending TOW only; deadhead from the given position, loaded from the destination; display-only, never stored |
 | Pending-TOW cancel | `-cancelled-towers` | tower-candidates (recomputed) | "Tow request withdrawn" | was pending TOW |
@@ -295,7 +301,7 @@ secret lives in git-crypt as break-glass for reverts, not as a code path.
 
 ### Tow fare (platform rates, record-only)
 
-Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))` with bike 150k/10k/3km, car 500k/25k/10km, night 1.5× (22–06 ICT), class 1×/2.5×. The loaded leg is frozen at accept (tower eats detours); deadhead bills only on cancel partials from `actual` legs. Accept stamps `{estimate, ceiling}` (ceiling = estimate × 1.1, binding later restamps); resolve writes `final`; cancel writes a deadhead partial. `POST /dispatch/fare/estimate` previews pending tows from a viewer position (display-only, never stored). Charges collect through the payment rails (`PAYMENTS.md`): `CASH` confirmed by the operator (`PENDING → CONFIRMED`), `SEPAY` held on the IPN (`PENDING → HELD`), with the commission split snapshotted at charge creation from `platform_config/global`. Full rules in `PRICING.md`.
+Tower billing is formula-driven, unlike shop quotes: `fare = round1k(night × class × (base + perKm × max(0, loadedKm − includedKm)))` with platform fallbacks bike 150k/10k/3km, car 500k/25k/10km, night 1.5× (22–06 ICT), class 1×/2.5×; a TOW provider's own base/per-km overrides the car row within bounds. The loaded leg is frozen at accept (tower eats detours); deadhead bills only on cancel partials from `actual` legs, using traveled distance (a tower that never moved bills 0). Accept stamps `{estimate, ceiling}` (ceiling = estimate × 1.1, binding later restamps); resolve writes `final`; cancel writes a deadhead partial; a genuine breakdown adds loaded distance and records `towFeeHistory` with a replacement cap. `POST /dispatch/fare/estimate` previews pending tows from a viewer position (display-only, never stored). Charges collect through the payment rails (`PAYMENTS.md`): `CASH` confirmed by the operator (`PENDING → CONFIRMED`), `SEPAY` held on the IPN (`PENDING → HELD`), with the commission split snapshotted at charge creation from `platform_config/global`. Full rules in `PAYMENTS.md`.
 
 | Var | Default | Purpose |
 |---|---|---|

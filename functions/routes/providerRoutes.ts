@@ -46,6 +46,12 @@ export default (
     providerController.myProviders,
   );
   app.post(
+    "/providers/pricing",
+    requireAuth,
+    validate({body: schemas.myProviders}),
+    providerController.getPricingLimits,
+  );
+  app.post(
     "/providers/pending",
     requireAuth,
     requireRole("1"),
