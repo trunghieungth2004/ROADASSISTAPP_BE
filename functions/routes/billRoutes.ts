@@ -19,6 +19,12 @@ export default (
     billController.listPayee,
   );
   app.post(
+    "/bills/invoice",
+    requireAuth,
+    validate({body: schemas.billInvoice}),
+    billController.invoice,
+  );
+  app.post(
     "/bills/one",
     requireAuth,
     validate({body: schemas.billOne}),

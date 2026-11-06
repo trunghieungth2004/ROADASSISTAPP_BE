@@ -57,6 +57,11 @@ interface PlatformConfig {
   providerPricing: ProviderPricing;
   paymentMethodsEnabled: string[];
   refundPolicy: string;
+  features: {
+    quickFix: boolean;
+    towCashAtDelivery: boolean;
+    phoneMasking: boolean;
+  };
   updatedAt?: string | null;
   updatedBy?: string | null;
   [key: string]: unknown;
@@ -97,6 +102,7 @@ const get = async (): Promise<PlatformConfig> => {
   const commission = asRecord(raw.commissionRate);
   const nightWindow = asRecord(raw.nightWindow);
   const providerPricing = asRecord(raw.providerPricing);
+  const features = asRecord(raw.features);
   const towPricing = asRecord(providerPricing.TOW);
   const mobilePricing = asRecord(providerPricing.MOBILE_SHOP);
   const defaults = PLATFORM_CONFIG_DEFAULTS;
@@ -136,6 +142,11 @@ const get = async (): Promise<PlatformConfig> => {
       raw.carIncludedKm,
       defaults.carIncludedKm,
     ),
+    features: {
+      quickFix: asBoolean(features.quickFix, true),
+      towCashAtDelivery: asBoolean(features.towCashAtDelivery, true),
+      phoneMasking: asBoolean(features.phoneMasking, false),
+    },
     ceilingMultiplier: asNumber(
       raw.ceilingMultiplier,
       defaults.ceilingMultiplier,

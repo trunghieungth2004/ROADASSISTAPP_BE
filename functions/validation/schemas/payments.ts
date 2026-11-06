@@ -37,6 +37,9 @@ export const paymentsSchemas = {
   billsAll: Joi.object({
     limit: Joi.number().integer().min(1).max(BILL_LIST_MAX).optional(),
   }),
+  billInvoice: Joi.object({
+    ticketId: strReq(),
+  }),
   billOne: Joi.object({
     ticketId: Joi.string().trim().max(120).optional(),
     billId: Joi.string().trim().max(120).optional(),

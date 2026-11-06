@@ -2,6 +2,7 @@ import * as dispatchRepository from "../repository/dispatchRepository";
 import * as paymentRepository from "../repository/paymentRepository";
 import * as sepayService from "./sepayService";
 import {
+  DEPOSIT_PURPOSE,
   PAYMENT_ACTIVE_STATUSES,
   PAYMENT_METHOD,
   PAYMENT_STATUS,
@@ -67,6 +68,7 @@ const cancelPendingPayment = async ({
   }
   const payments = await paymentRepository.findByTicketId(ticketId);
   const active = payments.find((payment) =>
+    payment.purpose !== DEPOSIT_PURPOSE &&
     PAYMENT_ACTIVE_STATUSES.includes(payment.status));
   if (!active) return {cancelled: false, method: null};
   if (active.status !== PAYMENT_STATUS.PENDING) {

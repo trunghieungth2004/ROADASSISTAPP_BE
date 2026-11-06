@@ -1,6 +1,8 @@
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as payoutRepository from "../../../repository/payoutRepository";
 import * as userRepository from "../../../repository/userRepository";
+import * as commissionRepository from
+  "../../../repository/commissionRepository";
 import {
   listBatches,
   myPayouts,
@@ -12,6 +14,7 @@ import {ValidationError} from "../../../utils/errors";
 jest.mock("../../../repository/paymentRepository");
 jest.mock("../../../repository/payoutRepository");
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../repository/commissionRepository");
 
 const payment = (patch: Record<string, unknown> = {}) => ({
   id: "pay1",
@@ -65,6 +68,17 @@ const batch = (patch: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   jest.resetAllMocks();
+  (commissionRepository.owedTotalByPayee as jest.Mock).mockResolvedValue(0);
+  (commissionRepository.findAllOwed as jest.Mock).mockResolvedValue([]);
+  (payoutRepository.newId as jest.Mock).mockReturnValue("batch1");
+  (payoutRepository.applySettlement as jest.Mock).mockResolvedValue(
+    batch({id: "batch1"}));
+  (commissionRepository.planSettlement as jest.Mock).mockResolvedValue({
+    updates: [],
+    settled: 0,
+  });
+  (payoutRepository.countPendingRequests as jest.Mock).mockResolvedValue(0);
+  (payoutRepository.findRequestsByPayee as jest.Mock).mockResolvedValue([]);
 });
 
 describe("pendingSettlements", () => {
@@ -94,13 +108,17 @@ describe("pendingSettlements", () => {
   });
 
   it("filters by payee and resolves the payee name", async () => {
-    jest.mocked(paymentRepository.findByPayeeAll).mockResolvedValue([
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue([
       payment({id: "p1"}),
     ] as never);
     jest.mocked(userRepository.findByIds).mockResolvedValue(
       new Map([["shop1", {id: "shop1", displayName: "Fix Shop"} as never]]));
     const groups = await pendingSettlements({payeeId: "shop1"});
-    expect(paymentRepository.findByPayeeAll).toHaveBeenCalledWith("shop1");
+    expect(paymentRepository.findByPayeeStatuses).toHaveBeenCalledWith(
+      "shop1",
+      expect.any(Array),
+      expect.any(Number),
+    );
     expect(paymentRepository.findByReceived).not.toHaveBeenCalled();
     expect(groups[0]).toMatchObject({payeeId: "shop1", net: 90000});
   });
@@ -112,25 +130,59 @@ describe("settleBatch", () => {
       id: "shop1",
       displayName: "Fix Shop",
     } as never);
-    jest.mocked(paymentRepository.findByPayeeAll).mockResolvedValue([
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue([
       payment({id: "p1"}),
       payment({id: "p2", status: "HELD", ticketId: "t2"}),
     ] as never);
-    jest.mocked(payoutRepository.create).mockResolvedValue(
-      batch({id: "batch1", paymentIds: ["p1", "p2"]}));
     const result = await settleBatch({adminUid: "admin1", payeeId: "shop1"});
     expect(result.settled).toBe(2);
     expect(result.batch.id).toBe("batch1");
-    expect(payoutRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({payeeId: "shop1", gross: 200000, net: 180000}));
-    const call = jest.mocked(paymentRepository.update).mock.calls[0];
-    expect(call[0]).toBe("p1");
-    expect(call[1]).toMatchObject({
+    const apply = jest.mocked(payoutRepository.applySettlement);
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: "batch1",
+        batch: expect.objectContaining({
+          payeeId: "shop1",
+          gross: 200000,
+          net: 180000,
+        }),
+      }),
+    );
+    const stamps = apply.mock.calls[0][0].paymentStamps;
+    expect(stamps.map((stamp) => stamp.id)).toEqual(["p1", "p2"]);
+    expect(stamps[0].fields).toMatchObject({
       payoutBy: "admin1",
       payoutBatchId: "batch1",
     });
-    expect(call[1]?.payoutRef).toMatch(/^PO/);
-    expect(jest.mocked(paymentRepository.update).mock.calls[1][0]).toBe("p2");
+    expect(String(stamps[0].fields.payoutRef)).toMatch(/^PO/);
+  });
+
+  it("deducts outstanding cash commission from the batch", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "shop1",
+      displayName: "Fix Shop",
+    } as never);
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue([
+      payment({id: "p1"}),
+    ] as never);
+    (commissionRepository.owedTotalByPayee as jest.Mock)
+      .mockResolvedValue(30000);
+    (commissionRepository.planSettlement as jest.Mock).mockResolvedValue({
+      updates: [{id: "ledger1", fields: {settledAmount: 30000}}],
+      settled: 30000,
+    });
+    const result = await settleBatch({adminUid: "admin1", payeeId: "shop1"});
+    expect(result.commissionDeducted).toBe(30000);
+    expect(commissionRepository.planSettlement).toHaveBeenCalledWith(
+      "shop1",
+      30000,
+      {batchId: "batch1", settledBy: "admin1"},
+    );
+    expect(payoutRepository.applySettlement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ledgerStamps: [{id: "ledger1", fields: {settledAmount: 30000}}],
+      }),
+    );
   });
 
   it("rejects explicit payments from another payee", async () => {
@@ -180,7 +232,7 @@ describe("settleBatch", () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "shop1",
     } as never);
-    jest.mocked(paymentRepository.findByPayeeAll).mockResolvedValue(
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue(
       [] as never);
     await expect(settleBatch({adminUid: "admin1", payeeId: "shop1"}))
       .rejects.toThrow("No payments to settle");
@@ -195,7 +247,7 @@ describe("myPayouts", () => {
     jest.mocked(payoutRepository.findByPayee).mockResolvedValue([
       batch({}),
     ] as never);
-    jest.mocked(paymentRepository.findByPayeeAll).mockResolvedValue([
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue([
       payment({id: "p9", payoutAmount: 90000}),
     ] as never);
     const result = await myPayouts({userId: "shop1", limit: 5});

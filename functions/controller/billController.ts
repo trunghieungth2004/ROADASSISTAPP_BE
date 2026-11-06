@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import * as billService from "../service/billService";
+import * as invoiceService from "../service/invoiceService";
 import {sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
 
@@ -41,4 +42,17 @@ const getOne = async (req: Request, res: Response) => {
   }
 };
 
-export {listAll, listPayee, getOne};
+const invoice = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const result = await invoiceService.generateInvoice({
+      userId: uid,
+      ticketId: req.body.ticketId,
+    });
+    sendSuccess(res, result, {message: "Invoice ready", statusCode: 200});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {listAll, listPayee, getOne, invoice};

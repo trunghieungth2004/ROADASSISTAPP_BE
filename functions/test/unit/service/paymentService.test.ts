@@ -494,7 +494,7 @@ describe("payment method switching", () => {
     expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
   });
 
-  it("rejects switching cash to SePay", async () => {
+  it("switches a pending cash charge to SePay", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket as never);
     jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
       payment({method: "CASH", status: "PENDING"}),
@@ -509,9 +509,9 @@ describe("payment method switching", () => {
       userId: "rider1",
       ticketId: "t1",
       method: "SEPAY",
-    })).rejects.toThrow("active payment");
+    })).resolves.toMatchObject({method: "SEPAY", status: "PENDING"});
     expect(sepayService.cancelOrder).not.toHaveBeenCalled();
-    expect(paymentRepository.createGuarded).not.toHaveBeenCalled();
+    expect(paymentRepository.createGuarded).toHaveBeenCalled();
   });
 });
 

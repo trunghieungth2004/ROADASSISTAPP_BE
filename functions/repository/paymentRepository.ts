@@ -247,13 +247,35 @@ const findByPayee = async (
   const query = typeof status === "string" && status !== "" ?
     base.where("status", "==", status) :
     base;
-  const snap = await query.get();
+  const snap = await query
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
   const results: Payment[] = [];
   snap.forEach((doc) =>
     results.push({id: doc.id, ...doc.data()} as Payment),
   );
-  results.sort(byCreatedDesc);
-  return results.slice(0, limit);
+  return results;
+};
+
+const findByPayeeStatuses = async (
+  payeeId: string,
+  statuses: string[],
+  limit: number = PAYMENT_LIST_LIMIT,
+): Promise<Payment[]> => {
+  if (statuses.length === 0) return [];
+  const snap = await db
+    .collection(PAYMENT_COLLECTION)
+    .where("payeeId", "==", payeeId)
+    .where("status", "in", statuses.slice(0, 30))
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  const results: Payment[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Payment),
+  );
+  return results;
 };
 
 const findAll = async (
@@ -349,6 +371,7 @@ export {
   updateStatus,
   findByStatus,
   findByPayee,
+  findByPayeeStatuses,
   findByPayeeAll,
   findByReceived,
   updateStatusWhen,

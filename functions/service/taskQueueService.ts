@@ -150,5 +150,61 @@ const enqueueDispatchPush = async (
   }
 };
 
-export {enqueueHazardPush, enqueueDispatchPush, tasksEnabled,
-  QUEUE_NAME, DISPATCH_QUEUE_NAME};
+const enqueueBookingReminder = async (
+  bookingId: string,
+  reminderAt: string,
+): Promise<{enqueued: boolean}> => {
+  if (!tasksEnabled()) return {enqueued: false};
+  const project =
+    process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT ?? "";
+  const location = process.env.TASK_QUEUE_LOCATION ?? "asia-southeast1";
+  const url =
+    process.env.DISPATCH_DELIVER_URL ??
+    process.env.PUSH_DELIVER_URL ??
+    "";
+  const serviceAccountEmail = process.env.TASK_INVOKER_EMAIL ?? "";
+  if (project === "" || url === "" || serviceAccountEmail === "") {
+    return {enqueued: false};
+  }
+  try {
+    const client = await loadClient();
+    const parent = client.queuePath(
+      project,
+      location,
+      DISPATCH_QUEUE_NAME,
+    );
+    const stamp = Math.floor(Date.parse(reminderAt) / 1000);
+    const taskId = sanitizeTaskId(`booking-${bookingId}-${stamp}`);
+    await client.createTask({
+      parent,
+      task: {
+        name: client.taskPath(
+          project,
+          location,
+          DISPATCH_QUEUE_NAME,
+          taskId,
+        ),
+        scheduleTime: {seconds: stamp},
+        httpRequest: {
+          httpMethod: "POST",
+          url,
+          headers: deliverHeaders(),
+          body: Buffer.from(
+            JSON.stringify({bookingId}),
+          ).toString("base64"),
+          oidcToken: {serviceAccountEmail},
+        },
+      },
+    });
+    return {enqueued: true};
+  } catch (err) {
+    if ((err as {code?: number} | null)?.code === ALREADY_EXISTS_CODE) {
+      return {enqueued: true};
+    }
+    logError("tasks", "enqueueBookingReminder failed", {}, err);
+    return {enqueued: false};
+  }
+};
+
+export {enqueueHazardPush, enqueueDispatchPush, enqueueBookingReminder,
+  tasksEnabled, QUEUE_NAME, DISPATCH_QUEUE_NAME};

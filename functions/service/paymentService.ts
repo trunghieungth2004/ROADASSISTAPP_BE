@@ -1,7 +1,12 @@
 import * as dispatchRepository from "../repository/dispatchRepository";
+import {resolvePayeeId, generateQrRef} from "./payment/helpers";
+import {depositCreditFor} from "./payment/depositCredit";
+import {markDepositConfirmed} from "./paymentDepositService";
 import * as paymentRepository from "../repository/paymentRepository";
+import * as commissionRepository from "../repository/commissionRepository";
 import * as paymentPush from "./push/payment";
 import * as providerRepository from "../repository/providerRepository";
+import {isWarrantyRework} from "./warrantyRework";
 import * as userRepository from "../repository/userRepository";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
@@ -19,11 +24,10 @@ import {
   COMMISSION_RATE_PERCENT,
   PAYMENT_ACTIVE_STATUSES,
   PAYMENT_CASH_CONFIRMABLE_STATUSES,
+  DEPOSIT_PURPOSE,
   PAYMENT_LIST_LIMIT,
   PAYMENT_LIST_MAX,
   PAYMENT_METHOD,
-  PAYMENT_QR_PREFIX,
-  PAYMENT_QR_TICKET_LENGTH,
   PAYMENT_STATUS,
   REFUND_POLICY,
 } from "../constants/payments";
@@ -41,7 +45,6 @@ import {
   NotFoundError,
   ValidationError,
 } from "../utils/errors";
-
 export type TicketLike = {
   id: string;
   userId: string;
@@ -68,8 +71,9 @@ export type TicketLike = {
     estimate?: number | null;
     waitingFee?: number | null;
   } | null;
+  depositAmount?: number | null; depositStatus?: string | null;
+  warrantyOfTicketId?: string | null; warrantyClaimId?: string | null;
 };
-
 type PaymentWithCheckout = paymentRepository.Payment & {
   checkout?: sepayService.SepayCheckoutFields;
   reused?: boolean;
@@ -86,9 +90,9 @@ const notify = async (task: Promise<unknown>): Promise<void> => {
   }
 };
 
-const billableAmountFor = (
-  ticket: TicketLike,
-): {amount: number; waitingFee: number} | null => {
+const billableAmountFor = (ticket: TicketLike):
+  {amount: number; waitingFee: number} | null => {
+  if (isWarrantyRework(ticket)) return null;
   if (ticket.ticketType === "TOW") {
     if (ticket.status !== STATUS_DISPATCH.RESOLVED &&
       !(ticket.status === STATUS_DISPATCH.CANCELLED &&
@@ -196,32 +200,7 @@ const expectedAmountFor = (ticket: TicketLike): number => {
   if (!billable || billable.amount <= 0) {
     throw new ValidationError("Ticket has no payable amount yet");
   }
-  return billable.amount;
-};
-
-const resolvePayeeId = async (ticket: TicketLike): Promise<string> => {
-  const shopIds = [
-    ticket.assignedShopId,
-    ticket.providerId,
-    ticket.destinationShopId,
-  ].filter(nonEmpty);
-  for (const shopId of shopIds) {
-    const shop = await providerRepository.findById(shopId);
-    if (shop && nonEmpty(shop.operatorUid)) {
-      return shop.operatorUid;
-    }
-  }
-  if (nonEmpty(ticket.assignedUid)) return ticket.assignedUid;
-  throw new ValidationError("Ticket has no payee yet");
-};
-
-const generateQrRef = (ticketId: string): string => {
-  const ticketPart = ticketId
-    .replace(/[^A-Za-z0-9]/g, "")
-    .slice(0, PAYMENT_QR_TICKET_LENGTH)
-    .toUpperCase();
-  const stamp = Date.now().toString(36).toUpperCase();
-  return `${PAYMENT_QR_PREFIX}${ticketPart}${stamp}`;
+  return Math.max(0, billable.amount - depositCreditFor(ticket));
 };
 
 const isOperatorOfTicket = async (
@@ -254,6 +233,7 @@ const stampTicketPayment = async (
   payment: paymentRepository.Payment,
   checkout?: sepayService.SepayCheckoutFields,
 ): Promise<void> => {
+  if (payment.purpose === DEPOSIT_PURPOSE) return;
   const patch: Record<string, unknown> = {
     paymentId: payment.id,
     paymentMethod: payment.method,
@@ -346,7 +326,6 @@ export const adjustPendingCashAmount = async ({
   return cash.id;
 };
 
-
 const createPaymentForTicket = async ({
   userId,
   ticketId,
@@ -409,17 +388,32 @@ const createPaymentForTicket = async ({
   }
   const amount = expectedAmountFor(ticket);
   const existing = await paymentRepository.findByTicketId(ticketId);
+  if (amount <= 0) {
+    const deposit = existing.find((payment) =>
+      payment.purpose === DEPOSIT_PURPOSE &&
+      (payment.status === PAYMENT_STATUS.HELD ||
+        payment.status === PAYMENT_STATUS.CONFIRMED));
+    if (deposit) return {...deposit, reused: true};
+    const collected = existing.find((payment) =>
+      payment.purpose !== DEPOSIT_PURPOSE);
+    if (collected) return {...collected, reused: true};
+  }
+  const pendingDeposit = existing.find((payment) =>
+    payment.purpose === DEPOSIT_PURPOSE &&
+    payment.status === PAYMENT_STATUS.PENDING);
+  if (pendingDeposit) {
+    if (pendingDeposit.method !== method) {
+      throw new ValidationError("Settle the deposit first");
+    }
+    return asReused(pendingDeposit, method);
+  }
   const active = existing.find(
-    (payment) => PAYMENT_ACTIVE_STATUSES.includes(payment.status),
+    (payment) => payment.purpose !== DEPOSIT_PURPOSE &&
+      PAYMENT_ACTIVE_STATUSES.includes(payment.status),
   );
   if (active) {
     if (active.method === method) return asReused(active, method);
-    if (active.method === PAYMENT_METHOD.SEPAY &&
-      method === PAYMENT_METHOD.CASH) {
-      await cancelActiveForSwitch({active, ticketId});
-    } else {
-      throw new ConflictError("Ticket already has an active payment");
-    }
+    await cancelActiveForSwitch({active, ticketId});
   }
   const payeeId = await resolvePayeeId(ticket);
   const rate = await platformConfigService.getCommissionRate(
@@ -427,9 +421,7 @@ const createPaymentForTicket = async ({
   );
   const commissionAmount = Math.round(amount * rate / COMMISSION_RATE_PERCENT);
   const payoutAmount = amount - commissionAmount;
-  const qrRef = method === PAYMENT_METHOD.SEPAY ?
-    generateQrRef(ticketId) :
-    null;
+  const qrRef = method === "SEPAY" ? generateQrRef(ticketId) : null;
   const created = await paymentRepository.createGuarded({
     ticketId,
     riderUid: userId,
@@ -483,6 +475,13 @@ const confirmCash = async ({
   );
   if (!confirmed) {
     throw new NotFoundError("Pending cash payment not found");
+  }
+  if (typeof confirmed.commissionAmount === "number" &&
+    confirmed.commissionAmount > 0) {
+    await commissionRepository.create({
+      payeeId: confirmed.payeeId, ticketId: confirmed.ticketId,
+      paymentId: confirmed.id, amount: confirmed.commissionAmount,
+    }).catch(() => undefined);
   }
   await stampTicketPayment(ticketId, confirmed);
   await notify(paymentPush.deliverConfirmed(confirmed));
@@ -553,6 +552,9 @@ const handleSepayIpn = async (
   if (held) {
     if (held.purpose === SUBSCRIPTION_PURPOSE) {
       await subscriptionService.activateFromPayment(held);
+    } else if (held.purpose === DEPOSIT_PURPOSE) {
+      await markDepositConfirmed(held, new Date().toISOString());
+      await notify(paymentPush.deliverReceived(held));
     } else {
       await stampTicketPayment(payment.ticketId, held);
       await notify(paymentPush.deliverReceived(held));
@@ -594,9 +596,8 @@ const buildSepayCheckoutPage = async ({
     .join("");
   const form = "<form id=\"sepay-checkout\" method=\"post\" " +
     `action="${escapeHtml(checkout.action)}">${inputs}</form>`;
-  const submit =
-    "<script>document.getElementById(\"sepay-checkout\").submit();" +
-    "</script>";
+  const submit = "<script>" +
+    "document.getElementById(\"sepay-checkout\").submit();</script>";
   return "<!doctype html><html><head><meta charset=\"utf-8\" />" +
     "<meta name=\"viewport\" content=\"width=device-width," +
     "initial-scale=1\" /><title>RoadAssist payment</title></head><body>" +
@@ -802,9 +803,12 @@ const auditLedger = async ({
   };
 };
 
+export {createDepositPayment, depositCheckout} from "./paymentDepositService";
+
 export {
   PaymentWithCheckout,
   billableAmountFor,
+  depositCreditFor,
   cancelPendingPayments,
   cancelPendingPayment,
   createPaymentForTicket,

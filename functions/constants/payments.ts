@@ -41,9 +41,29 @@ const PAYMENT_CASH_CONFIRMABLE_STATUSES: string[] = [
 const COMMISSION_RATE_FALLBACK = 0;
 const COMMISSION_RATE_PERCENT = 100;
 
+const DEPOSIT_PURPOSE = "DEPOSIT";
+
+const REFUND_COLLECTION = "refunds";
+const REFUND_STATUS = {
+  REQUESTED: "REQUESTED",
+  APPROVED: "APPROVED",
+  SENT: "SENT",
+  CONFIRMED: "CONFIRMED",
+  REJECTED: "REJECTED",
+  FAILED: "FAILED",
+} as const;
+const REFUND_LIST_MAX = 100;
+const REFUND_LIST_LIMIT = 50;
+
 const PAYOUT_COLLECTION = "payouts";
 const PAYOUT_STATUS = {
   PAID: "PAID",
+} as const;
+const PAYOUT_REQUEST_STATUS = {
+  PENDING: "PENDING",
+  PAID: "PAID",
+  REJECTED: "REJECTED",
+  CANCELLED: "CANCELLED",
 } as const;
 const PAYOUT_METHOD = {
   MANUAL: "MANUAL",
@@ -115,6 +135,11 @@ const PLATFORM_CONFIG_DEFAULTS = {
   deadheadPayable: true,
   paymentMethodsEnabled: [PAYMENT_METHOD.CASH, PAYMENT_METHOD.SEPAY],
   refundPolicy: REFUND_POLICY.FULL,
+  features: {
+    quickFix: true,
+    towCashAtDelivery: true,
+    phoneMasking: false,
+  },
   providerPricing: {
     TOW: {
       baseMin: 100000,
@@ -153,6 +178,7 @@ const PLATFORM_CONFIG_UPDATABLE_KEYS: string[] = [
   "deadheadPayable",
   "paymentMethodsEnabled",
   "refundPolicy",
+  "features",
   "providerPricing",
 ];
 
@@ -167,13 +193,19 @@ export {
   PAYMENT_QR_PREFIX,
   PAYMENT_QR_TICKET_LENGTH,
   PAYMENT_PAYOUT_PREFIX,
+  DEPOSIT_PURPOSE,
   PAYMENT_LIST_LIMIT,
   PAYMENT_LIST_MAX,
   PAYMENT_CASH_CONFIRMABLE_STATUSES,
   COMMISSION_RATE_FALLBACK,
   COMMISSION_RATE_PERCENT,
+  REFUND_COLLECTION,
+  REFUND_STATUS,
+  REFUND_LIST_MAX,
+  REFUND_LIST_LIMIT,
   PAYOUT_COLLECTION,
   PAYOUT_STATUS,
+  PAYOUT_REQUEST_STATUS,
   PAYOUT_METHOD,
   PAYOUT_LIST_LIMIT,
   PAYOUT_LIST_MAX,

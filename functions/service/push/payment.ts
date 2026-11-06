@@ -137,6 +137,19 @@ const deliverConfirmed = async (payment: PaymentLike): Promise<PushResult> =>
     ticketId: payment.ticketId,
   });
 
+const deliverReminder = async (
+  ticketId: string,
+  riderUid: string,
+  amount: number,
+  count: number,
+): Promise<PushResult> => sendPush(riderUid, "paymentUpdates", {
+  title: "Payment due",
+  body: `${money(amount)} is still unpaid — reminder ${count}`,
+  event: PAYMENT_PUSH_EVENT.REMINDER,
+  paymentId: "",
+  ticketId,
+});
+
 const deliverRefunded = async (payment: PaymentLike): Promise<PushResult> => {
   const amount = typeof payment.refundAmount === "number" ?
     payment.refundAmount :
@@ -165,6 +178,7 @@ export {
   deliverOpened,
   deliverReceived,
   deliverConfirmed,
+  deliverReminder,
   deliverRefunded,
   deliverPayout,
 };
