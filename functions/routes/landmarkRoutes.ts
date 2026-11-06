@@ -22,10 +22,4 @@ export default (
     validate({body: schemas.createLandmark}),
     landmarkController.createLandmark,
   );
-  app.post(
-    "/landmarks/match",
-    requireAuth,
-    validate({body: schemas.matchLandmark}),
-    landmarkController.matchNearby,
-  );
 };

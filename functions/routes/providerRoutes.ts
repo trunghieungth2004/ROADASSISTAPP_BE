@@ -46,6 +46,12 @@ export default (
     providerController.myProviders,
   );
   app.post(
+    "/providers/stats",
+    requireAuth,
+    validate({body: schemas.providerSelfStats}),
+    providerController.myStats,
+  );
+  app.post(
     "/providers/pricing",
     requireAuth,
     validate({body: schemas.myProviders}),

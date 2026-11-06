@@ -8,6 +8,8 @@ export type DirectoryPlace = {
   lat: number;
   lng: number;
   type?: string;
+  providerKind?: string;
+  bookingEnabled?: boolean;
 };
 
 import {ValidationError} from "../utils/errors";
@@ -17,9 +19,11 @@ const DEFAULT_LIMIT = 5;
 const searchDirectory = async ({
   q,
   limit = DEFAULT_LIMIT,
+  kind,
 }: {
   q: string;
   limit?: number;
+  kind?: string;
 }): Promise<DirectoryPlace[]> => {
   const query = q.trim();
   if (!query) throw new ValidationError("Search query is required");
@@ -28,7 +32,9 @@ const searchDirectory = async ({
     landmarkRepository.findByLabelPrefix(query, limit),
   ]);
   const live = shops.filter((s) => s.status === "ACTIVE" &&
-    (s as {suspended?: boolean}).suspended !== true);
+    (s as {suspended?: boolean}).suspended !== true &&
+    s.kind === "SHOP" &&
+    (kind === undefined || kind === "SHOP"));
   return [
     ...live.map((s) => ({
       kind: "shop" as const,
@@ -37,6 +43,8 @@ const searchDirectory = async ({
       lat: s.lat,
       lng: s.lng,
       type: s.kind,
+      providerKind: s.kind,
+      bookingEnabled: s.bookingEnabled === true,
     })),
     ...landmarks.map((l) => ({
       kind: "landmark" as const,

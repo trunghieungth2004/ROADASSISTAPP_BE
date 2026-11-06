@@ -1,9 +1,12 @@
 import {Request, Response} from "express";
 import * as adminService from "../service/adminService";
+import * as analyticsService from "../service/analyticsService";
 import * as payoutService from "../service/payoutService";
 import * as paymentService from "../service/paymentService";
 import * as platformConfigService from "../service/platformConfigService";
 import * as reportService from "../service/reportService";
+import * as opsService from "../service/opsService";
+import * as auditService from "../service/auditService";
 import {REPORT_CSV_MIME, REPORT_FORMAT} from "../constants/reports";
 import {sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
@@ -128,6 +131,44 @@ const payeeReport = async (req: Request, res: Response) => {
   }
 };
 
+const ops = async (_req: Request, res: Response) => {
+  try {
+    sendSuccess(res, await opsService.snapshot());
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const audit = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const {limit} = req.body ?? {};
+    sendSuccess(res, await auditService.list({adminUid: uid, limit}));
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const dashboard = async (req: Request, res: Response) => {
+  try {
+    const {days} = req.body ?? {};
+    const result = await analyticsService.dashboard({days});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const providerStats = async (req: Request, res: Response) => {
+  try {
+    const {providerId} = req.body ?? {};
+    const result = await analyticsService.providerStats({providerId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 export {
   getConfig,
   updateConfig,
@@ -138,4 +179,8 @@ export {
   auditPayments,
   revenueReport,
   payeeReport,
+  dashboard,
+  providerStats,
+  ops,
+  audit,
 };

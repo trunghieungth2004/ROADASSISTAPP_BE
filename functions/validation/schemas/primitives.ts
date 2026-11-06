@@ -4,6 +4,7 @@ import {
   PROVIDER_SERVICE_NAME_MAX,
   PROVIDER_SERVICE_PRICE_MAX,
   PROVIDER_SERVICES_MAX,
+  SERVICE_CATEGORY,
 } from "../../constants/status";
 
 
@@ -52,6 +53,19 @@ export const providerServiceItem = (): Joi.ObjectSchema =>
     displayPrice: Joi.number().integer().min(0)
       .max(PROVIDER_SERVICE_PRICE_MAX).required(),
     quoteRequired: Joi.boolean().required(),
+    category: Joi.string()
+      .valid(...Object.values(SERVICE_CATEGORY))
+      .optional(),
+    warrantyDays: Joi.number().integer().min(0).max(90).optional(),
+    warrantyParts: Joi.string()
+      .valid("LABOR_ONLY", "PARTS_AND_LABOR")
+      .optional(),
+    channels: Joi.array()
+      .items(Joi.string().valid("BOOKING", "ASSIST"))
+      .min(1)
+      .max(2)
+      .unique()
+      .optional(),
   });
 
 export const providerServiceList = (): Joi.ArraySchema =>

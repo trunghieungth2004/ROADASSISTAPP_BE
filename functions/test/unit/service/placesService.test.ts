@@ -28,10 +28,29 @@ describe("placesService.searchDirectory", () => {
     const res = await searchDirectory({q: "demo"});
     expect(res).toEqual([
       {kind: "shop", id: "s1", label: "Demo Shop", lat: 1, lng: 2,
-        type: "SHOP"},
+        type: "SHOP", providerKind: "SHOP", bookingEnabled: false},
       {kind: "landmark", id: "l1", label: "Demo Landmark", lat: 3, lng: 4},
     ]);
     expect(providerRepository.findByNamePrefix).toHaveBeenCalledWith("demo", 5);
+  });
+
+  it("keeps provider kinds distinct and filters by kind", async () => {
+    jest.mocked(providerRepository.findByNamePrefix).mockResolvedValue([
+      {id: "s1", name: "Same Name", lat: 1, lng: 2, kind: "SHOP",
+        status: "ACTIVE"} as never,
+      {id: "t1", name: "Same Name", lat: 1, lng: 2, kind: "TOW",
+        status: "ACTIVE"} as never,
+      {id: "m1", name: "Same Name", lat: 1, lng: 2, kind: "MOBILE_SHOP",
+        status: "ACTIVE"} as never,
+    ]);
+    jest.mocked(landmarkRepository.findByLabelPrefix).mockResolvedValue([]);
+    const all = await searchDirectory({q: "same"});
+    expect(all.map((row) => row.providerKind)).toEqual(["SHOP"]);
+    const shops = await searchDirectory({q: "same", kind: "SHOP"});
+    expect(shops).toHaveLength(1);
+    expect(shops[0]).toMatchObject({providerKind: "SHOP"});
+    await expect(searchDirectory({q: "same", kind: "TOW"}))
+      .resolves.toEqual([]);
   });
 
   it("returns empty when nothing matches", async () => {

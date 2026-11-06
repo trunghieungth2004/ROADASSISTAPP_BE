@@ -34,19 +34,4 @@ const createLandmark = async (req: Request, res: Response) => {
   }
 };
 
-const matchNearby = async (req: Request, res: Response) => {
-  try {
-    const {lat, lng, embedding, radiusMeters} = req.body;
-    const result = await landmarkService.matchNearby({
-      lat,
-      lng,
-      embedding,
-      radiusMeters,
-    });
-    sendSuccess(res, result);
-  } catch (error) {
-    handleServiceError(res, error as Error);
-  }
-};
-
-export {nearLandmarks, createLandmark, matchNearby};
+export {nearLandmarks, createLandmark};

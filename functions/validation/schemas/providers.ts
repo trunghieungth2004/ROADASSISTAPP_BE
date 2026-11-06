@@ -11,6 +11,7 @@ import {
 import Joi from "joi";
 import {
   PROVIDER_REPORT_REASON,
+  SERVICE_CATEGORY,
   SHOP_SEARCH_MAX_RADIUS,
   TOW_VEHICLE_TYPE,
   VEHICLE_TYPE,
@@ -69,7 +70,7 @@ export const providersSchemas = {
       otherwise: Joi.forbidden(),
     }),
     services: Joi.when("kind", {
-      is: "SHOP",
+      is: Joi.valid("SHOP", "MOBILE_SHOP"),
       then: providerServiceList(),
       otherwise: Joi.forbidden(),
     }),
@@ -91,6 +92,11 @@ export const providersSchemas = {
     towPerKmFee: Joi.when("kind", {
       is: "TOW",
       then: Joi.number().integer().min(0).max(99999).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    waitingRatePer15Min: Joi.when("kind", {
+      is: "TOW",
+      then: Joi.number().integer().min(0).max(100000).optional(),
       otherwise: Joi.forbidden(),
     }),
     callOutFee: Joi.when("kind", {
@@ -126,9 +132,21 @@ export const providersSchemas = {
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
     towBaseFee: Joi.number().integer().min(0).max(999999999).optional(),
     towPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
+    waitingRatePer15Min: Joi.number().integer().min(0).max(100000).optional(),
     callOutFee: Joi.number().integer().min(0).max(999999999).optional(),
     travelPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
+    taxCode: Joi.string().trim().max(30).allow("", null).optional(),
     accepting: Joi.boolean().optional(),
+    bookingEnabled: Joi.boolean().optional(),
+    bookingSlotMinutes: Joi.number().integer().min(15).max(120).optional(),
+    bookingCapacity: Joi.number().integer().min(1).max(10).optional(),
+    bookingLeadMinutes: Joi.number().integer().min(0).max(1440).optional(),
+    bookingHorizonDays: Joi.number().integer().min(1).max(30).optional(),
+    bookingHours: dayHoursPattern().allow("", null).optional(),
+    bookingAlwaysOpen: Joi.boolean().optional(),
+    depositPolicy: Joi.string().valid("NONE", "FIXED", "PERCENT").optional(),
+    depositAmount: Joi.number().integer().min(0).max(5000000).optional(),
+    depositPercent: Joi.number().integer().min(1).max(30).optional(),
     lat: latAttr().optional(),
     lng: langAttr().optional(),
   }).and("lat", "lng"),
@@ -143,6 +161,9 @@ export const providersSchemas = {
     vehicleClass: Joi.string()
       .valid(...Object.values(VEHICLE_CLASS))
       .optional(),
+    serviceCategory: Joi.string()
+      .valid(...Object.values(SERVICE_CATEGORY))
+      .optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
     minRating: Joi.number().min(0).max(5).optional(),
     sortBy: Joi.string().valid("distance", "rating").optional(),
@@ -154,6 +175,9 @@ export const providersSchemas = {
     vehicleClass: Joi.string()
       .valid(...Object.values(VEHICLE_CLASS))
       .optional(),
+    serviceCategory: Joi.string()
+      .valid(...Object.values(SERVICE_CATEGORY))
+      .optional(),
     radiusMeters: Joi.number()
       .min(200)
       .optional(),
@@ -163,6 +187,7 @@ export const providersSchemas = {
     ticketId: strOpt(),
   }),
   myProviders: emptyBody(),
+  providerSelfStats: emptyBody(),
   revokeProvider: Joi.object({
     providerId: strReq(),
   }),

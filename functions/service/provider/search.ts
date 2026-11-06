@@ -67,17 +67,66 @@ type SearchExtrasRow = {
   id: string;
 };
 
+const toPublicProvider = (
+  provider: providerRepository.Provider & {
+    distance?: unknown;
+    openNow?: unknown;
+    closesInMinutes?: unknown;
+  },
+): Record<string, unknown> => ({
+  id: provider.id,
+  kind: provider.kind,
+  name: provider.name,
+  lat: provider.lat,
+  lng: provider.lng,
+  label: provider.label ?? null,
+  openHours: provider.openHours ?? null,
+  vehicleClasses: provider.vehicleClasses ?? null,
+  services: Array.isArray(provider.services) ? provider.services : [],
+  serviceFee: provider.serviceFee ?? null,
+  accepting: provider.accepting === true,
+  bookingEnabled: provider.bookingEnabled === true,
+  plate: provider.plate ?? null,
+  plateRaw: provider.plateRaw ?? null,
+  vehicleType: provider.vehicleType ?? null,
+  vehicleWidth: provider.vehicleWidth ?? null,
+  towBaseFee: provider.towBaseFee ?? null,
+  towPerKmFee: provider.towPerKmFee ?? null,
+  callOutFee: provider.callOutFee ?? null,
+  travelPerKmFee: provider.travelPerKmFee ?? null,
+  status: provider.status,
+  ratingAvg: typeof provider.ratingAvg === "number" ?
+    provider.ratingAvg :
+    0,
+  ratingCount: typeof provider.ratingCount === "number" ?
+    provider.ratingCount :
+    0,
+  distance: provider.distance,
+  openNow: provider.openNow ?? null,
+  closesInMinutes: provider.closesInMinutes ?? null,
+});
+
 const withSearchExtras = <T extends SearchExtrasRow>(
   rows: T[],
   declined: Set<string>,
-) => {
+): Array<T & Record<string, unknown> & {
+  distanceMeters: number | null;
+  ratingAvg: number;
+  ratingCount: unknown;
+  declined: boolean;
+}> => {
   return rows.map((s) => ({
-    ...s,
+    ...toPublicProvider(s as T & providerRepository.Provider),
     distanceMeters: typeof s.distance === "number" ? s.distance : null,
     ratingAvg: typeof s.ratingAvg === "number" ? s.ratingAvg : 0,
     ratingCount: (s as {ratingCount?: unknown}).ratingCount ?? 0,
     declined: declined.has(s.id),
-  }));
+  })) as Array<T & Record<string, unknown> & {
+    distanceMeters: number | null;
+    ratingAvg: number;
+    ratingCount: unknown;
+    declined: boolean;
+  }>;
 };
 
 const nearProvidersInner = async ({
@@ -88,6 +137,7 @@ const nearProvidersInner = async ({
   acceptingOnly = false,
   openOnly = false,
   vehicleClass,
+  serviceCategory,
   limit = NEAR_SHOPS_MAX,
   minRating,
   sortBy,
@@ -101,6 +151,7 @@ const nearProvidersInner = async ({
   acceptingOnly?: boolean;
   openOnly?: boolean;
   vehicleClass?: string;
+  serviceCategory?: string;
   limit?: number;
   minRating?: number;
   sortBy?: string;
@@ -136,6 +187,13 @@ const nearProvidersInner = async ({
   if (openOnly) filtered = filtered.filter((s) => s.openNow === true);
   if (vehicleClass) {
     filtered = filtered.filter((s) => servesVehicleClass(s, vehicleClass));
+  }
+  if (serviceCategory) {
+    filtered = filtered.filter((s) => {
+      const services = Array.isArray(s.services) ? s.services : [];
+      return services.some((service) =>
+        (service as {category?: unknown}).category === serviceCategory);
+    });
   }
   if (typeof minRating === "number") {
     filtered = filtered.filter((s) => {
@@ -177,6 +235,7 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     acceptingOnly = false,
     openOnly = false,
     vehicleClass,
+    serviceCategory,
     limit = NEAR_SHOPS_MAX,
     minRating,
     sortBy,
@@ -190,6 +249,7 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     acceptingOnly?: boolean;
     openOnly?: boolean;
     vehicleClass?: string;
+    serviceCategory?: string;
     limit?: number;
     minRating?: number;
     sortBy?: string;
@@ -201,6 +261,7 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     return `${lat.toFixed(3)},${lng.toFixed(3)},${kind ?? "-"},` +
       `${radiusMeters},${acceptingOnly ? "1" : "0"},` +
       `${openOnly ? "1" : "0"},${vehicleClass ?? "-"},` +
+      `${serviceCategory ?? "-"},` +
       `${limit},${minute},${minRating ?? "-"},${sortBy ?? "-"},` +
       `${ticketId ?? "-"}`;
   },
@@ -214,6 +275,7 @@ export const getNearbyProviders = async ({
   acceptingOnly = false,
   openOnly = false,
   vehicleClass,
+  serviceCategory,
   limit = NEAR_SHOPS_MAX,
   minRating,
   sortBy,
@@ -227,6 +289,7 @@ export const getNearbyProviders = async ({
   acceptingOnly?: boolean;
   openOnly?: boolean;
   vehicleClass?: string;
+  serviceCategory?: string;
   limit?: number;
   minRating?: number;
   sortBy?: string;
@@ -241,6 +304,7 @@ export const getNearbyProviders = async ({
     acceptingOnly,
     openOnly,
     vehicleClass,
+    serviceCategory,
     limit,
     minRating,
     sortBy,
@@ -254,6 +318,7 @@ const searchProvidersInner = async ({
   query,
   kind,
   vehicleClass,
+  serviceCategory,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
   minRating,
@@ -266,6 +331,7 @@ const searchProvidersInner = async ({
   query: string;
   kind?: string;
   vehicleClass?: string;
+  serviceCategory?: string;
   radiusMeters?: number;
   limit?: number;
   minRating?: number;
@@ -299,6 +365,13 @@ const searchProvidersInner = async ({
   let wanted = vehicleClass ?
     scored.filter((s) => servesVehicleClass(s, vehicleClass)) :
     scored;
+  if (serviceCategory) {
+    wanted = wanted.filter((s) => {
+      const services = Array.isArray(s.services) ? s.services : [];
+      return services.some((service) =>
+        (service as {category?: unknown}).category === serviceCategory);
+    });
+  }
   if (typeof minRating === "number") {
     wanted = wanted.filter((s) => {
       const avg = typeof s.ratingAvg === "number" ? s.ratingAvg : 0;
@@ -343,6 +416,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     query,
     kind,
     vehicleClass,
+    serviceCategory,
     radiusMeters,
     limit = NEAR_SHOPS_MAX,
     minRating,
@@ -355,6 +429,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     query: string;
     kind?: string;
     vehicleClass?: string;
+    serviceCategory?: string;
     radiusMeters?: number;
     limit?: number;
     minRating?: number;
@@ -366,7 +441,7 @@ const searchProvidersCached = cacheManager.wrap(searchProvidersInner, {
     const minute = Math.floor(at.getTime() / 60000);
     return `${lat.toFixed(3)},${lng.toFixed(3)},` +
       `${query.trim().toLowerCase()},${kind ?? "-"},` +
-      `${vehicleClass ?? "-"},` +
+      `${vehicleClass ?? "-"},${serviceCategory ?? "-"},` +
       `${radiusMeters ?? "-"},${limit},${minute},` +
       `${minRating ?? "-"},${sortBy ?? "-"},${ticketId ?? "-"}`;
   },
@@ -378,6 +453,7 @@ export const searchProviders = async ({
   query,
   kind,
   vehicleClass,
+  serviceCategory,
   radiusMeters,
   limit = NEAR_SHOPS_MAX,
   minRating,
@@ -390,6 +466,7 @@ export const searchProviders = async ({
   query: string;
   kind?: string;
   vehicleClass?: string;
+  serviceCategory?: string;
   radiusMeters?: number;
   limit?: number;
   minRating?: number;
@@ -403,6 +480,7 @@ export const searchProviders = async ({
     query,
     kind,
     vehicleClass,
+    serviceCategory,
     radiusMeters,
     limit,
     minRating,

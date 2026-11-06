@@ -1,4 +1,4 @@
-import {strReq, langAttr, latAttr, emptyBody} from "./primitives";
+import {strReq, strOpt, langAttr, latAttr, emptyBody} from "./primitives";
 import Joi from "joi";
 
 
@@ -20,7 +20,8 @@ export const pushSchemas = {
     removed: Joi.boolean().optional(),
   }),
   deliverDispatch: Joi.object({
-    ticketId: strReq(),
+    ticketId: strOpt(),
+    bookingId: strOpt(),
     audience: Joi.string().valid(
       "operator",
       "rider",
@@ -33,5 +34,5 @@ export const pushSchemas = {
     urgent: Joi.boolean().truthy("true").falsy("false").optional(),
     action: Joi.string().trim().max(80).optional(),
     offerAt: Joi.string().trim().max(80).optional(),
-  }),
+  }).or("ticketId", "bookingId"),
 };

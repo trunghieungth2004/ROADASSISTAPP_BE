@@ -10,6 +10,19 @@ export const vehiclesSchemas = {
       .required(),
     baseWidth: numReq(),
     baseHeight: numReq(),
+    label: Joi.string().trim().max(80).allow("", null).optional(),
+    plate: Joi.string().trim().max(32).allow("", null).optional(),
+  }),
+  updateVehicleProfile: Joi.object({
+    profileId: strReq(),
+    label: Joi.string().trim().max(80).allow("", null).optional(),
+    plate: Joi.string().trim().max(32).allow("", null).optional(),
+    baseWidth: Joi.number().min(0.3).max(3).optional(),
+    baseHeight: Joi.number().min(0.5).max(3).optional(),
+  }),
+  vehicleHistory: Joi.object({
+    profileId: strReq(),
+    limit: Joi.number().integer().min(1).max(100).optional(),
   }),
   addRideConfig: Joi.object({
     profileId: strReq(),

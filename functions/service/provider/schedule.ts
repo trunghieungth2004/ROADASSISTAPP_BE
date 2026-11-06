@@ -8,6 +8,8 @@ import {
   PROVIDER_SERVICE_NAME_MAX,
   PROVIDER_SERVICE_PRICE_MAX,
   PROVIDER_SERVICES_MAX,
+  SERVICE_CATEGORY,
+  SERVICE_CHANNEL,
   VEHICLE_CLASS,
 } from "../../constants/status";
 
@@ -62,6 +64,11 @@ const parseSchedule = (
   }
   return out;
 };
+
+export const parseScheduleRanges = (
+  openHours: string | null | undefined,
+): Array<{day: string; open: number; close: number}> =>
+  openHours ? parseSchedule(openHours) : [];
 
 export const isOpenNow = (
   openHours: string | null | undefined,
@@ -139,6 +146,16 @@ type ShopService = {
   name: string;
   displayPrice: number;
   quoteRequired: boolean;
+  category: string;
+  warrantyDays?: number;
+  warrantyParts?: string;
+  channels?: string[];
+  vehicleClasses?: string[];
+};
+
+type ShopServiceOptions = {
+  kind?: string;
+  providerVehicleClasses?: string[];
 };
 
 export const normalizeTowPricing = ({
@@ -207,37 +224,134 @@ export const normalizeMobileShopPricing = ({
   };
 };
 
-export const normalizeShopServices = (services: unknown): ShopService[] => {
+
+const normalizeServiceVehicleClasses = (
+  raw: unknown,
+  fallback: string[],
+): string[] => {
+  const valid = Object.values(VEHICLE_CLASS) as string[];
+  if (raw === undefined || raw === null) return fallback;
+  const classes = Array.isArray(raw) ? raw : [];
+  if (classes.length === 0 ||
+    classes.some((value) => !valid.includes(String(value)))) {
+    throw new ValidationError("Service vehicle classes are invalid");
+  }
+  return [...new Set(classes.map((value) => String(value)))];
+};
+
+const serviceVehicleClasses = (
+  raw: unknown,
+  options: ShopServiceOptions,
+): string[] => {
+  const providerClasses = options.providerVehicleClasses !== undefined &&
+    options.providerVehicleClasses.length > 0 ?
+    options.providerVehicleClasses : [...Object.values(VEHICLE_CLASS)];
+  const classes = normalizeServiceVehicleClasses(raw, providerClasses);
+  if (classes.some((value) => !providerClasses.includes(value))) {
+    throw new ValidationError(
+      "Service vehicle classes must match the provider",
+    );
+  }
+  return classes;
+};
+
+const normalizeServiceChannels = (raw: unknown): string[] => {
+  const valid = Object.values(SERVICE_CHANNEL) as string[];
+  const channels = raw === undefined ? [...valid] :
+    Array.isArray(raw) ? raw : [];
+  if (channels.length === 0 ||
+    channels.some((channel) => !valid.includes(channel))) {
+    throw new ValidationError("Service channels are invalid");
+  }
+  return [...new Set(channels)];
+};
+
+const normalizeShopService = (
+  raw: unknown,
+  categories: string[],
+  seen: Set<string>,
+  options: ShopServiceOptions,
+): ShopService => {
+  const item = typeof raw === "object" && raw !== null ?
+    raw as Record<string, unknown> :
+    {};
+  const code = typeof item.code === "string" ? item.code.trim() : "";
+  const name = typeof item.name === "string" ? item.name.trim() : "";
+  const displayPrice = item.displayPrice;
+  const quoteRequired = item.quoteRequired;
+  const rawCategory = typeof item.category === "string" ?
+    item.category.trim() :
+    "";
+  const category = rawCategory === "" ? SERVICE_CATEGORY.OTHER : rawCategory;
+  const warrantyDays = item.warrantyDays;
+  const warrantyParts = item.warrantyParts;
+  const vehicleClasses = serviceVehicleClasses(
+    item.vehicleClasses,
+    options,
+  );
+  const channels = options.kind === "MOBILE_SHOP" ?
+    [SERVICE_CHANNEL.ASSIST] :
+    normalizeServiceChannels(item.channels);
+  if (code === "" || code.length > PROVIDER_SERVICE_CODE_MAX) {
+    throw new ValidationError("Service code is invalid");
+  }
+  if (!/^[A-Z0-9_]+$/.test(code)) {
+    throw new ValidationError(
+      "Service code must be uppercase letters, digits or underscores",
+    );
+  }
+  if (seen.has(code)) {
+    throw new ValidationError("Service codes must be unique");
+  }
+  seen.add(code);
+  if (name === "" || name.length > PROVIDER_SERVICE_NAME_MAX) {
+    throw new ValidationError("Service name is invalid");
+  }
+  if (typeof displayPrice !== "number" ||
+    !Number.isInteger(displayPrice) || displayPrice < 0 ||
+    displayPrice > PROVIDER_SERVICE_PRICE_MAX) {
+    throw new ValidationError("Service price is invalid");
+  }
+  if (typeof quoteRequired !== "boolean") {
+    throw new ValidationError("Service quote flag is invalid");
+  }
+  if (!categories.includes(category)) {
+    throw new ValidationError("Service category is invalid");
+  }
+  if (warrantyDays !== undefined &&
+    (typeof warrantyDays !== "number" || !Number.isInteger(warrantyDays) ||
+      warrantyDays < 0 || warrantyDays > 90)) {
+    throw new ValidationError("Service warranty is invalid");
+  }
+  if (warrantyParts !== undefined &&
+    warrantyParts !== "LABOR_ONLY" && warrantyParts !== "PARTS_AND_LABOR") {
+    throw new ValidationError("Service warranty coverage is invalid");
+  }
+  return {
+    code,
+    name,
+    displayPrice,
+    quoteRequired,
+    category,
+    ...(warrantyDays !== undefined ? {warrantyDays} : {}),
+    ...(warrantyParts !== undefined ? {warrantyParts} : {}),
+    channels,
+    vehicleClasses,
+  };
+};
+
+export const normalizeShopServices = (
+  services: unknown,
+  options: ShopServiceOptions = {},
+): ShopService[] => {
   if (!Array.isArray(services)) {
     throw new ValidationError("Services must be a list");
   }
   if (services.length > PROVIDER_SERVICES_MAX) {
     throw new ValidationError("Too many services");
   }
-  const out: ShopService[] = [];
-  for (const raw of services) {
-    const item = typeof raw === "object" && raw !== null ?
-      raw as Record<string, unknown> :
-      {};
-    const code = typeof item.code === "string" ? item.code.trim() : "";
-    const name = typeof item.name === "string" ? item.name.trim() : "";
-    const displayPrice = item.displayPrice;
-    const quoteRequired = item.quoteRequired;
-    if (code === "" || code.length > PROVIDER_SERVICE_CODE_MAX) {
-      throw new ValidationError("Service code is invalid");
-    }
-    if (name === "" || name.length > PROVIDER_SERVICE_NAME_MAX) {
-      throw new ValidationError("Service name is invalid");
-    }
-    if (typeof displayPrice !== "number" ||
-      !Number.isInteger(displayPrice) || displayPrice < 0 ||
-      displayPrice > PROVIDER_SERVICE_PRICE_MAX) {
-      throw new ValidationError("Service price is invalid");
-    }
-    if (typeof quoteRequired !== "boolean") {
-      throw new ValidationError("Service quote flag is invalid");
-    }
-    out.push({code, name, displayPrice, quoteRequired});
-  }
-  return out;
+  const categories = Object.values(SERVICE_CATEGORY) as string[];
+  const seen = new Set<string>();
+  return services.map((raw) =>
+    normalizeShopService(raw, categories, seen, options));
 };

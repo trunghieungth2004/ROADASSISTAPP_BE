@@ -9,10 +9,4 @@ export const landmarksSchemas = {
     lng: langAttr(),
     displayLabel: strReq(),
   }),
-  matchLandmark: Joi.object({
-    lat: latAttr(),
-    lng: langAttr(),
-    embedding: Joi.array().items(Joi.number()).min(1).required(),
-    radiusMeters: numOpt(),
-  }),
 };

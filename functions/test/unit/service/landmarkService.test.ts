@@ -1,66 +1,13 @@
 import * as landmarkRepository from
   "../../../repository/landmarkRepository";
 import * as userRepository from "../../../repository/userRepository";
-import {createLandmark, matchNearby} from "../../../service/landmarkService";
+import {createLandmark} from "../../../service/landmarkService";
 
 jest.mock("../../../repository/landmarkRepository");
 jest.mock("../../../repository/userRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
-});
-
-const candidate = (
-  id: string,
-  embedding: number[] | null,
-  lat = 10.7626,
-  lng = 106.6602,
-) => ({id, embedding, lat, lng});
-
-describe("landmarkService.matchNearby", () => {
-  it("accepts the best match above the threshold", async () => {
-    jest.mocked(landmarkRepository.findByGeohashPrefixes).mockResolvedValue([
-      candidate("weak", [0, 1]),
-      candidate("best", [1, 0]),
-    ] as never);
-    const result = await matchNearby({
-      lat: 10.7626,
-      lng: 106.6602,
-      embedding: [1, 0],
-    });
-    expect(
-      (result.landmark as {id: string} | null)?.id,
-    ).toBe("best");
-    expect(result.confidence).toBeCloseTo(1, 5);
-  });
-
-  it("returns null below the threshold with the best score", async () => {
-    jest.mocked(landmarkRepository.findByGeohashPrefixes).mockResolvedValue([
-      candidate("far", [0, 1]),
-    ] as never);
-    const result = await matchNearby({
-      lat: 10.7626,
-      lng: 106.6602,
-      embedding: [1, 0],
-    });
-    expect(result.landmark).toBeNull();
-    expect(result.confidence).toBeCloseTo(0, 5);
-  });
-
-  it("skips empty embeddings and mismatched dims", async () => {
-    jest.mocked(landmarkRepository.findByGeohashPrefixes).mockResolvedValue([
-      candidate("empty", []),
-      candidate("none", null),
-      candidate("wrong", [1, 0, 0]),
-    ] as never);
-    const result = await matchNearby({
-      lat: 10.7626,
-      lng: 106.6602,
-      embedding: [1, 0],
-    });
-    expect(result.landmark).toBeNull();
-    expect(result.confidence).toBe(-1);
-  });
 });
 
 describe("landmarkService.createLandmark", () => {

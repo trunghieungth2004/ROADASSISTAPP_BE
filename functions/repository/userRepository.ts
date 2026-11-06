@@ -131,6 +131,20 @@ const updateNotificationPrefs = async (
   });
 };
 
+const updatePayoutAccount = async (
+  userId: string,
+  account: {
+    bankCode: string;
+    bankName: string;
+    accountNumber: string;
+    holderName: string;
+  },
+): Promise<void> => {
+  await db.collection("users").doc(userId).update({
+    payoutAccount: {...account, updatedAt: new Date().toISOString()},
+  });
+};
+
 const updateRoles = async (
   userIds: string[],
   role: string,
@@ -202,6 +216,7 @@ export {
   updateOnboarded,
   updateRating,
   updateNotificationPrefs,
+  updatePayoutAccount,
   updateRoles,
   updateStatuses,
   findByIds,

@@ -23,6 +23,16 @@ import {
   VEHICLE_TYPE,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
+import {
+  BOOKING_DEPOSIT_MAX,
+  BOOKING_DEPOSIT_PERCENT_MAX,
+  BOOKING_DEPOSIT_POLICY,
+  BOOKING_CAPACITY_MAX,
+  BOOKING_HORIZON_DAYS_MAX,
+  BOOKING_LEAD_MINUTES_MAX,
+  BOOKING_SLOT_MINUTES_MAX,
+  BOOKING_SLOT_MINUTES_MIN,
+} from "../../constants/booking";
 
 
 import {
@@ -41,7 +51,8 @@ export const PROVIDER_NS = "provider";
 
 const applyProviderPricing = (
   patch: Record<string, unknown>,
-  fields: {towBaseFee?: number; towPerKmFee?: number; callOutFee?: number;
+  fields: {towBaseFee?: number; towPerKmFee?: number;
+    waitingRatePer15Min?: number; callOutFee?: number;
     travelPerKmFee?: number},
   pricing: {
     TOW: {baseMin: number; baseMax: number; perKmMin: number; perKmMax: number};
@@ -53,6 +64,9 @@ const applyProviderPricing = (
     };
   },
 ): void => {
+  if (fields.waitingRatePer15Min !== undefined) {
+    patch.waitingRatePer15Min = fields.waitingRatePer15Min;
+  }
   if (fields.towBaseFee !== undefined || fields.towPerKmFee !== undefined) {
     Object.assign(patch, normalizeTowPricing({
       ...(fields.towBaseFee !== undefined ?
@@ -76,6 +90,17 @@ const applyProviderPricing = (
       bounds: pricing.MOBILE_SHOP,
     }));
   }
+};
+
+const providerClassesFor = (
+  provider: Record<string, unknown>,
+): string[] | undefined => {
+  if (Array.isArray(provider.vehicleClasses) &&
+    provider.vehicleClasses.length > 0) {
+    return provider.vehicleClasses as string[];
+  }
+  return typeof provider.vehicleType === "string" ?
+    [vehicleClassOf(provider.vehicleType)] : undefined;
 };
 
 export const createShopProvider = async ({
@@ -112,7 +137,10 @@ export const createShopProvider = async ({
     }
   }
   const normalizedServices = services !== undefined ?
-    normalizeShopServices(services) :
+    normalizeShopServices(services, {
+      kind: PROVIDER_KIND.SHOP,
+      providerVehicleClasses: vehicleClasses,
+    }) :
     undefined;
   const operated = await providerRepository.findByOperator(userId);
   if (operated.some((p) => p.kind === PROVIDER_KIND.SHOP &&
@@ -149,6 +177,7 @@ export const createMobileShopProvider = async ({
   licensePhotoUrl,
   callOutFee,
   travelPerKmFee,
+  services,
 }: {
   userId: string;
   name: string;
@@ -161,6 +190,7 @@ export const createMobileShopProvider = async ({
   licensePhotoUrl?: string;
   callOutFee?: number;
   travelPerKmFee?: number;
+  services?: unknown;
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
@@ -174,6 +204,12 @@ export const createMobileShopProvider = async ({
   if (!PLATE_SHAPE.test(normalizedPlate)) {
     throw new ValidationError("Plate number has an invalid shape");
   }
+  const normalizedServices = services !== undefined ?
+    normalizeShopServices(services, {
+      kind: PROVIDER_KIND.MOBILE_SHOP,
+      providerVehicleClasses: [vehicleClassOf(vehicleType)],
+    }) :
+    undefined;
   const config = await platformConfigService.getConfig();
   const pricing = normalizeMobileShopPricing({
     callOutFee,
@@ -209,6 +245,9 @@ export const createMobileShopProvider = async ({
     vehicleType,
     vehicleWidth: VEHICLE_DEFAULT_WIDTH[vehicleType] ?? null,
     vehicleProfileId: linkedProfileId,
+    ...(normalizedServices !== undefined ?
+      {services: normalizedServices} :
+      {}),
     ...pricing,
   });
   let vehicleProfileId = linkedProfileId;
@@ -240,6 +279,7 @@ export const createTowProvider = async ({
   vehicleWidth,
   towBaseFee,
   towPerKmFee,
+  waitingRatePer15Min,
 }: {
   userId: string;
   name: string;
@@ -251,6 +291,7 @@ export const createTowProvider = async ({
   vehicleWidth?: number;
   towBaseFee?: number;
   towPerKmFee?: number;
+  waitingRatePer15Min?: number;
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
@@ -297,6 +338,7 @@ export const createTowProvider = async ({
       vehicleType,
       vehicleWidth: vehicleWidth ?? VEHICLE_DEFAULT_WIDTH.CAR,
       vehicleProfileId: linkedProfileId,
+      ...(waitingRatePer15Min !== undefined ? {waitingRatePer15Min} : {}),
       ...pricing,
     });
     let vehicleProfileId = linkedProfileId;
@@ -326,6 +368,138 @@ export const createTowProvider = async ({
   }
 };
 
+
+const applyBookingFields = (
+  patch: Record<string, unknown>,
+  fields: {
+    bookingEnabled?: boolean;
+    bookingSlotMinutes?: number;
+    bookingCapacity?: number;
+    bookingLeadMinutes?: number;
+    bookingHorizonDays?: number;
+    bookingHours?: string | null;
+    bookingAlwaysOpen?: boolean;
+    depositPolicy?: string;
+    depositAmount?: number;
+    depositPercent?: number;
+  },
+  kind: string,
+): void => {
+  const present = fields.bookingEnabled !== undefined ||
+    fields.bookingSlotMinutes !== undefined ||
+    fields.bookingCapacity !== undefined ||
+    fields.bookingLeadMinutes !== undefined ||
+    fields.bookingHorizonDays !== undefined ||
+    fields.bookingHours !== undefined ||
+    fields.bookingAlwaysOpen !== undefined ||
+    fields.depositPolicy !== undefined ||
+    fields.depositAmount !== undefined ||
+    fields.depositPercent !== undefined;
+  if (!present) return;
+  if (kind !== PROVIDER_KIND.SHOP) {
+    throw new ValidationError("Bookings are shop-only");
+  }
+  if (fields.bookingSlotMinutes !== undefined &&
+    (fields.bookingSlotMinutes < BOOKING_SLOT_MINUTES_MIN ||
+      fields.bookingSlotMinutes > BOOKING_SLOT_MINUTES_MAX)) {
+    throw new ValidationError("Booking slot length is invalid");
+  }
+  if (fields.bookingCapacity !== undefined &&
+    (fields.bookingCapacity < 1 ||
+      fields.bookingCapacity > BOOKING_CAPACITY_MAX)) {
+    throw new ValidationError("Booking capacity is invalid");
+  }
+  if (fields.bookingLeadMinutes !== undefined &&
+    (fields.bookingLeadMinutes < 0 ||
+      fields.bookingLeadMinutes > BOOKING_LEAD_MINUTES_MAX)) {
+    throw new ValidationError("Booking lead time is invalid");
+  }
+  if (fields.bookingHorizonDays !== undefined &&
+    (fields.bookingHorizonDays < 1 ||
+      fields.bookingHorizonDays > BOOKING_HORIZON_DAYS_MAX)) {
+    throw new ValidationError("Booking horizon is invalid");
+  }
+  if (fields.depositPolicy !== undefined &&
+    !(Object.values(BOOKING_DEPOSIT_POLICY) as string[])
+      .includes(fields.depositPolicy)) {
+    throw new ValidationError("Deposit policy is invalid");
+  }
+  if (fields.depositAmount !== undefined &&
+    (fields.depositAmount < 0 ||
+      fields.depositAmount > BOOKING_DEPOSIT_MAX)) {
+    throw new ValidationError("Deposit amount is invalid");
+  }
+  if (fields.depositPercent !== undefined &&
+    (fields.depositPercent < 1 ||
+      fields.depositPercent > BOOKING_DEPOSIT_PERCENT_MAX)) {
+    throw new ValidationError("Deposit percent is invalid");
+  }
+  if (fields.bookingEnabled !== undefined) {
+    patch.bookingEnabled = fields.bookingEnabled;
+  }
+  if (fields.bookingSlotMinutes !== undefined) {
+    patch.bookingSlotMinutes = fields.bookingSlotMinutes;
+  }
+  if (fields.bookingCapacity !== undefined) {
+    patch.bookingCapacity = fields.bookingCapacity;
+  }
+  if (fields.bookingLeadMinutes !== undefined) {
+    patch.bookingLeadMinutes = fields.bookingLeadMinutes;
+  }
+  if (fields.bookingHorizonDays !== undefined) {
+    patch.bookingHorizonDays = fields.bookingHorizonDays;
+  }
+  if (fields.bookingHours !== undefined) {
+    patch.bookingHours = fields.bookingHours;
+  }
+  if (fields.bookingAlwaysOpen !== undefined) {
+    patch.bookingAlwaysOpen = fields.bookingAlwaysOpen;
+  }
+  if (fields.depositPolicy !== undefined) {
+    patch.depositPolicy = fields.depositPolicy;
+  }
+  if (fields.depositAmount !== undefined) {
+    patch.depositAmount = fields.depositAmount;
+  }
+  if (fields.depositPercent !== undefined) {
+    patch.depositPercent = fields.depositPercent;
+  }
+};
+
+
+const assertAcceptingChange = async (
+  providerId: string,
+  kind: string,
+  accepting?: boolean,
+): Promise<void> => {
+  if (accepting === undefined) return;
+  if (kind === PROVIDER_KIND.TOW) {
+    const live = await dispatchRepository.findActiveForShop(providerId);
+    if (live.length > 0) {
+      throw new ValidationError(
+        "Finish the active job before switching tow duty",
+      );
+    }
+    return;
+  }
+  if (kind !== PROVIDER_KIND.SHOP || accepting) return;
+  const [assigned, pending, named] = await Promise.all([
+    dispatchRepository.findActiveForShop(providerId),
+    dispatchRepository.findPendingForShop(providerId),
+    dispatchRepository.findActiveForDestination(providerId),
+  ]);
+  if (assigned.length > 0 || pending.length > 0) {
+    throw new ValidationError(
+      "Decline or resolve open tickets before closing the shop",
+    );
+  }
+  if (named.length > 0) {
+    throw new ValidationError(
+      "Decline the tow destination before closing the shop",
+    );
+  }
+};
+
 export const updateProvider = async ({
   userId,
   providerId,
@@ -347,9 +521,21 @@ export const updateProvider = async ({
     vehicleWidth?: number;
     towBaseFee?: number;
     towPerKmFee?: number;
+    waitingRatePer15Min?: number;
     callOutFee?: number;
     travelPerKmFee?: number;
     accepting?: boolean;
+    bookingEnabled?: boolean;
+    bookingSlotMinutes?: number;
+    bookingCapacity?: number;
+    bookingLeadMinutes?: number;
+    bookingHorizonDays?: number;
+    bookingHours?: string | null;
+    bookingAlwaysOpen?: boolean;
+    depositPolicy?: string;
+    depositAmount?: number;
+    depositPercent?: number;
+    taxCode?: string | null;
     lat?: number;
     lng?: number;
   };
@@ -362,39 +548,7 @@ export const updateProvider = async ({
   if (operator !== userId && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator updates this provider");
   }
-  if (fields.accepting === true && provider.kind === PROVIDER_KIND.TOW) {
-    const live = await dispatchRepository.findActiveForShop(providerId);
-    if (live.length > 0) {
-      throw new ValidationError(
-        "Finish the active job before switching tow duty back on",
-      );
-    }
-  }
-  if (fields.accepting === false && provider.kind === PROVIDER_KIND.TOW) {
-    const live = await dispatchRepository.findActiveForShop(providerId);
-    if (live.length > 0) {
-      throw new ValidationError(
-        "Finish the active job before switching tow duty off",
-      );
-    }
-  }
-  if (fields.accepting === false && provider.kind === PROVIDER_KIND.SHOP) {
-    const [assigned, pending, named] = await Promise.all([
-      dispatchRepository.findActiveForShop(providerId),
-      dispatchRepository.findPendingForShop(providerId),
-      dispatchRepository.findActiveForDestination(providerId),
-    ]);
-    if (assigned.length > 0 || pending.length > 0) {
-      throw new ValidationError(
-        "Decline or resolve open tickets before closing the shop",
-      );
-    }
-    if (named.length > 0) {
-      throw new ValidationError(
-        "Decline the tow destination before closing the shop",
-      );
-    }
-  }
+  await assertAcceptingChange(providerId, provider.kind, fields.accepting);
   if (fields.vehicleClasses !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP &&
     provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
@@ -420,8 +574,9 @@ export const updateProvider = async ({
     }
   }
   if (fields.services !== undefined &&
-    provider.kind !== PROVIDER_KIND.SHOP) {
-    throw new ValidationError("Services are shop-only");
+    provider.kind !== PROVIDER_KIND.SHOP &&
+    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
+    throw new ValidationError("Services are not available for this provider");
   }
   if (fields.serviceFee !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP) {
@@ -437,12 +592,17 @@ export const updateProvider = async ({
     provider.kind !== PROVIDER_KIND.TOW) {
     throw new ValidationError("Tow fees are tow-only");
   }
+  if (fields.waitingRatePer15Min !== undefined &&
+    provider.kind !== PROVIDER_KIND.TOW) {
+    throw new ValidationError("Waiting rate is tow-only");
+  }
   if ((fields.callOutFee !== undefined ||
     fields.travelPerKmFee !== undefined) &&
     provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
     throw new ValidationError("Mobile-shop fees are mobile-shop-only");
   }
   const patch: Record<string, unknown> = {};
+  applyBookingFields(patch, fields, provider.kind);
   if (fields.name !== undefined) {
     patch.name = fields.name;
     patch.nameLower = fields.name.trim().toLowerCase();
@@ -461,7 +621,10 @@ export const updateProvider = async ({
     patch.vehicleClasses = fields.vehicleClasses;
   }
   if (fields.services !== undefined) {
-    patch.services = normalizeShopServices(fields.services);
+    patch.services = normalizeShopServices(fields.services, {
+      kind: String(provider.kind ?? PROVIDER_KIND.SHOP),
+      providerVehicleClasses: providerClassesFor(provider),
+    });
   }
   if (fields.serviceFee !== undefined) patch.serviceFee = fields.serviceFee;
   const config = await platformConfigService.getConfig();
@@ -522,10 +685,30 @@ export const updateProvider = async ({
     patch.vehicleWidth = fields.vehicleWidth;
   }
   if (fields.towBaseFee !== undefined) patch.towBaseFee = fields.towBaseFee;
-  if (fields.towPerKmFee !== undefined) {
-    patch.towPerKmFee = fields.towPerKmFee;
-  }
+  if (fields.towPerKmFee !== undefined) patch.towPerKmFee = fields.towPerKmFee;
   if (fields.accepting !== undefined) patch.accepting = fields.accepting;
+  if (fields.bookingEnabled !== undefined) {
+    patch.bookingEnabled = fields.bookingEnabled;
+  }
+  if (fields.bookingSlotMinutes !== undefined) {
+    patch.bookingSlotMinutes = fields.bookingSlotMinutes;
+  }
+  if (fields.bookingCapacity !== undefined) {
+    patch.bookingCapacity = fields.bookingCapacity;
+  }
+  if (fields.bookingLeadMinutes !== undefined) {
+    patch.bookingLeadMinutes = fields.bookingLeadMinutes;
+  }
+  if (fields.bookingHorizonDays !== undefined) {
+    patch.bookingHorizonDays = fields.bookingHorizonDays;
+  }
+  if (fields.bookingHours !== undefined) {
+    patch.bookingHours = fields.bookingHours;
+  }
+  if (fields.bookingAlwaysOpen !== undefined) {
+    patch.bookingAlwaysOpen = fields.bookingAlwaysOpen;
+  }
+  if (fields.taxCode !== undefined) patch.taxCode = fields.taxCode;
   if (fields.lat !== undefined || fields.lng !== undefined) {
     if (typeof fields.lat !== "number" || typeof fields.lng !== "number") {
       throw new ValidationError("Location needs both lat and lng");

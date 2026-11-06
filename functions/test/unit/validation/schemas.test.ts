@@ -28,7 +28,6 @@ const valid: Record<string, unknown> = {
   unflagFlag: {flagId: "f1"},
   nearLandmarks: {lat: 10.7626, lng: 106.6602},
   createLandmark: {lat: 10.7626, lng: 106.6602, displayLabel: "Gate"},
-  matchLandmark: {lat: 10.7626, lng: 106.6602, embedding: [0.1, 0.2]},
   getRoute: {
     originLat: 10.7626,
     originLng: 106.6602,
@@ -44,8 +43,6 @@ const valid: Record<string, unknown> = {
   },
   createProvider: {kind: "SHOP", name: "Shop", lat: 10.7626, lng: 106.6602},
   nearProviders: {lat: 10.7626, lng: 106.6602},
-  createDiagnostic: {category: "FLAT_TIRE", imagePath: "a.jpg"},
-  getDiagnostic: {diagnosticId: "d1"},
   createDispatch: {ticketType: "TOW", lat: 10.7, lng: 106.6},
   getDispatch: {ticketId: "t1"},
   getMyTickets: {},
@@ -218,15 +215,6 @@ describe("schemas reject invalid input", () => {
     expect(error).toBeDefined();
   });
 
-  it("matchLandmark rejects empty or non-numeric embedding", () => {
-    const base = {lat: 10.7, lng: 106.6};
-    expect(
-      table.matchLandmark.validate({...base, embedding: []}).error,
-    ).toBeDefined();
-    expect(
-      table.matchLandmark.validate({...base, embedding: ["x"]}).error,
-    ).toBeDefined();
-  });
 
   it("getRoute requires all coordinates", () => {
     const {error} = table.getRoute.validate({
@@ -471,14 +459,6 @@ describe("schemas reject invalid input", () => {
         score: 9,
       }).error,
     ).toBeDefined();
-  });
-
-  it("createDiagnostic rejects bad category", () => {
-    const {error} = table.createDiagnostic.validate({
-      category: "ENGINE",
-      imagePath: "a.jpg",
-    });
-    expect(error).toBeDefined();
   });
 
   it("dispatch schemas reject bad ticketType and status", () => {

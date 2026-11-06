@@ -24,6 +24,20 @@ export default (
     vehicleProfileController.createProfile,
   );
   app.post(
+    "/vehicleProfiles/update",
+    writeLimited,
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.updateVehicleProfile}),
+    vehicleProfileController.updateProfile,
+  );
+  app.post(
+    "/vehicleProfiles/history",
+    requireAuth,
+    validate({body: schemas.vehicleHistory}),
+    vehicleProfileController.history,
+  );
+  app.post(
     "/vehicleProfiles/remove",
     writeLimited,
     requireAuth,

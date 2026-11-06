@@ -4,8 +4,12 @@ import {sendSuccess, handleServiceError} from "../utils/response";
 
 const searchDirectory = async (req: Request, res: Response) => {
   try {
-    const {q, limit} = req.body;
-    const result = await placesService.searchDirectory({q, limit});
+    const {q, limit, kind} = req.body;
+    const result = await placesService.searchDirectory({
+      q,
+      limit,
+      ...(typeof kind === "string" ? {kind} : {}),
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);

@@ -1,4 +1,4 @@
-import {db} from "../config/firebase";
+import {db, FieldValue} from "../config/firebase";
 import {encodeGeohash} from "../utils/geo";
 import {PROVIDER_STATUS} from "../constants/status";
 
@@ -7,6 +7,10 @@ interface ProviderService {
   name: string;
   displayPrice: number;
   quoteRequired: boolean;
+  category?: string;
+  warrantyDays?: number;
+  warrantyParts?: string;
+  channels?: string[];
 }
 
 interface Provider {
@@ -21,7 +25,19 @@ interface Provider {
   openHours?: string | null;
   vehicleClasses?: string[] | null;
   services?: ProviderService[] | null;
+  serviceUsage?: Record<string, number> | null;
+  taxCode?: string | null;
   serviceFee?: number | null;
+  bookingEnabled?: boolean;
+  bookingSlotMinutes?: number | null;
+  bookingCapacity?: number | null;
+  bookingLeadMinutes?: number | null;
+  bookingHorizonDays?: number | null;
+  bookingHours?: string | null;
+  bookingAlwaysOpen?: boolean;
+  depositPolicy?: string | null;
+  depositAmount?: number | null;
+  depositPercent?: number | null;
   accepting?: boolean;
   plate?: string | null;
   plateRaw?: string | null;
@@ -30,6 +46,7 @@ interface Provider {
   vehicleProfileId?: string | null;
   towBaseFee?: number | null;
   towPerKmFee?: number | null;
+  waitingRatePer15Min?: number | null;
   callOutFee?: number | null;
   travelPerKmFee?: number | null;
   status: string;
@@ -116,6 +133,7 @@ const createMobileShop = async (data: {
   vehicleProfileId?: string | null;
   callOutFee?: number;
   travelPerKmFee?: number;
+  services?: ProviderService[];
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc();
   const doc = {
@@ -129,7 +147,7 @@ const createMobileShop = async (data: {
     label: data.label ?? null,
     openHours: null,
     vehicleClasses: data.vehicleClasses,
-    services: [],
+    services: data.services ?? [],
     serviceFee: null,
     accepting: false,
     plate: data.plate,
@@ -173,6 +191,7 @@ const createTow = async (data: {
   vehicleProfileId?: string | null;
   towBaseFee?: number;
   towPerKmFee?: number;
+  waitingRatePer15Min?: number;
 }): Promise<Provider> => {
   const ref = db.collection("providers").doc(data.plate);
   const doc = {
@@ -193,6 +212,7 @@ const createTow = async (data: {
     vehicleProfileId: data.vehicleProfileId ?? null,
     towBaseFee: data.towBaseFee ?? null,
     towPerKmFee: data.towPerKmFee ?? null,
+    waitingRatePer15Min: data.waitingRatePer15Min ?? null,
     status: PROVIDER_STATUS.PENDING,
     suspended: false,
     suspendedAt: null,
@@ -301,6 +321,19 @@ const decide = async (
   return decided;
 };
 
+const incrementServiceUsage = async (
+  providerId: string,
+  codes: string[],
+): Promise<void> => {
+  const unique = [...new Set(codes.filter((code) => code !== ""))];
+  if (unique.length === 0) return;
+  const patch: Record<string, unknown> = {};
+  for (const code of unique) {
+    patch[`serviceUsage.${code}`] = FieldValue.increment(1);
+  }
+  await db.collection("providers").doc(providerId).update(patch);
+};
+
 const updateRating = async (
   providerId: string,
   avg: number,
@@ -327,6 +360,15 @@ const findByGeohashPrefixes = async (
       results.push({id: doc.id, ...doc.data()} as Provider),
     );
   }
+  return results;
+};
+
+const findAll = async (): Promise<Provider[]> => {
+  const snapshot = await db.collection("providers").get();
+  const results: Provider[] = [];
+  snapshot.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Provider),
+  );
   return results;
 };
 
@@ -363,6 +405,8 @@ export {
   update,
   decide,
   updateRating,
+  incrementServiceUsage,
   findByGeohashPrefixes,
+  findAll,
   findByNamePrefix,
 };

@@ -45,7 +45,13 @@ const findByUser = async (userId: string): Promise<VehicleProfile[]> => {
 
 const create = async (
   userId: string,
-  data: { type: string; baseWidth: number; baseHeight: number },
+  data: {
+    type: string;
+    baseWidth: number;
+    baseHeight: number;
+    label?: string;
+    plate?: string;
+  },
 ): Promise<VehicleProfile> => {
   const ref = db
     .collection("users")

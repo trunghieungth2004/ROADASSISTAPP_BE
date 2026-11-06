@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import * as providerService from "../service/providerService";
+import * as analyticsService from "../service/analyticsService";
 import * as ratingService from "../service/ratingService";
 import {sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
@@ -9,8 +10,8 @@ const createProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {kind, name, lat, lng, label, openHours, vehicleClasses,
       services, serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
-      towPerKmFee, callOutFee, travelPerKmFee, licenseNumber,
-      licensePhotoUrl} = req.body;
+      towPerKmFee, waitingRatePer15Min, callOutFee, travelPerKmFee,
+      licenseNumber, licensePhotoUrl} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
         userId,
@@ -23,6 +24,7 @@ const createProvider = async (req: Request, res: Response) => {
         vehicleWidth,
         towBaseFee,
         towPerKmFee,
+        waitingRatePer15Min,
       }) :
       kind === "MOBILE_SHOP" ?
         await providerService.createMobileShopProvider({
@@ -37,6 +39,7 @@ const createProvider = async (req: Request, res: Response) => {
           licensePhotoUrl,
           callOutFee,
           travelPerKmFee,
+          services,
         }) :
         await providerService.createShopProvider({
           userId,
@@ -60,8 +63,12 @@ const updateProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {providerId, name, label, openHours, vehicleClasses, services,
       serviceFee, licenseNumber, licensePhotoUrl, plate, vehicleType,
-      vehicleWidth, towBaseFee, towPerKmFee, callOutFee, travelPerKmFee,
-      accepting, lat, lng} = req.body;
+      vehicleWidth, towBaseFee, towPerKmFee, waitingRatePer15Min,
+      callOutFee, travelPerKmFee, accepting, taxCode, lat,
+      lng, bookingEnabled, bookingSlotMinutes, bookingCapacity,
+      bookingLeadMinutes, bookingHorizonDays, bookingHours,
+      bookingAlwaysOpen, depositPolicy, depositAmount,
+      depositPercent} = req.body;
     const result = await providerService.updateProvider({
       userId,
       providerId,
@@ -79,9 +86,21 @@ const updateProvider = async (req: Request, res: Response) => {
         vehicleWidth,
         towBaseFee,
         towPerKmFee,
+        waitingRatePer15Min,
         callOutFee,
         travelPerKmFee,
         accepting,
+        taxCode,
+        bookingEnabled,
+        bookingSlotMinutes,
+        bookingCapacity,
+        bookingLeadMinutes,
+        bookingHorizonDays,
+        bookingHours,
+        bookingAlwaysOpen,
+        depositPolicy,
+        depositAmount,
+        depositPercent,
         lat,
         lng,
       },
@@ -102,6 +121,16 @@ const myProviders = async (req: Request, res: Response) => {
   }
 };
 
+const myStats = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await analyticsService.myStats({userId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const getPricingLimits = async (_req: Request, res: Response) => {
   try {
     const result = await providerService.getProviderPricingLimits();
@@ -114,7 +143,8 @@ const getPricingLimits = async (_req: Request, res: Response) => {
 const nearProviders = async (req: Request, res: Response) => {
   try {
     const {lat, lng, kind, radiusMeters, acceptingOnly, openOnly,
-      vehicleClass, limit, minRating, sortBy, ticketId} = req.body;
+      vehicleClass, serviceCategory, limit, minRating, sortBy,
+      ticketId} = req.body;
     const result = await providerService.getNearbyProviders({
       lat,
       lng,
@@ -123,6 +153,7 @@ const nearProviders = async (req: Request, res: Response) => {
       acceptingOnly,
       openOnly,
       vehicleClass,
+      serviceCategory,
       limit,
       minRating,
       sortBy,
@@ -263,14 +294,15 @@ const updateProviderLocation = async (req: Request, res: Response) => {
 
 const searchProviders = async (req: Request, res: Response) => {
   try {
-    const {lat, lng, query, kind, vehicleClass, radiusMeters, limit,
-      minRating, sortBy, ticketId} = req.body;
+    const {lat, lng, query, kind, vehicleClass, serviceCategory,
+      radiusMeters, limit, minRating, sortBy, ticketId} = req.body;
     const result = await providerService.searchProviders({
       lat,
       lng,
       query,
       kind,
       vehicleClass,
+      serviceCategory,
       radiusMeters,
       limit,
       minRating,
@@ -293,7 +325,7 @@ const providerRatings = async (req: Request, res: Response) => {
   }
 };
 
-export {createProvider, updateProvider, myProviders, getPricingLimits,
-  nearProviders, searchProviders, providerRatings,
+export {createProvider, updateProvider, myProviders, myStats,
+  getPricingLimits, nearProviders, searchProviders, providerRatings,
   listPending, reviewProvider, reportProvider, listReports, dismissReport,
   suspendProvider, restoreProvider, revokeProvider, updateProviderLocation};

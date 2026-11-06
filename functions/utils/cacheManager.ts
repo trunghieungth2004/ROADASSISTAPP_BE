@@ -7,7 +7,6 @@ const MB = 1024 * 1024;
 const DEFAULTS: Record<string, number> = {
   user: 30000,
   vehicleProfile: 30000,
-  alleySegment: 120000,
   landmark: 120000,
   flag: 10000,
   shop: 120000,
@@ -21,7 +20,6 @@ const DEFAULTS: Record<string, number> = {
 const MAX_SIZES_MB: Record<string, number> = {
   user: 3,
   vehicleProfile: 3,
-  alleySegment: 4,
   landmark: 2,
   flag: 4,
   shop: 2,
