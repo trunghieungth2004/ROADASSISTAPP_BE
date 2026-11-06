@@ -1,0 +1,69 @@
+export const BOOKING_STATUS = {
+  REQUESTED: "REQUESTED",
+  CONFIRMED: "CONFIRMED",
+  DECLINED: "DECLINED",
+  CANCELLED: "CANCELLED",
+  ARRIVED: "ARRIVED",
+  COMPLETED: "COMPLETED",
+  NO_SHOW: "NO_SHOW",
+} as const;
+
+export const BOOKING_OPEN_STATUSES: string[] = [
+  BOOKING_STATUS.REQUESTED,
+  BOOKING_STATUS.CONFIRMED,
+  BOOKING_STATUS.ARRIVED,
+];
+
+export const BOOKING_DEFAULTS = {
+  slotMinutes: 30,
+  capacity: 1,
+  leadMinutes: 60,
+  horizonDays: 7,
+} as const;
+
+export const BOOKING_SLOT_MINUTES_MIN = 15;
+export const BOOKING_SLOT_MINUTES_MAX = 120;
+export const BOOKING_CAPACITY_MAX = 10;
+export const BOOKING_LEAD_MINUTES_MAX = 24 * 60;
+export const BOOKING_HORIZON_DAYS_MAX = 30;
+export const BOOKING_NOTE_MAX = 500;
+export const BOOKING_SERVICE_MAX = 10;
+export const BOOKING_REMINDER_MINUTES = 60;
+export const BOOKING_NO_SHOW_GRACE_MINUTES = 30;
+export const BOOKING_ARRIVAL_GRACE_MINUTES = 120;
+export const BOOKING_ARRIVAL_AUTOCOMPLETE_HOURS = 6;
+export const BOOKING_TIMEZONE_OFFSET_MINUTES = 7 * 60;
+
+export const BOOKING_DEPOSIT_POLICY = {
+  NONE: "NONE",
+  FIXED: "FIXED",
+  PERCENT: "PERCENT",
+} as const;
+
+export const BOOKING_DEPOSIT_STATUS = {
+  NONE: "NONE",
+  DUE: "DUE",
+  REQUESTED: "REQUESTED",
+  COLLECTED: "COLLECTED",
+  CONFIRMED: "CONFIRMED",
+  APPLIED: "APPLIED",
+  WAIVED: "WAIVED",
+} as const;
+
+export const BOOKING_DEPOSIT_PERCENT_MAX = 30;
+export const BOOKING_DEPOSIT_MAX = 5000000;
+
+export const BOOKING_ARRIVAL_MODE = {
+  SELF: "SELF",
+  TOW: "TOW",
+} as const;
+
+export const BOOKING_DEPOSIT_METHOD = {
+  CASH: "CASH",
+  SEPAY: "SEPAY",
+} as const;
+
+export const BOOKING_REMINDER_BUFFER_MINUTES = [15, 30, 60] as const;
+export const BOOKING_REMINDER_BUFFER_DEFAULT = 30;
+export const BOOKING_REMINDER_SWEEP_BUFFER_MINUTES = 5;
+export const BOOKING_REMINDER_FALLBACK_MINUTES = 30;
