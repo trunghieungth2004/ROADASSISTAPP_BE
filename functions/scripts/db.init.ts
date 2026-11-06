@@ -1,3 +1,5 @@
+import {readFileSync} from "fs";
+import {resolve} from "path";
 import {
   cert,
   getApps,
@@ -5,7 +7,6 @@ import {
   ServiceAccount,
 } from "firebase-admin/app";
 import {getFirestore} from "firebase-admin/firestore";
-import * as serviceAccount from "../config/serviceAccountKey.json";
 import {ROLES} from "../constants/roles";
 import {STATUS_GROUPS, STATUS_NAMES_VI} from "../constants/status";
 
@@ -15,7 +16,13 @@ if (getApps().length === 0) {
   if (useEmulator) {
     initializeApp({projectId: process.env.GCLOUD_PROJECT ?? "demo"});
   } else {
-    initializeApp({credential: cert({...serviceAccount} as ServiceAccount)});
+    const raw = readFileSync(
+      resolve(process.cwd(), "config/serviceAccountKey.json"),
+      "utf8",
+    );
+    initializeApp({
+      credential: cert(JSON.parse(raw) as ServiceAccount),
+    });
   }
 }
 
