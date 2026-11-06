@@ -30,8 +30,21 @@ const defaultRules = (): WaitingRules => ({
   radiusM: WAITING_RADIUS_M,
 });
 
-const waitingRules = async (): Promise<WaitingRules> => {
+const waitingRules = async (
+  assignedShopId?: unknown,
+): Promise<WaitingRules> => {
   const fallback = defaultRules();
+  let providerRate: number | null = null;
+  if (typeof assignedShopId === "string" && assignedShopId !== "") {
+    try {
+      const provider = await providerRepository.findById(assignedShopId);
+      if (typeof provider?.waitingRatePer15Min === "number") {
+        providerRate = provider.waitingRatePer15Min;
+      }
+    } catch {
+      providerRate = null;
+    }
+  }
   try {
     const cfg = await getConfig();
     const blockMinutes = WAITING_BLOCK_MS / MS_PER_MIN;
@@ -44,11 +57,12 @@ const waitingRules = async (): Promise<WaitingRules> => {
       typeof cfg.waitingCapMinutes === "number" && cfg.waitingCapMinutes >= 0 ?
         cfg.waitingCapMinutes :
         fallback.capMs / MS_PER_MIN;
-    const ratePerMin =
+    const platformRate =
       typeof cfg.waitingRatePer15Min === "number" &&
       cfg.waitingRatePer15Min >= 0 ?
-        cfg.waitingRatePer15Min / blockMinutes :
-        fallback.ratePerMin;
+        cfg.waitingRatePer15Min :
+        fallback.ratePerMin * blockMinutes;
+    const ratePerMin = (providerRate ?? platformRate) / blockMinutes;
     return {
       graceMs: graceMinutes * MS_PER_MIN,
       capMs: capMinutes * MS_PER_MIN,
@@ -125,7 +139,7 @@ const stopWaiting = async (ticketId: string): Promise<{fee: number}> => {
   const startedAt = typeof waiting.startedAt === "string" ?
     waiting.startedAt :
     null;
-  const rules = await waitingRules();
+  const rules = await waitingRules(ticket.assignedShopId);
   if (!startedAt) {
     await dispatchRepository.update(ticketId, {
       waiting: {
@@ -208,7 +222,7 @@ const accrue = async ({
         null,
     };
   }
-  const rules = await waitingRules();
+  const rules = await waitingRules(ticket.assignedShopId);
   const nowMs = (now ?? new Date()).getTime();
   const elapsedMs = Math.min(
     Math.max(0, nowMs - Date.parse(waiting.startedAt)),
@@ -252,7 +266,7 @@ const currentWaitingFee = async (
   const stored = typeof waiting.fee === "number" ? waiting.fee : null;
   if (waiting.active !== true) return stored;
   if (typeof waiting.startedAt !== "string") return stored;
-  const rules = await waitingRules();
+  const rules = await waitingRules(ticket.assignedShopId);
   const elapsedMs = Math.min(
     Math.max(0, Date.now() - Date.parse(waiting.startedAt)),
     rules.capMs,
@@ -301,7 +315,7 @@ export const getWaitingSummary = async ({
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   await assertWaitingReader(ticket, userId);
-  const rules = await waitingRules();
+  const rules = await waitingRules(ticket.assignedShopId);
   const waiting = ticket.waiting as {
     active?: boolean;
     startedAt?: string | null;

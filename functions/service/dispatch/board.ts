@@ -27,6 +27,7 @@ import {
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
+import {riderParty} from "./riderParty";
 
 export const nearDispatchInner = async ({
   userId,
@@ -94,12 +95,31 @@ export const nearDispatchInner = async ({
     .filter((t) => (t.distance as number) <= radiusMeters)
     .sort((a, b) => (a.distance as number) - (b.distance as number))
     .slice(0, limit);
+  const riderIds = [...new Set(
+    nearby
+      .filter((ticket) => ticket.ticketType === "SOS" ||
+        (ticket.ticketType === "TOW" && ticket.towKind === "RETURN"))
+      .map((ticket) => ticket.userId)
+      .filter((id): id is string => typeof id === "string" && id !== ""),
+  )];
+  const riders = riderIds.length > 0 ?
+    await userRepository.findByIds(riderIds) :
+    new Map();
   return nearby.map((t) => {
     const row: Record<string, unknown> = {...t};
     const keepPhotos =
       (activeTow && t.ticketType === "TOW") ||
       (activeMobileShop && t.ticketType === "SOS");
     if (!keepPhotos) delete row.photoUrls;
+    if (t.ticketType === "SOS" ||
+      (t.ticketType === "TOW" && t.towKind === "RETURN")) {
+      const rider = riders.get(t.userId);
+      const party = riderParty(t.userId, rider);
+      if (party !== null) {
+        row.riderParty = party;
+        row.riderName = party.name;
+      }
+    }
     return row;
   });
 };

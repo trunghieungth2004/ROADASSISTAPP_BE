@@ -345,6 +345,117 @@ describe("dispatchService.updateDispatchStatus", () => {
     );
   });
 
+  it("keeps the assigned tower card when a tow resolves", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      providerId: "tow1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      towFare: {
+        estimate: 300000,
+        ceiling: 330000,
+        deadheadKm: 1,
+        loadedKm: 8.15,
+        night: false,
+        vehicleClass: "CAR",
+        baseFee: 300000,
+        perKmFee: 10000,
+        includedKm: 10,
+        billableKm: 0,
+      },
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+      towBaseFee: 300000,
+      towPerKmFee: 10000,
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        towFare: expect.objectContaining({
+          baseFee: 300000,
+          perKmFee: 10000,
+          ceiling: 330000,
+          final: 300000,
+        }),
+      }),
+    );
+  });
+
+  it("falls back to the routed distance for a sparse GPS track", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      providerId: "tow1",
+      lat: 10.824434,
+      lng: 106.776267,
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      jobTrack: [
+        {lat: 10.773294, lng: 106.722712, at: "2026-01-01T00:00:01.000Z"},
+        {lat: 10.824434, lng: 106.776267, at: "2026-01-01T00:00:02.000Z"},
+        {lat: 10.824434, lng: 106.776267, at: "2026-01-01T00:00:03.000Z"},
+        {lat: 10.773332, lng: 106.72289, at: "2026-01-01T00:00:04.000Z"},
+      ],
+      towFare: {
+        estimate: 300000,
+        ceiling: 330000,
+        deadheadKm: 9.922,
+        loadedKm: 11.02,
+        night: false,
+        vehicleClass: "CAR",
+        baseFee: 300000,
+        perKmFee: 10000,
+        includedKm: 10,
+        billableKm: 0,
+      },
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+      towBaseFee: 300000,
+      towPerKmFee: 10000,
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        towFare: expect.objectContaining({
+          billableKm: 1.02,
+          final: 310000,
+        }),
+        towActual: expect.objectContaining({
+          actualKm: 11.02,
+          gpsKm: 8.14,
+          distanceSource: "ROUTE_QUOTE",
+        }),
+      }),
+    );
+  });
+
   it("requires confirmed cash before resolving a shop ticket", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",

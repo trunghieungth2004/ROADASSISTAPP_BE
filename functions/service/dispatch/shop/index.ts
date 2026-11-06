@@ -1,4 +1,6 @@
 export {declineDispatch, sweepStaleWalkIns} from "./walkIn";
+export {quickFix} from "./quickFix";
+export {releaseTicket} from "./release";
 export {sweepLateTows} from "./sweep";
 export {
   getShopRequests,
@@ -9,7 +11,12 @@ export {
 export {feedTickets} from "./feed";
 export {updateWorkOrder, approveInvoice} from "./workOrder";
 export {sendEstimate, approveEstimate, declineEstimate} from "./estimate";
-export {sendQuote, approveQuote, declineQuote} from "./quote";
+export {
+  sendQuote,
+  approveQuote,
+  declineQuote,
+  sweepExpiredQuotes,
+} from "./quote";
 export {declineDestination} from "./destination";
 export {
   setMobileShopFix,

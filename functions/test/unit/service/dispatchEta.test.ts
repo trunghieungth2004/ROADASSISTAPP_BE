@@ -4,6 +4,7 @@ import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
 import {estimateTowEta} from "../../../service/dispatch/helpers";
 import {refreshTowEta} from "../../../service/dispatchService";
+import {enqueueDispatchPush} from "../../../service/taskQueueService";
 
 jest.mock("../../../repository/dispatchRepository");
 jest.mock("../../../repository/userRepository");
@@ -111,6 +112,7 @@ describe("refreshTowEta", () => {
         typeof (call[1] as Record<string, unknown>).etaPickupAt === "string",
     );
     expect(stamped).toBeDefined();
+    expect(enqueueDispatchPush).not.toHaveBeenCalled();
   });
 
   it("refuses strangers with 403", async () => {

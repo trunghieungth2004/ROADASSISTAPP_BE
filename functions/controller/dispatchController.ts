@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import * as dispatchService from "../service/dispatchService";
+import * as bookingService from "../service/bookingService";
 import {DISPATCH_QUEUE_NAME} from "../service/taskQueueService";
 import {sendError, sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
@@ -12,6 +13,7 @@ const createDispatch = async (req: Request, res: Response) => {
       lat,
       lng,
       diagnosticId,
+      symptom,
       note,
       description,
       photoUrls,
@@ -29,6 +31,7 @@ const createDispatch = async (req: Request, res: Response) => {
       lat,
       lng,
       diagnosticId,
+      symptom,
       note,
       description,
       photoUrls,
@@ -187,11 +190,85 @@ const declineDispatch = async (req: Request, res: Response) => {
   }
 };
 
+const release = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason} = req.body;
+    const result = await dispatchService.releaseTicket({
+      userId,
+      ticketId,
+      reason,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const quickFix = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, items} = req.body;
+    const result = await dispatchService.quickFix({userId, ticketId, items});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const share = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.createShareLink({userId, ticketId});
+    sendSuccess(res, result, {statusCode: 201});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const shareBeat = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, lat, lng} = req.body;
+    const result = await dispatchService.recordRiderBeat({
+      userId,
+      ticketId,
+      lat: Number(lat),
+      lng: Number(lng),
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const shareRevoke = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.revokeShareLink({userId, ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const shareView = async (req: Request, res: Response) => {
+  try {
+    const {token} = req.body;
+    const result = await dispatchService.viewShareLink({token});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const updateWorkOrder = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {ticketId, workType, quotedAmount, finalAmount, invoiceRef, items} =
-      req.body;
+    const {ticketId, workType, quotedAmount, finalAmount, invoiceRef,
+      warrantyDays, items} = req.body;
     const result = await dispatchService.updateWorkOrder({
       userId,
       ticketId,
@@ -199,6 +276,7 @@ const updateWorkOrder = async (req: Request, res: Response) => {
       quotedAmount,
       finalAmount,
       invoiceRef,
+      warrantyDays,
       items,
     });
     sendSuccess(res, result);
@@ -446,7 +524,13 @@ const markTowLoaded = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {ticketId} = req.body;
-    const result = await dispatchService.markTowLoaded({userId, ticketId});
+    const result = await dispatchService.markTowLoaded({
+      userId,
+      ticketId,
+      ...(Array.isArray(req.body.photoUrls) ?
+        {photoUrls: req.body.photoUrls as string[]} :
+        {}),
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -457,7 +541,13 @@ const confirmTowReceived = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {ticketId} = req.body;
-    const result = await dispatchService.confirmTowReceived({userId, ticketId});
+    const result = await dispatchService.confirmTowReceived({
+      userId,
+      ticketId,
+      ...(Array.isArray(req.body.photoUrls) ?
+        {photoUrls: req.body.photoUrls as string[]} :
+        {}),
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -570,6 +660,7 @@ const deliverDispatch = async (req: Request, res: Response) => {
     }
     const {
       ticketId,
+      bookingId,
       audience,
       title,
       body,
@@ -578,6 +669,11 @@ const deliverDispatch = async (req: Request, res: Response) => {
       action,
       offerAt,
     } = req.body;
+    if (typeof bookingId === "string" && bookingId !== "") {
+      const result = await bookingService.deliverBookingReminder(bookingId);
+      sendSuccess(res, result);
+      return;
+    }
     if (action === "expire-mobile-tow-offer") {
       const result = await dispatchService.expireMobileTowOffer(
         ticketId,
@@ -610,6 +706,34 @@ const deliverDispatch = async (req: Request, res: Response) => {
   }
 };
 
+const setHold = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason, note, etaAt} = req.body;
+    const result = await dispatchService.setHold({
+      userId,
+      ticketId,
+      reason,
+      ...(typeof note === "string" ? {note} : {}),
+      ...(typeof etaAt === "string" ? {etaAt} : {}),
+    });
+    sendSuccess(res, result, {message: "Delay saved"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const clearHold = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId} = req.body;
+    const result = await dispatchService.clearHold({userId, ticketId});
+    sendSuccess(res, result, {message: "Delay cleared"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   nearDispatch,
   dispatchOffers, selectDispatch, acceptDispatch, declineDispatch,
@@ -624,6 +748,9 @@ export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   approveQuote, declineQuote, declineDestination, cancelTowerSearch,
   markTowLoaded, confirmTowReceived, waitingStatus,
   refreshTowEta, estimateTowFare,
-  updateWorkOrder, approveInvoice, shopRequests, shopRecords, feedTickets,
+  updateWorkOrder, approveInvoice, quickFix, release,
+  share, shareRevoke, shareView, shareBeat,
+  shopRequests, shopRecords, feedTickets,
   updateDispatchDestination,
+  setHold, clearHold,
   deliverDispatch};

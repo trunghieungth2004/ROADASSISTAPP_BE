@@ -11,6 +11,16 @@ const DETOUR_TOLERANCE_PCT = 15;
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const TOW_ESTIMATE_TTL_MS = 24 * 60 * 60 * 1000;
 const TOW_NO_DEST_NUDGE_MS = 30 * 60 * 1000;
+const QUICK_FIX_MAX_AMOUNT = 300000;
+const DISPATCH_SLA_MINUTES: Record<string, number> = {
+  TOW: 5,
+  SOS: 5,
+  MECHANIC: 10,
+  WALK_IN: 15,
+};
+const DISPATCH_MAX_ROUNDS = 3;
+const DISPATCH_RADIUS_GROWTH = 1.5;
+const DISPATCH_MAX_RADIUS_M = 30000;
 const PHOTO_URL_MAX = 500;
 
 const SHOP_DECLINE_REASON = {
@@ -36,6 +46,11 @@ export {
   QUOTE_TTL_MS,
   TOW_ESTIMATE_TTL_MS,
   TOW_NO_DEST_NUDGE_MS,
+  QUICK_FIX_MAX_AMOUNT,
+  DISPATCH_SLA_MINUTES,
+  DISPATCH_MAX_ROUNDS,
+  DISPATCH_RADIUS_GROWTH,
+  DISPATCH_MAX_RADIUS_M,
   PHOTO_URL_MAX,
   SHOP_DECLINE_REASON,
   TOWER_CANCEL_SOURCE,
@@ -45,7 +60,7 @@ export {
 export const VALID_STATUSES: string[] = Object.values(STATUS_DISPATCH);
 export const NS = "dispatch";
 export const SEND_CHUNK = 500;
-export const WALK_IN_TTL_MS = 2 * 60 * 60 * 1000;
+export const WALK_IN_TTL_MS = 45 * 60 * 1000;
 export const SECURE_MINUTES_BIKE = 10;
 export const SECURE_MINUTES_CAR = 20;
 export const LOADED_FACTOR = 1.1;
@@ -155,3 +170,25 @@ export const URGENT_DISPATCH_STATUSES: Set<string> = new Set([
   STATUS_DISPATCH.ARRIVED,
   STATUS_DISPATCH.CANCELLED,
 ]);
+
+export const DISPATCH_HOLD_REASONS = [
+  "PARTS",
+  "RIDER_UNREACHABLE",
+  "ACCESS",
+  "WEATHER",
+  "TRAFFIC",
+  "OTHER",
+] as const;
+
+export const DISPATCH_HOLD_NOTE_MAX = 280;
+export const DISPATCH_HOLD_ETA_MAX_HOURS = 48;
+export const DISPATCH_HOLD_ETA_GRACE_MINUTES = 15;
+
+export const DISPATCH_HOLD_LABEL: Record<string, string> = {
+  PARTS: "Waiting for parts",
+  RIDER_UNREACHABLE: "Can't reach the rider",
+  ACCESS: "Access blocked",
+  WEATHER: "Weather delay",
+  TRAFFIC: "Traffic delay",
+  OTHER: "Delayed",
+};

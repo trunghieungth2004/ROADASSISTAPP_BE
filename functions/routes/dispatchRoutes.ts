@@ -30,6 +30,62 @@ export default (
     dispatchController.createDispatch,
   );
   app.post(
+    "/dispatch/release",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.releaseDispatch}),
+    dispatchController.release,
+  );
+  app.post(
+    "/dispatch/quick-fix",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.quickFix}),
+    dispatchController.quickFix,
+  );
+  app.post(
+    "/dispatch/hold",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.dispatchHold}),
+    dispatchController.setHold,
+  );
+  app.post(
+    "/dispatch/hold/clear",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.dispatchHoldClear}),
+    dispatchController.clearHold,
+  );
+  app.post(
+    "/dispatch/share",
+    writeLimited,
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.shareDispatch}),
+    dispatchController.share,
+  );
+  app.post(
+    "/dispatch/share/beat",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.shareBeat}),
+    dispatchController.shareBeat,
+  );
+  app.post(
+    "/dispatch/share/revoke",
+    writeLimited,
+    requireAuth,
+    requireService(SERVICE_ROLE.RIDER),
+    validate({body: schemas.revokeDispatchShare}),
+    dispatchController.shareRevoke,
+  );
+  app.post(
+    "/dispatch/share/view",
+    validate({body: schemas.viewDispatchShare}),
+    dispatchController.shareView,
+  );
+  app.post(
     "/dispatch/mine",
     requireAuth,
     requireService(SERVICE_ROLE.RIDER),

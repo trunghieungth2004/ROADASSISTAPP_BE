@@ -8,6 +8,7 @@ import {enqueueDispatchPush} from "../../taskQueueService";
 
 
 import {NS} from "../constants";
+import {WALK_IN_TTL_MS} from "../../../constants/dispatch";
 
 
 import {
@@ -71,6 +72,7 @@ export const declineDispatch = async ({
     status: STATUS_DISPATCH.DECLINED,
     declineReason: reason,
     declineNote: note ?? null,
+    hold: null,
   }, userId);
   if (!claimed) {
     throw new ValidationError("Ticket is no longer pending");
@@ -87,7 +89,40 @@ export const declineDispatch = async ({
 };
 
 
+const REMINDER_AFTER_MS = 15 * 60 * 1000;
+
+const remindStaleWalkIns = async (): Promise<void> => {
+  const pending = await dispatchRepository.findByStatus(
+    STATUS_DISPATCH.PENDING,
+    200,
+  );
+  const now = Date.now();
+  for (const ticket of pending) {
+    if (ticket.ticketType !== "WALK_IN") continue;
+    if (ticket.walkInRemindedAt !== undefined &&
+      ticket.walkInRemindedAt !== null) continue;
+    const shopId = typeof ticket.providerId === "string" ?
+      ticket.providerId :
+      "";
+    if (shopId === "") continue;
+    const createdAt = Date.parse(String(ticket.createdAt ?? ""));
+    if (!Number.isFinite(createdAt)) continue;
+    const age = now - createdAt;
+    if (age < REMINDER_AFTER_MS || age >= WALK_IN_TTL_MS) continue;
+    await dispatchRepository.update(ticket.id, {
+      walkInRemindedAt: new Date().toISOString(),
+    });
+    await enqueueDispatchPush(ticket.id, "-walk-in-reminder", {
+      audience: "destination-shop",
+      shopId,
+      title: "Walk-in waiting",
+      body: "A rider is waiting for your shop to accept or decline.",
+    }).catch(() => undefined);
+  }
+};
+
 export const sweepStaleWalkIns = async (): Promise<{cancelled: number}> => {
+  await remindStaleWalkIns().catch(() => undefined);
   const nowIso = new Date().toISOString();
   const stale = await dispatchRepository.findStaleWalkIns(nowIso);
   for (const ticket of stale) {

@@ -31,7 +31,7 @@ jest.mock("../../../../service/dispatch/candidates", () => ({
 jest.mock("../../../../service/paymentService", () => ({
   cancelPendingPayments: jest.fn(async () => undefined),
   createPaymentForTicket: jest.fn(async () => ({id: "pay1"})),
-  refundPayment: jest.fn(async () => undefined),
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
 }));
 jest.mock("../../../../service/taskQueueService", () => ({
   enqueueDispatchPush: jest.fn(async () => ({enqueued: true})),
@@ -98,7 +98,12 @@ describe("mobile shop fix quote", () => {
       expect.objectContaining({
         finalAmount: 120000,
         invoiceItems: [
-          {name: "Battery", qty: 1, unitPrice: 120000, amount: 120000},
+          expect.objectContaining({
+            name: "Battery",
+            qty: 1,
+            unitPrice: 120000,
+            amount: 120000,
+          }),
         ],
         mobileFixApprovedAt: null,
         mobileFixDeclinedAt: null,

@@ -27,7 +27,13 @@ import {resolveDestination} from "../helpers";
 import {findCandidates, findTowOperators} from "../candidates";
 
 
-import {PROVIDER_KIND, PROVIDER_STATUS} from "../../../constants/status";
+import {
+  MOBILE_SHOP_DEFAULT_RADIUS,
+  PROVIDER_KIND,
+  PROVIDER_STATUS,
+  TOW_DISPATCH_RADIUS,
+} from "../../../constants/status";
+import {DISPATCH_SLA_MINUTES} from "../../../constants/dispatch";
 
 import {isCarVehicle} from "../../../utils/valhalla";
 import {
@@ -82,12 +88,23 @@ const liveTicketConflict = (
   );
 };
 
+const vehicleProfileFor = async (
+  userId: string,
+  vehicleId?: string,
+) => {
+  if (vehicleId === undefined || vehicleId === "") return null;
+  const profile = await vehicleProfileRepository.findById(userId, vehicleId);
+  if (!profile) throw new ValidationError("Vehicle not found");
+  return profile;
+};
+
 export const createDispatch = async ({
   userId,
   ticketType,
   lat,
   lng,
   diagnosticId,
+  symptom,
   note,
   description,
   photoUrls,
@@ -106,6 +123,7 @@ export const createDispatch = async ({
   now,
   sourceTicketId,
   continuedFromTicketId,
+  bookingId,
   sosAttempt,
   excludedShopIds,
   excludedOperatorUids,
@@ -117,6 +135,7 @@ export const createDispatch = async ({
   lat: number;
   lng: number;
   diagnosticId?: string;
+  symptom?: string;
   note?: string;
   description?: string;
   photoUrls?: string[];
@@ -135,6 +154,7 @@ export const createDispatch = async ({
   now?: Date;
   sourceTicketId?: string;
   continuedFromTicketId?: string;
+  bookingId?: string;
   sosAttempt?: number;
   excludedShopIds?: string[];
   excludedOperatorUids?: string[];
@@ -143,10 +163,7 @@ export const createDispatch = async ({
 }) => {
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
-  if (vehicleId !== undefined) {
-    const profile = await vehicleProfileRepository.findById(userId, vehicleId);
-    if (!profile) throw new ValidationError("Vehicle not found");
-  }
+  const vehicleProfile = await vehicleProfileFor(userId, vehicleId);
   if (ticketType === "MECHANIC" && isCarVehicle(vehicleType)) {
     throw new ValidationError("Mechanic dispatch isn't available for cars");
   }
@@ -192,6 +209,7 @@ export const createDispatch = async ({
       lng: shop.lng,
       kind: shop.kind,
       closed: isOpenNow(shop.openHours as string | null, now) === false,
+      services: Array.isArray(shop.services) ? shop.services : [],
     };
   }
   if (ticketType === "TOW" && destinationShopId) {
@@ -216,12 +234,15 @@ export const createDispatch = async ({
     vehicleType,
   );
   const nowIso = new Date().toISOString();
+  const slaMinutes = DISPATCH_SLA_MINUTES[ticketType] ?? 10;
+  const broadcast = ticketType === "TOW" || ticketType === "SOS";
   const ticket = await dispatchRepository.create({
     userId,
     ticketType,
     lat,
     lng,
     diagnosticId,
+    ...(symptom !== undefined ? {symptom} : {}),
     note,
     ...(description !== undefined ? {description} : {}),
     ...(photoUrls !== undefined ? {photoUrls} : {}),
@@ -237,13 +258,28 @@ export const createDispatch = async ({
     vehicleType,
     vehicleWidth,
     vehicleClass: vehicleClassOf(vehicleType),
-    vehicleLabel: vehicleLabel ?? vehicleType,
+    vehicleLabel: typeof vehicleProfile?.label === "string" &&
+      vehicleProfile.label !== "" ? vehicleProfile.label :
+      vehicleLabel ?? vehicleType,
+    ...(typeof vehicleProfile?.plate === "string" &&
+      vehicleProfile.plate !== "" ?
+      {vehiclePlate: vehicleProfile.plate} : {}),
+    vehicleHeight: vehicleProfile?.baseHeight ?? null,
     ...(ticketType === "TOW" ? {towKind: towKind ?? "NORMAL"} : {}),
     sourceTicketId: sourceTicketId ?? null,
     continuedFromTicketId: continuedFromTicketId ?? null,
+    bookingId: bookingId ?? null,
     sosAttempt: sosAttempt ?? 1,
     excludedShopIds: excludedShopIds ?? [],
     excludedOperatorUids: excludedOperatorUids ?? [],
+    ...(broadcast ? {
+      acceptByAt: new Date(Date.now() + slaMinutes * 60 * 1000).toISOString(),
+      dispatchRound: 1,
+      dispatchRadiusMeters: ticketType === "TOW" ?
+        TOW_DISPATCH_RADIUS :
+        MOBILE_SHOP_DEFAULT_RADIUS,
+      notifiedOperatorUids: [],
+    } : {}),
     ...(id !== undefined ? {id} : {}),
     ...(ticketType === "WALK_IN" ?
       {expiresAt: new Date(Date.now() + WALK_IN_TTL_MS).toISOString()} :
@@ -260,11 +296,13 @@ export const createDispatch = async ({
       ...(excludedShopIds !== undefined ?
         {excludeShopIds: excludedShopIds} :
         {}),
+      ...(symptom !== undefined ? {serviceCategory: symptom} : {}),
     });
     if (candidates.length > 0) {
       await dispatchRepository.update(ticket.id, {
         candidates,
         candidateTs: new Date().toISOString(),
+        notifiedOperatorUids: candidates,
       });
       await enqueueDispatchPush(ticket.id);
       cacheManager.del(NS);
@@ -282,6 +320,7 @@ export const createDispatch = async ({
       await dispatchRepository.update(ticket.id, {
         candidates,
         candidateTs: new Date().toISOString(),
+        notifiedOperatorUids: candidates,
       });
     }
     if (addressedTow !== true) {

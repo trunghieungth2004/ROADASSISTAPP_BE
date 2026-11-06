@@ -1,6 +1,7 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as userRepository from "../../../repository/userRepository";
+import {getConfig} from "../../platformConfigService";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
@@ -27,6 +28,7 @@ import {
 
 import {isOpenNow} from "../../providerService";
 import {NotFoundError} from "../../../utils/errors";
+import {riderParty} from "../riderParty";
 
 
 export const feedTickets = async ({
@@ -245,6 +247,14 @@ export const feedTickets = async ({
   return rows;
 };
 
+type CatalogServiceRow = {
+  code: string;
+  name: string;
+  displayPrice: number;
+  quoteRequired: boolean;
+  category?: string;
+};
+
 type FeedRow = Record<string, unknown> & {
   userId?: unknown;
   assignedUid?: unknown;
@@ -269,7 +279,15 @@ const phoneSharingStatuses: Set<string> = new Set([
   STATUS_DISPATCH.EST_APPROVED,
 ]);
 
-const phoneOf = (user: {phone?: unknown} | undefined): string | null =>
+const phoneOf = async (
+  user: {phone?: unknown} | undefined,
+): Promise<string | null> => {
+  const config = await getConfig().catch(() => null);
+  if (config?.features?.phoneMasking === true) return null;
+  return phoneValue(user);
+};
+
+const phoneValue = (user: {phone?: unknown} | undefined): string | null =>
   user && typeof user.phone === "string" && user.phone !== "" ?
     user.phone :
     null;
@@ -278,6 +296,8 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
   const shopIds = new Set<string>();
   const riderIds = new Set<string>();
   for (const row of rows) {
+    const riderId = strOf(row.userId);
+    if (riderId !== "") riderIds.add(riderId);
     if (row.direction === "out") {
       const shopKeys = [
         "assignedShopId",
@@ -289,8 +309,6 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         if (shopId !== "") shopIds.add(shopId);
       }
     } else {
-      const riderId = strOf(row.userId);
-      if (riderId !== "") riderIds.add(riderId);
       const destShopId = strOf(row.destinationShopId);
       if (destShopId !== "") shopIds.add(destShopId);
     }
@@ -317,6 +335,7 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
     ratingAvg: number | null;
     ratingCount: number | null;
     phone: string | null;
+    services: CatalogServiceRow[];
   }>();
   for (const shop of shops) {
     if (shop && typeof shop.name === "string") {
@@ -343,7 +362,8 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         ratingCount: typeof shop.ratingCount === "number" ?
           shop.ratingCount :
           null,
-        phone: phoneOf(operator),
+        phone: await phoneOf(operator),
+        services: Array.isArray(shop.services) ? shop.services : [],
       });
     }
   }
@@ -362,7 +382,8 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
         row.ticketType === "SOS" &&
         (row.status === STATUS_DISPATCH.MATCHED ||
           row.status === STATUS_DISPATCH.ARRIVED ||
-          row.status === STATUS_DISPATCH.READY) &&
+          row.status === STATUS_DISPATCH.READY ||
+          row.status === STATUS_DISPATCH.QUOTED) &&
         strOf(row.assignedShopId) !== "")
       .map((row) => strOf(row.assignedShopId)),
   )];
@@ -385,6 +406,16 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
     return null;
   };
   for (const row of rows) {
+    const riderId = strOf(row.userId);
+    const shared = typeof row.status === "string" &&
+      phoneSharingStatuses.has(row.status);
+    const rider = riders.get(riderId);
+    const ownParty = riderParty(
+      riderId,
+      rider,
+      shared ? await phoneOf(rider) : null,
+    );
+    if (ownParty !== null) row.riderParty = ownParty;
     if (row.direction === "out") {
       row.otherParty = outParty(row, shopDetails);
       const dest = destinationPartyOf(row, shopDetails);
@@ -399,34 +430,12 @@ const attachParties = async (rows: FeedRow[]): Promise<void> => {
       if (row.ticketType === "SOS" &&
         (row.status === STATUS_DISPATCH.MATCHED ||
           row.status === STATUS_DISPATCH.ARRIVED ||
-          row.status === STATUS_DISPATCH.READY)) {
+          row.status === STATUS_DISPATCH.READY ||
+          row.status === STATUS_DISPATCH.QUOTED)) {
         row.mobileShopFix = freshFix(strOf(row.assignedShopId));
       }
     } else {
-      const riderId = strOf(row.userId);
-      const rider = riders.get(riderId);
-      const name = typeof rider?.displayName === "string" &&
-        rider.displayName !== "" ?
-        rider.displayName :
-        null;
-      if (!name) {
-        row.otherParty = null;
-        continue;
-      }
-      const party: Record<string, unknown> = {
-        id: riderId,
-        name,
-        kind: "RIDER",
-      };
-      const shared = typeof row.status === "string" &&
-        phoneSharingStatuses.has(row.status);
-      const phone = shared ? phoneOf(rider) : null;
-      if (phone !== null) party.phone = phone;
-      const avg = rider?.ratingAvg;
-      if (typeof avg === "number") party.ratingAvg = avg;
-      const count = rider?.ratingCount;
-      if (typeof count === "number") party.ratingCount = count;
-      row.otherParty = party;
+      row.otherParty = ownParty;
       const dest = destinationPartyOf(row, shopDetails);
       if (dest) row.destinationParty = dest;
     }
@@ -443,6 +452,7 @@ type ShopDetail = {
   ratingAvg: number | null;
   ratingCount: number | null;
   phone: string | null;
+  services: CatalogServiceRow[];
 };
 
 const buildShopParty = (
@@ -462,6 +472,7 @@ const buildShopParty = (
   ...(shop.ratingCount !== null ?
     {ratingCount: shop.ratingCount} :
     {}),
+  ...(shop.services.length > 0 ? {services: shop.services} : {}),
   ...(shared && shop.phone !== null ? {phone: shop.phone} : {}),
 });
 

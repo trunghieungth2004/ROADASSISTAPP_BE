@@ -18,9 +18,38 @@ import {
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
 import * as paymentRepository from "../../../repository/paymentRepository";
+import * as refundService from "../../refundService";
 import * as paymentService from "../../paymentService";
-import {normalizeWorkItems, workItemsTotal} from "./items";
+import {
+  freePricedItems,
+  normalizeWorkItems,
+  workItemsTotal,
+} from "./items";
+import {isWarrantyRework} from "../../warrantyRework";
 
+
+const resolveWorkShop = async (
+  shopIds: string[],
+  userId: string,
+): Promise<{isOperator: boolean; kind: unknown; services: unknown[]}> => {
+  let isOperator = false;
+  let kind: unknown = null;
+  let services: unknown[] = [];
+  for (const shopId of shopIds) {
+    const shop = await providerRepository.findById(shopId);
+    if (shop && shop.operatorUid === userId) {
+      isOperator = true;
+      kind = shop.kind;
+      services = Array.isArray(shop.services) ? shop.services : [];
+      break;
+    }
+  }
+  if (services.length === 0 && shopIds.length > 0) {
+    const fallback = await providerRepository.findById(shopIds[0]);
+    services = Array.isArray(fallback?.services) ? fallback.services : [];
+  }
+  return {isOperator, kind, services};
+};
 
 export const updateWorkOrder = async ({
   userId,
@@ -29,6 +58,7 @@ export const updateWorkOrder = async ({
   quotedAmount,
   finalAmount,
   invoiceRef,
+  warrantyDays,
   items,
 }: {
   userId: string;
@@ -37,25 +67,20 @@ export const updateWorkOrder = async ({
   quotedAmount?: number;
   finalAmount?: number;
   invoiceRef?: string;
+  warrantyDays?: number;
   items?: unknown;
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
-  let isOperator = false;
-  let operatedKind: unknown = null;
   const shopIds = [ticket.assignedShopId, ticket.providerId].filter(
     (v): v is string => typeof v === "string" && v !== "",
   );
-  for (const shopId of shopIds) {
-    const shop = await providerRepository.findById(shopId);
-    if (shop && shop.operatorUid === userId) {
-      isOperator = true;
-      operatedKind = shop.kind;
-      break;
-    }
-  }
+  const shop = await resolveWorkShop(shopIds, userId);
+  const isOperator = shop.isOperator;
+  const operatedKind = shop.kind;
+  const shopCatalog = shop.services;
   if (!isOperator && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator updates the work order");
   }
@@ -78,7 +103,18 @@ export const updateWorkOrder = async ({
   if (quotedAmount !== undefined || finalAmount !== undefined) {
     throw new ValidationError("Quote amounts are sent via the quote endpoint");
   }
-  const invoiceItems = items === undefined ? null : normalizeWorkItems(items);
+  const normalizedItems = items === undefined ?
+    null :
+    normalizeWorkItems(items, {
+      services: shopCatalog as never,
+      allowExtras: true,
+      free: isWarrantyRework(ticket as never),
+      ...(typeof ticket.vehicleClass === "string" ?
+        {vehicleClass: ticket.vehicleClass} : {}),
+    });
+  const invoiceItems = isWarrantyRework(ticket as never) ?
+    freePricedItems(normalizedItems) :
+    normalizedItems;
   let invoiceAmount = typeof ticket.shopQuotedAmount === "number" ?
     ticket.shopQuotedAmount :
     null;
@@ -99,17 +135,36 @@ export const updateWorkOrder = async ({
           "Invoice is already funded — contact support to adjust",
         );
       }
+      const depositCredit = paymentService.depositCreditFor(
+        ticket as never,
+      );
       await paymentService.adjustPendingCashAmount({
         ticketId,
-        amount: total,
+        amount: Math.max(0, total - depositCredit),
         ticketType: ticket.ticketType,
       });
+      if (depositCredit > total) {
+        const payments = await paymentRepository.findByTicketId(ticketId);
+        const deposit = payments.find((payment) =>
+          payment.purpose === "DEPOSIT" &&
+          (payment.status === "HELD" || payment.status === "CONFIRMED"));
+        if (deposit) {
+          await refundService.requestRefund({
+            paymentId: deposit.id,
+            requestedBy: ticket.userId,
+            amount: depositCredit - total,
+            reason: "Deposit exceeds the final invoice",
+            automatic: true,
+          }).catch(() => undefined);
+        }
+      }
       invoiceApproval = "PENDING";
     }
   }
   await dispatchRepository.update(ticketId, {
     ...(workType !== undefined ? {workType} : {}),
     ...(invoiceRef !== undefined ? {invoiceRef} : {}),
+    ...(warrantyDays !== undefined ? {warrantyDays} : {}),
     ...(invoiceItems !== null ? {
       invoiceItems,
       ...(invoiceAmount !== null ? {invoiceAmount} : {}),

@@ -37,6 +37,8 @@ export {
   approveQuote,
   declineQuote,
   declineDestination,
+  quickFix,
+  releaseTicket,
   sweepLateTows,
   getShopRequests,
   getShopRequests as shopRequests,
@@ -46,6 +48,7 @@ export {
   sweepStaleWalkIns,
   updateWorkOrder,
   approveInvoice,
+  sweepExpiredQuotes,
 } from "./dispatch/shop";
 export {
   continueSos,
@@ -55,6 +58,18 @@ export {
   sweepUnfixGrace,
 } from "./dispatch/sos";
 export {findCandidates, findTowOperators} from "./dispatch/candidates";
+export {sweepDispatchSla} from "./dispatch/sla";
+export {
+  setHold,
+  clearHold,
+  sweepExpiredHolds,
+} from "./dispatch/hold";
+export {
+  createShareLink,
+  revokeShareLink,
+  viewShareLink,
+  recordRiderBeat,
+} from "./dispatch/share";
 export {
   getWaitingSummary,
   getWaitingSummary as waitingSummary,

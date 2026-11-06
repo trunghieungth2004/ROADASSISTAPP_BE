@@ -72,9 +72,12 @@ export type TowFareQuote = {
   deadheadKm: number;
   loadedKm: number;
   night: boolean;
+  nightMultiplier?: number;
   vehicleClass: string;
   baseFee?: number;
   perKmFee?: number;
+  includedKm?: number;
+  billableKm?: number;
 };
 
 export const nightMult = (
@@ -98,7 +101,10 @@ export const quoteTowFare = ({
   const table = vehicleClass === VEHICLE_CLASS.CAR ?
     rates.CAR :
     rates.SOLO_BIKE;
-  const billable = Math.max(0, loadedKm - table.includedKm);
+  const billable = Math.max(
+    0,
+    Math.round((loadedKm - table.includedKm) * 100) / 100,
+  );
   const estimate = roundFare(
     Math.max(
       rates.minimumFee,
@@ -112,9 +118,12 @@ export const quoteTowFare = ({
     deadheadKm,
     loadedKm,
     night,
+    nightMultiplier: rates.nightMultiplier,
     vehicleClass: vehicleClass ?? VEHICLE_CLASS.SOLO_BIKE,
     baseFee: table.base,
     perKmFee: table.perKm,
+    includedKm: table.includedKm,
+    billableKm: billable,
   };
 };
 

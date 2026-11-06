@@ -263,12 +263,14 @@ describe("dispatchService feedTickets", () => {
     jest.mocked(userRepository.findByIds).mockResolvedValue(
       new Map([
         ["rider1", {id: "rider1", displayName: "Rider One", role: "2"}],
+        ["op1", {id: "op1", displayName: "Operator One", role: "2"}],
       ]),
     );
     const feed = await feedTickets({userId: "op1"}) as Array<{
       id: string;
       direction: string;
       otherParty: unknown;
+      riderParty: unknown;
     }>;
     expect(feed.map((t) => [t.id, t.direction])).toEqual([
       ["t2", "in"],
@@ -280,6 +282,51 @@ describe("dispatchService feedTickets", () => {
       kind: "RIDER",
     });
     expect(feed.find((t) => t.id === "t1")?.otherParty).toBeNull();
+    expect(feed.find((t) => t.id === "t1")?.riderParty).toEqual({
+      id: "op1",
+      name: "Operator One",
+      kind: "RIDER",
+    });
+  });
+
+  it("falls back to the rider email when no display name is set", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([] as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {id: "shop9", kind: "SHOP", status: "ACTIVE"},
+    ] as never);
+    jest.mocked(dispatchRepository.findPendingForShop).mockResolvedValue([
+      {id: "t2", userId: "rider1", createdAt: "2026-01-03T00:00:00.000Z"},
+    ] as never);
+    jest.mocked(dispatchRepository.findRecentForShop).mockResolvedValue([]);
+    jest.mocked(dispatchRepository.findByAssignee).mockResolvedValue([]);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([["rider1", {
+        id: "rider1",
+        displayName: "",
+        email: "rider@example.com",
+        role: "2",
+        ratingAvg: 4.8,
+        ratingCount: 12,
+      }]]),
+    );
+    const feed = await feedTickets({userId: "op1"}) as Array<{
+      id: string;
+      otherParty: {name?: unknown; ratingAvg?: unknown};
+      riderParty: {name?: unknown; ratingAvg?: unknown};
+    }>;
+    const row = feed.find((ticket) => ticket.id === "t2");
+    expect(row?.otherParty).toMatchObject({
+      id: "rider1",
+      name: "rider@example.com",
+      kind: "RIDER",
+      ratingAvg: 4.8,
+      ratingCount: 12,
+    });
+    expect(row?.riderParty).toMatchObject({name: "rider@example.com"});
   });
 
   it("attaches a fresh tower fix on live tow rows only", async () => {
@@ -374,6 +421,14 @@ describe("dispatchService feedTickets", () => {
         createdAt: "2026-01-02T00:00:00.000Z",
       },
       {
+        id: "sos-quoted",
+        userId: "rider1",
+        ticketType: "SOS",
+        status: "9",
+        assignedShopId: "mobile1",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      {
         id: "sos-stale",
         userId: "rider1",
         ticketType: "SOS",
@@ -411,6 +466,9 @@ describe("dispatchService feedTickets", () => {
     }>;
     expect(
       feed.find((t) => t.id === "sos-live")?.mobileShopFix,
+    ).toMatchObject({lat: 10.68, lng: 106.58});
+    expect(
+      feed.find((t) => t.id === "sos-quoted")?.mobileShopFix,
     ).toMatchObject({lat: 10.68, lng: 106.58});
     expect(feed.find((t) => t.id === "sos-stale")?.mobileShopFix).toBeNull();
     expect(providerLocationRepository.findByIds).toHaveBeenCalledWith(

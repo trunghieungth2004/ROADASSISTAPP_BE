@@ -227,6 +227,32 @@ export const trackedDeadheadKm = (
   return Math.round((meters / 1000) * 1000) / 1000;
 };
 
+export const loadedTrackDistance = (
+  track: Array<{lat: number; lng: number}>,
+  pickupIdx: number,
+  quotedKm: number,
+): {km: number; sparse: boolean} => {
+  const points = track.slice(Math.max(0, pickupIdx));
+  let meters = 0;
+  let distinct = 0;
+  let last: {lat: number; lng: number} | null = null;
+  points.forEach((point, index) => {
+    if (index > 0) {
+      const prev = points[index - 1];
+      meters += haversineMeters(prev.lat, prev.lng, point.lat, point.lng);
+    }
+    if (last === null ||
+      haversineMeters(last.lat, last.lng, point.lat, point.lng) > 25) {
+      distinct += 1;
+      last = point;
+    }
+  });
+  return {
+    km: meters > 0 ? meters / 1000 : quotedKm,
+    sparse: points.length > 0 && distinct < 3,
+  };
+};
+
 export const trackedLoadedKm = (
   ticket: {
     loadedAt?: unknown;

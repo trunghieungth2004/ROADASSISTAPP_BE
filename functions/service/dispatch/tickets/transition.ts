@@ -6,21 +6,18 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
-
 import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
 import {vehicleClassOf} from "../../providerService";
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {chatService} from "../../chatService";
+import {stampWarranty} from "./warranty";
 import {haversineMeters} from "../../../utils/geo";
 import {autoFile, bumpCancelCounters} from "../../disputeService";
 import {startWaiting, stopWaiting} from "../waiting";
 import {
-  NS,
-  TOWER_CANCEL_SOURCE,
-  VALID_STATUSES,
-  TOWER_SEARCH_ACTIVE,
-  ARRIVAL_RADIUS_M,
+  NS, TOWER_CANCEL_SOURCE, VALID_STATUSES,
+  TOWER_SEARCH_ACTIVE, ARRIVAL_RADIUS_M,
 } from "../constants";
 import {
   ACCUSED_KIND,
@@ -28,38 +25,31 @@ import {
   DISPUTE_TYPE,
 } from "../../../constants/disputes";
 import {PAYMENT_STATUS} from "../../../constants/payments";
-import {freezeTowLeg, trackedDeadheadKm} from "../helpers";
-
 import {
-  actualDeadheadKm,
-  DEFAULT_TOW_RATES,
-  isNightFare,
-  partialTowFare,
-  quoteTowFare,
+  freezeTowLeg, loadedTrackDistance, trackedDeadheadKm,
+} from "../helpers";
+import {schedulePaymentReminder} from "../../paymentReminderService";
+import {assertNearTowDestination} from "./deliveryGuard";
+import {
+  actualDeadheadKm, DEFAULT_TOW_RATES, isNightFare,
+  partialTowFare, quoteTowFare, towRatesForProvider,
   type TowFareQuote,
 } from "../fare";
 import {findTowOperators} from "../candidates";
-
 import * as paymentService from "../../paymentService";
+import * as refundService from "../../refundService";
 import * as platformConfigService from "../../platformConfigService";
 import {
-  PROVIDER_KIND,
-  PROVIDER_STATUS,
-  PROVIDER_FRESH_MS,
-  STATUS_DISPATCH,
+  PROVIDER_KIND, PROVIDER_STATUS, PROVIDER_FRESH_MS, STATUS_DISPATCH,
 } from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
-
 import {
-  ForbiddenError,
-  NotFoundError,
+  ForbiddenError, NotFoundError,
   ValidationError,
 } from "../../../utils/errors";
 import {db, FieldValue} from "../../../config/firebase";
 import * as cacheManager from "../../../utils/cacheManager";
-
 import {logError} from "../../../utils/logger";
-
 export const updateDispatchStatus = async ({
   id,
   status,
@@ -84,12 +74,16 @@ export const updateDispatchStatus = async ({
   if (!caller) throw new NotFoundError("User not found");
   const towRates = await platformConfigService.getTowRates()
     .catch(() => DEFAULT_TOW_RATES);
+  const towShop = ticket.ticketType === "TOW" &&
+    typeof ticket.assignedShopId === "string" ?
+    await providerRepository.findById(ticket.assignedShopId) : null;
+  const towFareRates = towShop?.kind === PROVIDER_KIND.TOW ?
+    towRatesForProvider(towRates, towShop) : towRates;
   const isRider = ticket.userId === userId;
   if (isRider && status === STATUS_DISPATCH.RESOLVED &&
     ticket.ticketType === "SOS" &&
     typeof ticket.assignedShopId === "string" &&
-    ticket.assignedShopId !== "" &&
-    typeof ticket.finalAmount !== "number") {
+    ticket.assignedShopId !== "" && typeof ticket.finalAmount !== "number") {
     throw new ValidationError("The mobile shop must set the fix fee first");
   }
   const isAssignee = ticket.assignedUid === userId;
@@ -110,6 +104,12 @@ export const updateDispatchStatus = async ({
   if (ticket.disputeHold === true && !isAdmin) {
     throw new ForbiddenError("Dispute under review");
   }
+  if (status === STATUS_DISPATCH.IN_PROGRESS &&
+    ticket.depositStatus === "REQUESTED" && !isAdmin) {
+    throw new ValidationError(
+      "Settle or waive the deposit before starting work",
+    );
+  }
   if (!isRider && !isAssignee && !isOperator && !isAdmin) {
     throw new ForbiddenError("Only the rider, helper, or operator updates");
   }
@@ -117,8 +117,7 @@ export const updateDispatchStatus = async ({
     ticket.destinationShopId :
     "";
   if (status === STATUS_DISPATCH.RESOLVED &&
-    ticket.ticketType === "TOW" &&
-    destinationId !== "") {
+    ticket.ticketType === "TOW" && destinationId !== "") {
     const destination = await providerRepository.findById(destinationId);
     if (!destination ||
       destination.status !== PROVIDER_STATUS.ACTIVE ||
@@ -133,6 +132,7 @@ export const updateDispatchStatus = async ({
     throw new ValidationError("Approve the updated invoice first");
   }
   if (status === STATUS_DISPATCH.RESOLVED) {
+    await assertNearTowDestination(ticket as never);
     await paymentService.assertCashConfirmedForResolve({
       ticketId: id,
       ticketType: ticket.ticketType,
@@ -222,7 +222,7 @@ export const updateDispatchStatus = async ({
       ...(typeof priorBefore?.perKmFee === "number" ?
         {perKmFee: priorBefore.perKmFee} :
         {}),
-      rates: towRates,
+      rates: towFareRates,
     });
     const prior = fresh?.towFare as TowFareQuote | null | undefined;
     const cappedKm = Math.round(partialKm * 10) / 10;
@@ -391,7 +391,7 @@ export const updateDispatchStatus = async ({
         vehicleClass: vehicleClassOf(ticket.vehicleType),
         night: isNightFare(new Date(), towRates.nightWindow),
         deadheadKm,
-        rates: towRates,
+        rates: towFareRates,
       });
       await dispatchRepository.update(id, {
         towFare: {
@@ -419,9 +419,11 @@ export const updateDispatchStatus = async ({
         if (payment.status === PAYMENT_STATUS.HELD ||
           payment.status === PAYMENT_STATUS.CONFIRMED ||
           payment.status === PAYMENT_STATUS.PARTIAL) {
-          await paymentService.refundPayment({
+          await refundService.requestRefund({
             paymentId: payment.id,
-            adminUid: userId,
+            requestedBy: userId,
+            automatic: true,
+            reason: "Ticket closed",
           });
         }
       }
@@ -430,6 +432,10 @@ export const updateDispatchStatus = async ({
     }
   }
   await dispatchRepository.updateStatus(id, status, userId);
+  await schedulePaymentReminder(id, {...ticket, status} as never);
+  if (status === STATUS_DISPATCH.RESOLVED) {
+    await stampWarranty(id, ticket);
+  }
   if (status === STATUS_DISPATCH.RESOLVED &&
     ticket.ticketType === "TOW" &&
     (isOperator || isAssignee)) {
@@ -491,6 +497,7 @@ export const updateDispatchStatus = async ({
               STATUS_DISPATCH.RESOLVED,
               userId,
             );
+            await stampWarranty(linked.id, linked);
           } catch {
             continue;
           }
@@ -614,7 +621,7 @@ export const updateDispatchStatus = async ({
         ...(typeof priorBefore?.perKmFee === "number" ?
           {perKmFee: priorBefore.perKmFee} :
           {}),
-        rates: towRates,
+        rates: towFareRates,
       });
       const prior = fresh?.towFare as TowFareQuote | null | undefined;
       await dispatchRepository.update(id, {
@@ -746,14 +753,11 @@ export const updateDispatchStatus = async ({
           pickupIdx = index;
         }
       });
-      let trackedKm = 0;
-      for (let i = Math.max(0, pickupIdx); i < track.length - 1; i += 1) {
-        const a = track[i];
-        const b = track[i + 1];
-        trackedKm += haversineMeters(a.lat, a.lng, b.lat, b.lng) / 1000;
-      }
       const quotedKm = typeof quote.loadedKm === "number" ? quote.loadedKm : 0;
-      const actualKm = trackedKm > 0 ? trackedKm : quotedKm;
+      const loaded = loadedTrackDistance(track, pickupIdx, quotedKm);
+      const gpsKm = loaded.km;
+      const gpsSparse = loaded.sparse;
+      const actualKm = gpsSparse && quotedKm > 0 ? quotedKm : gpsKm;
       const cappedKm = quotedKm > 0 ? quotedKm * 1.15 : actualKm;
       const billableKm = Math.min(actualKm, cappedKm);
       const recomputed = quoteTowFare({
@@ -761,31 +765,32 @@ export const updateDispatchStatus = async ({
         night: quote.night,
         deadheadKm: quote.deadheadKm,
         loadedKm: billableKm,
-        rates: towRates,
+        rates: towFareRates,
       });
       await dispatchRepository.update(id, {
         towFare: {
           ...recomputed,
+          ceiling: quote.ceiling ?? recomputed.ceiling,
           final: Math.min(recomputed.estimate, quote.ceiling),
         },
         towActual: {
           quotedKm,
           actualKm: Math.round(billableKm * 100) / 100,
+          gpsKm: Math.round(gpsKm * 100) / 100,
           cappedKm: Math.round(cappedKm * 100) / 100,
+          distanceSource: gpsSparse ? "ROUTE_QUOTE" : "GPS",
         },
       });
     }
   }
-  if (status === STATUS_DISPATCH.RESOLVED &&
-    ticket.ticketType === "TOW" &&
+  if (status === STATUS_DISPATCH.RESOLVED && ticket.ticketType === "TOW" &&
     typeof ticket.destinationShopId === "string" &&
     ticket.destinationShopId !== "") {
     try {
       await spawnShopTicket(id, ticket, ticket.destinationShopId as string);
     } catch (err) {
       logError("dispatch", "walk-in spawn failed", {
-        ticketId: id,
-        shopId: ticket.destinationShopId,
+        ticketId: id, shopId: ticket.destinationShopId,
       }, err);
     }
   }

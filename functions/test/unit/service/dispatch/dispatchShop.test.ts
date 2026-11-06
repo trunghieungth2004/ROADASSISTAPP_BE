@@ -585,7 +585,12 @@ describe("dispatchService quote approval", () => {
       "t1",
       expect.objectContaining({
         shopQuotedAmount: 240000,
-        quoteItems: [{name: "Part", qty: 2, unitPrice: 120000, amount: 240000}],
+        quoteItems: [expect.objectContaining({
+          name: "Part",
+          qty: 2,
+          unitPrice: 120000,
+          amount: 240000,
+        })],
       }),
     );
   });
@@ -661,6 +666,27 @@ describe("dispatchService quote approval", () => {
         audience: "operator",
         urgent: "true",
       }),
+    );
+  });
+
+  it("approves warranty rework without arming a payment", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "9",
+      ticketType: "WALK_IN",
+      providerId: "shop9",
+      shopQuotedAmount: 0,
+      warrantyOfTicketId: "orig1",
+    } as never);
+    await expect(
+      approveQuote({userId: "rider1", ticketId: "t1"}),
+    ).resolves.toEqual({approved: true});
+    expect(paymentRepository.findByTicket).not.toHaveBeenCalled();
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t1",
+      "6",
+      "rider1",
     );
   });
 

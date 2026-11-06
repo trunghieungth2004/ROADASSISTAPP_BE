@@ -614,6 +614,80 @@ describe("dispatchService.towEstimates", () => {
 });
 
 describe("linked walk-in resolution guard", () => {
+  it("stamps warranty when a linked walk-in resolves", async () => {
+    const tow = {
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      linkedTicketIds: ["walk1"],
+    };
+    const walk = {
+      id: "walk1",
+      userId: "rider1",
+      status: "7",
+      ticketType: "WALK_IN",
+      providerId: "shop1",
+      assignedShopId: "shop1",
+      quoteItems: [{
+        lineId: "line1",
+        kind: "SERVICE",
+        serviceCode: "AASSD",
+        name: "AASSd",
+        qty: 1,
+        unitPrice: 111111,
+        amount: 111111,
+        warrantyDays: 2,
+      }],
+    };
+    jest.mocked(dispatchRepository.findById).mockImplementation(
+      async (id: string) => (id === "t1" ? tow : walk) as never,
+    );
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockImplementation(
+      async (id: string) => ({
+        id,
+        name: id,
+        lat: 10.7,
+        lng: 106.6,
+        kind: id === "shop1" ? "SHOP" : "TOW",
+        status: "ACTIVE",
+        accepting: true,
+        operatorUid: "op1",
+      } as never),
+    );
+    jest.mocked(paymentRepository.findByTicketId).mockImplementation(
+      async (id: string) => (id === "walk1" ? [{
+        id: "p1",
+        method: "CASH",
+        status: "CONFIRMED",
+      }] : []) as never,
+    );
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "walk1",
+      "4",
+      "op1",
+    );
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "walk1",
+      expect.objectContaining({
+        quoteItems: [expect.objectContaining({
+          lineId: "line1",
+          warrantyUntil: expect.any(String),
+        })],
+        warrantyUntil: expect.any(String),
+      }),
+    );
+  });
+
   it("keeps a ready walk-in open while its cash is unconfirmed", async () => {
     const tow = {
       id: "t1",

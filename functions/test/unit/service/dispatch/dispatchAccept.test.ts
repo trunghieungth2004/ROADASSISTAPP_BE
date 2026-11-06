@@ -199,6 +199,15 @@ describe("dispatchService.acceptDispatch", () => {
         shopId: "mobile1",
       }),
     ).resolves.toEqual({matched: true, kind: "MOBILE_SHOP"});
+    expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({
+        mobileTravelKm: null,
+        mobileTravelRate: 10000,
+        mobileTravelFee: 0,
+      }),
+      "op1",
+    );
     expect(enqueueDispatchPush).toHaveBeenCalledTimes(1);
     expect(enqueueDispatchPush).toHaveBeenCalledWith(
       "s1",

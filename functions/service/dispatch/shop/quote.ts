@@ -5,11 +5,15 @@ import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
 
-import {enqueueDispatchPush} from "../../taskQueueService";
+import {
+  enqueueDispatchPush,
+} from "../../taskQueueService";
 import {resolveQuoteAmount} from "./items";
+import {isWarrantyRework} from "../../warrantyRework";
 
 
 import {NS} from "../constants";
+import {QUOTE_TTL_MS} from "../../../constants/dispatch";
 
 
 import {PROVIDER_KIND, STATUS_DISPATCH} from "../../../constants/status";
@@ -19,6 +23,7 @@ import {ROLE_ADMIN} from "../../../constants/roles";
 
 import {chatService} from "../../chatService";
 import * as paymentService from "../../paymentService";
+import * as refundService from "../../refundService";
 
 
 import {
@@ -28,6 +33,45 @@ import {
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
 
+
+type QuoteCatalog = Array<{
+  code: string;
+  name: string;
+  displayPrice: number;
+  quoteRequired: boolean;
+  category?: string;
+  warrantyDays?: number;
+  warrantyParts?: string;
+}>;
+
+const resolveQuoteCatalog = async ({
+  shopIds,
+  userId,
+  isAdmin,
+}: {
+  shopIds: string[];
+  userId: string;
+  isAdmin: boolean;
+}): Promise<QuoteCatalog> => {
+  let kind: unknown = null;
+  let services: unknown[] = [];
+  for (const shopId of shopIds) {
+    const shop = await providerRepository.findById(shopId);
+    if (shop && shop.operatorUid === userId) {
+      kind = shop.kind;
+      services = Array.isArray(shop.services) ? shop.services : [];
+      break;
+    }
+  }
+  if (!isAdmin && kind !== PROVIDER_KIND.SHOP) {
+    throw new ForbiddenError("Only shops send quotes");
+  }
+  if (services.length === 0 && shopIds.length > 0) {
+    const fallback = await providerRepository.findById(shopIds[0]);
+    services = Array.isArray(fallback?.services) ? fallback.services : [];
+  }
+  return services as QuoteCatalog;
+};
 
 export const sendQuote = async ({
   userId,
@@ -57,26 +101,25 @@ export const sendQuote = async ({
   }
   const caller = await userRepository.findById(userId);
   if (!caller) throw new NotFoundError("User not found");
-  if (caller.role !== ROLE_ADMIN) {
-    let shopKind: unknown = null;
-    for (const shopId of shopIds) {
-      const shop = await providerRepository.findById(shopId);
-      if (shop && shop.operatorUid === userId) {
-        shopKind = shop.kind;
-        break;
-      }
-    }
-    if (shopKind !== PROVIDER_KIND.SHOP) {
-      throw new ForbiddenError("Only shops send quotes");
-    }
-  }
+  const shopCatalog = await resolveQuoteCatalog({
+    shopIds,
+    userId,
+    isAdmin: caller.role === ROLE_ADMIN,
+  });
   if (ticket.ticketType === "TOW") {
     throw new ValidationError("Quotes belong to the shop ticket");
   }
   if (finalAmount !== undefined) {
     throw new ValidationError("Walk-in quotes are binding");
   }
-  const {amount, workItems} = resolveQuoteAmount({quotedAmount, items});
+  const {amount, workItems} = resolveQuoteAmount({
+    quotedAmount,
+    items,
+    services: shopCatalog,
+    free: isWarrantyRework(ticket as never),
+    ...(typeof ticket.vehicleClass === "string" ?
+      {vehicleClass: ticket.vehicleClass} : {}),
+  });
   const amendment = typeof ticket.shopQuotedAmount === "number";
   const quoteStates: Set<string> = new Set([
     STATUS_DISPATCH.MATCHED,
@@ -117,8 +160,12 @@ export const sendQuote = async ({
     ...(workType !== undefined ? {workType} : {}),
     ...(faultPhotos !== undefined ? {faultPhotos} : {}),
     ...(amendment ? {} : {preQuoteStatus: ticket.status}),
+    quoteDeclinedAt: null,
+    quoteDeclineReason: null,
+    quoteExpiredAt: null,
     quotedBy: userId,
     quotedAt: new Date().toISOString(),
+    quoteExpiresAt: new Date(Date.now() + QUOTE_TTL_MS).toISOString(),
   });
   if (!amendment) {
     await dispatchRepository.updateStatus(
@@ -158,6 +205,14 @@ export const approveQuote = async ({
   if (ticket.userId !== userId) {
     throw new ForbiddenError("Only the rider approves the quote");
   }
+  if (ticket.depositStatus === "REQUESTED") {
+    throw new ValidationError("Settle or waive the deposit first");
+  }
+  if (typeof ticket.quoteExpiresAt === "string" &&
+    Date.parse(ticket.quoteExpiresAt) < Date.now()) {
+    await expireQuoteNow(ticket);
+    throw new ValidationError("Quote expired — request a new quote");
+  }
   const quoted = typeof ticket.shopQuotedAmount === "number";
   const pending = ticket.status === STATUS_DISPATCH.QUOTED;
   const legacy = (ticket.status === STATUS_DISPATCH.MATCHED ||
@@ -176,6 +231,34 @@ export const approveQuote = async ({
   );
   if (shopIds.length === 0) {
     throw new ValidationError("Quotes need a shop ticket");
+  }
+  if (isWarrantyRework(ticket as never)) {
+    await dispatchRepository.update(ticketId, {
+      paymentArmed: true,
+      quoteApprovedAt: new Date().toISOString(),
+    });
+    await dispatchRepository.updateStatus(
+      ticketId,
+      STATUS_DISPATCH.IN_PROGRESS,
+      userId,
+    );
+    cacheManager.del(NS);
+    await chatService.addSystemEvent(
+      ticketId,
+      "The rider approved the warranty rework.",
+      "QUOTE_APPROVED",
+    );
+    await enqueueDispatchPush(
+      ticketId,
+      `-quote-approved-${Date.now()}`,
+      {
+        audience: "operator",
+        urgent: "true",
+        title: "Warranty rework approved",
+        body: "The rider approved the free warranty rework",
+      },
+    );
+    return {approved: true};
   }
   const payments = await paymentRepository.findByTicket(ticketId);
   let funded = payments.some((p) =>
@@ -211,6 +294,22 @@ export const approveQuote = async ({
     "The rider approved the quote.",
     "QUOTE_APPROVED",
   );
+  try {
+    const items = Array.isArray(ticket.quoteItems) ? ticket.quoteItems : [];
+    const codes = items
+      .map((item) => (item as {serviceCode?: unknown}).serviceCode)
+      .filter((code): code is string =>
+        typeof code === "string" && code !== "");
+    const providerId = typeof ticket.assignedShopId === "string" &&
+      ticket.assignedShopId !== "" ?
+      ticket.assignedShopId :
+      typeof ticket.providerId === "string" ? ticket.providerId : "";
+    if (providerId !== "") {
+      await providerRepository.incrementServiceUsage(providerId, codes);
+    }
+  } catch {
+    void 0;
+  }
   await enqueueDispatchPush(
     ticketId,
     `-quote-approved-${Date.now()}`,
@@ -282,9 +381,11 @@ export const declineQuote = async ({
       if (payment.status === "HELD" ||
         payment.status === "CONFIRMED" ||
         payment.status === "PARTIAL") {
-        await paymentService.refundPayment({
+        await refundService.requestRefund({
           paymentId: payment.id,
-          adminUid: userId,
+          requestedBy: userId,
+          automatic: true,
+          reason: "Quote declined",
         });
       }
     }
@@ -314,5 +415,77 @@ export const declineQuote = async ({
       body: "The rider declined your quote — send a revised quote.",
     },
   );
-  return {declined: true};
+  return {declined: true, status: backTo};
+};
+
+const expireQuoteNow = async (
+  ticket: dispatchRepository.DispatchTicket,
+): Promise<void> => {
+  const quoteStates: Set<string> = new Set([
+    STATUS_DISPATCH.MATCHED,
+    STATUS_DISPATCH.ARRIVED,
+    STATUS_DISPATCH.IN_SHOP,
+    STATUS_DISPATCH.ESTIMATED,
+    STATUS_DISPATCH.EST_APPROVED,
+  ]);
+  const recorded = typeof ticket.preQuoteStatus === "string" ?
+    ticket.preQuoteStatus :
+    "";
+  const backTo = quoteStates.has(recorded) ?
+    recorded :
+    ticket.ticketType === "WALK_IN" ?
+      STATUS_DISPATCH.MATCHED :
+      STATUS_DISPATCH.ARRIVED;
+  await dispatchRepository.update(ticket.id, {
+    shopQuotedAmount: null,
+    quoteItems: null,
+    invoiceItems: null,
+    invoiceAmount: null,
+    invoiceApproval: null,
+    invoiceApprovedAt: null,
+    preQuoteStatus: null,
+    quoteExpiresAt: null,
+    quoteExpiredAt: new Date().toISOString(),
+  });
+  await paymentService.cancelPendingPayments(ticket.id)
+    .catch(() => undefined);
+  await dispatchRepository.updateStatus(ticket.id, backTo, "sweep");
+  await chatService.addSystemEvent(
+    ticket.id,
+    "The quote expired without a rider decision.",
+    "QUOTE_EXPIRED",
+    {},
+  );
+  const stamp = Date.now();
+  await enqueueDispatchPush(
+    ticket.id,
+    `-quote-expired-${stamp}`,
+    {
+      audience: "operator",
+      urgent: "true",
+      title: "Quote expired",
+      body: "The rider did not respond — the ticket is back in your queue.",
+    },
+  ).catch(() => undefined);
+  cacheManager.del(NS);
+};
+
+export const sweepExpiredQuotes = async (): Promise<number> => {
+  const quoted = await dispatchRepository.findByStatus(
+    STATUS_DISPATCH.QUOTED,
+    200,
+  );
+  const now = Date.now();
+  let expired = 0;
+  for (const ticket of quoted) {
+    if (ticket.ticketType !== "WALK_IN" &&
+      ticket.ticketType !== "MECHANIC") continue;
+    if (ticket.disputeHold === true) continue;
+    const raw = ticket.quoteExpiresAt;
+    const expiresAt = typeof raw === "string" ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(expiresAt) || expiresAt > now) continue;
+    await expireQuoteNow(ticket);
+    expired += 1;
+  }
+  return expired;
 };

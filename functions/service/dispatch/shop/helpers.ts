@@ -4,6 +4,7 @@ import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
 import * as paymentService from "../../paymentService";
+import * as refundService from "../../refundService";
 
 
 import {PROVIDER_KIND} from "../../../constants/status";
@@ -89,10 +90,12 @@ export const tryRefundPayment = async (
       p.method === "SEPAY" && p.status === "HELD");
     for (const payment of refundable) {
       try {
-        await paymentService.refundPayment({
+        await refundService.requestRefund({
           paymentId: payment.id,
-          adminUid: byUserId,
+          requestedBy: byUserId,
           amount: payment.amount,
+          automatic: true,
+          reason: "Shop ticket closed",
         });
       } catch {
         continue;

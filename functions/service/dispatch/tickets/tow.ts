@@ -1,5 +1,6 @@
 import {createDispatch} from "./create";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
+import * as bookingRepository from "../../../repository/bookingRepository";
 
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
@@ -21,6 +22,7 @@ import {
   TOWER_SEARCH_ACTIVE,
 } from "../constants";
 import {ACCUSED_KIND, DISPUTE_TYPE} from "../../../constants/disputes";
+import {BOOKING_STATUS} from "../../../constants/booking";
 
 import {freezeTowLeg, trackedDeadheadKm, trackedLoadedKm} from "../helpers";
 
@@ -139,6 +141,7 @@ export const cancelTowerSearch = async ({
       deadheadKm: 0,
       loadedKm: 0,
       night: isNightFare(new Date(), towRates.nightWindow),
+      nightMultiplier: towRates.nightMultiplier,
       vehicleClass: typeof prior?.vehicleClass === "string" ?
         prior.vehicleClass :
         vehicleClassOf(ticket.vehicleType),
@@ -150,6 +153,7 @@ export const cancelTowerSearch = async ({
       deadheadKm: partialKm,
       loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
       night: isNightFare(new Date(), towRates.nightWindow),
+      nightMultiplier: towRates.nightMultiplier,
       vehicleClass: typeof prior?.vehicleClass === "string" ?
         prior.vehicleClass :
         vehicleClassOf(ticket.vehicleType),
@@ -287,9 +291,11 @@ export const cancelTowerSearch = async ({
 export const markTowLoaded = async ({
   userId,
   ticketId,
+  photoUrls,
 }: {
   userId: string;
   ticketId: string;
+  photoUrls?: string[];
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
@@ -315,6 +321,7 @@ export const markTowLoaded = async ({
   }
   await dispatchRepository.update(ticketId, {
     loadedAt: new Date().toISOString(),
+    ...(photoUrls !== undefined ? {loadedPhotos: photoUrls} : {}),
   });
   cacheManager.del(NS);
   return {loaded: true};
@@ -323,9 +330,11 @@ export const markTowLoaded = async ({
 export const confirmTowReceived = async ({
   userId,
   ticketId,
+  photoUrls,
 }: {
   userId: string;
   ticketId: string;
+  photoUrls?: string[];
 }) => {
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) throw new NotFoundError("Dispatch ticket not found");
@@ -347,7 +356,10 @@ export const confirmTowReceived = async ({
     return {received: true};
   }
   const receivedAt = new Date().toISOString();
-  await dispatchRepository.update(ticketId, {receivedAt});
+  await dispatchRepository.update(ticketId, {
+    receivedAt,
+    ...(photoUrls !== undefined ? {receivedPhotos: photoUrls} : {}),
+  });
   cacheManager.del(NS);
   await chatService.addSystemEvent(
     ticketId,
@@ -360,6 +372,40 @@ export const confirmTowReceived = async ({
     body: "The rider confirmed the vehicle was delivered",
   });
   return {received: true};
+};
+
+
+const linkBookingArrival = async (
+  bookingId: string | null,
+  parentId: string,
+  childId: string,
+): Promise<void> => {
+  if (bookingId === null) return;
+  const booking = await bookingRepository.findById(bookingId);
+  if (!booking) return;
+  const links = Array.isArray(booking.linkedTicketIds) ?
+    booking.linkedTicketIds as string[] :
+    [];
+  const open = booking.status === BOOKING_STATUS.REQUESTED ||
+    booking.status === BOOKING_STATUS.CONFIRMED;
+  await bookingRepository.update(bookingId, {
+    ...(open ? {status: BOOKING_STATUS.ARRIVED} : {}),
+    ...(typeof booking.arrivedAt === "string" ? {} :
+      {arrivedAt: new Date().toISOString()}),
+    ...(typeof booking.ticketId === "string" ? {} : {ticketId: childId}),
+    linkedTicketIds: [...new Set([...links, parentId, childId])],
+  });
+  const deposit = typeof booking.depositAmount === "number" ?
+    booking.depositAmount :
+    0;
+  if (deposit > 0) {
+    await dispatchRepository.update(childId, {
+      depositAmount: deposit,
+      depositStatus: typeof booking.depositStatus === "string" ?
+        booking.depositStatus :
+        "DUE",
+    });
+  }
 };
 
 export const spawnShopTicket = async (
@@ -376,6 +422,7 @@ export const spawnShopTicket = async (
     note?: unknown;
     description?: unknown;
     photoUrls?: unknown;
+    bookingId?: unknown;
   },
   shopId: string,
 ): Promise<void> => {
@@ -386,6 +433,8 @@ export const spawnShopTicket = async (
     throw new ValidationError("Destination provider is not available");
   }
   const parent = await dispatchRepository.findById(parentId);
+  const bookingId = typeof ticket.bookingId === "string" &&
+    ticket.bookingId !== "" ? ticket.bookingId : null;
   const mine = await dispatchRepository.findByUserId(ticket.userId);
   const linkedChild = mine.find((t) => {
     if (t.ticketType !== "WALK_IN") return false;
@@ -403,6 +452,7 @@ export const spawnShopTicket = async (
         linkedTicketIds: [...parentLinks, linkedChild.id],
       });
     }
+    await linkBookingArrival(bookingId, parentId, linkedChild.id);
     return;
   }
   const live = mine.find((t) => {
@@ -462,6 +512,7 @@ export const spawnShopTicket = async (
     if (Object.keys(childPatch).length > 0) {
       await dispatchRepository.update(live.id, childPatch);
     }
+    await linkBookingArrival(bookingId, parentId, live.id);
   } else {
     const child = await createDispatch({
       userId: ticket.userId,
@@ -469,6 +520,7 @@ export const spawnShopTicket = async (
       lat: typeof shop.lat === "number" ? shop.lat : ticket.lat,
       lng: typeof shop.lng === "number" ? shop.lng : ticket.lng,
       providerId: shopId,
+      ...(bookingId !== null ? {bookingId} : {}),
       allowVehicleOverlap: true,
       allowOffDutyShop: shop.accepting === false,
       allowCarWalkIn: true,
@@ -501,6 +553,7 @@ export const spawnShopTicket = async (
       linkedTicketIds: [...new Set([...parentLinks, child.id])],
     });
     await dispatchRepository.update(child.id, {linkedTicketIds: [parentId]});
+    await linkBookingArrival(bookingId, parentId, child.id);
   }
   if (shop.accepting === false) {
     await enqueueDispatchPush(parentId, "-dropoff-arrived", {

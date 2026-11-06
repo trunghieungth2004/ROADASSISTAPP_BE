@@ -21,7 +21,7 @@ jest.mock("../../../../service/chatService", () => ({
 jest.mock("../../../../service/paymentService", () => ({
   cancelPendingPayments: jest.fn(async () => undefined),
   createPaymentForTicket: jest.fn(async () => ({id: "pay2"})),
-  refundPayment: jest.fn(async () => undefined),
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
 }));
 jest.mock("../../../../service/taskQueueService", () => ({
   enqueueDispatchPush: jest.fn(async () => ({enqueued: true})),
@@ -75,7 +75,7 @@ describe("walk-in quote decline", () => {
       userId: "rider1",
       ticketId: "t1",
       reason: "Price too high",
-    })).resolves.toEqual({declined: true});
+    })).resolves.toEqual({declined: true, status: "2"});
 
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",

@@ -69,6 +69,22 @@ const PROVIDER_SERVICE_PRICE_MAX = 999999999;
 const PROVIDER_SERVICE_CODE_MAX = 64;
 const PROVIDER_SERVICE_NAME_MAX = 120;
 
+const SERVICE_CATEGORY = {
+  FLAT_TIRE: "FLAT_TIRE",
+  FLUID_LEAK: "FLUID_LEAK",
+  CHAIN_SLACK: "CHAIN_SLACK",
+  SPARK_CAP: "SPARK_CAP",
+  ELECTRICAL: "ELECTRICAL",
+  ENGINE: "ENGINE",
+  BRAKES: "BRAKES",
+  OTHER: "OTHER",
+} as const;
+
+const SERVICE_CHANNEL = {
+  BOOKING: "BOOKING",
+  ASSIST: "ASSIST",
+} as const;
+
 const VEHICLE_TYPE = {
   BIKE: "BIKE",
   CAR: "CAR",
@@ -330,6 +346,34 @@ const PROVIDER_STATUSES: Record<string, StatusDefinition> = {
   ),
 };
 
+const STATUS_NAMES_VI: Record<string, string> = {
+  "users:1": "Hoạt động",
+  "users:0": "Bị khóa",
+  "flags:1": "Đề xuất",
+  "flags:2": "Đã xác nhận",
+  "flags:3": "Đã khóa",
+  "flags:4": "Hết hạn",
+  "flags:5": "Bị từ chối",
+  "dispatch:1": "Chờ xử lý",
+  "dispatch:2": "Đã ghép",
+  "dispatch:3": "Đã đến",
+  "dispatch:4": "Hoàn tất",
+  "dispatch:5": "Đã hủy",
+  "dispatch:6": "Đang sửa",
+  "dispatch:7": "Sẵn sàng",
+  "dispatch:8": "Từ chối",
+  "dispatch:9": "Đã báo giá",
+  "dispatch:10": "Trong tiệm",
+  "dispatch:11": "Báo giá cuối",
+  "dispatch:12": "Không sửa được",
+  "dispatch:13": "Đã ước tính",
+  "dispatch:14": "Đã duyệt ước tính",
+  "dispatch:15": "Không sửa được",
+  "providers:PENDING": "Chờ duyệt",
+  "providers:ACTIVE": "Hoạt động",
+  "providers:DENIED": "Bị từ chối",
+};
+
 const STATUS_GROUPS: Record<string, Record<string, StatusDefinition>> = {
   users: USER_STATUSES,
   flags: FLAG_STATUSES,
@@ -361,6 +405,8 @@ export {
   PROVIDER_SERVICE_PRICE_MAX,
   PROVIDER_SERVICE_CODE_MAX,
   PROVIDER_SERVICE_NAME_MAX,
+  SERVICE_CATEGORY,
+  SERVICE_CHANNEL,
   VEHICLE_TYPE,
   VEHICLE_DEFAULT_WIDTH,
   TOW_VEHICLE_TYPE,
@@ -376,6 +422,7 @@ export {
   FLAG_STATUSES,
   DISPATCH_STATUSES,
   STATUS_GROUPS,
+  STATUS_NAMES_VI,
   PROVIDER_STATUSES,
   StatusDefinition,
 };

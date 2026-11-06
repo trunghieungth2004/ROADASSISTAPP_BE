@@ -105,10 +105,13 @@ export const acceptAsShop = async (
     const travelPerKm = typeof shop.travelPerKmFee === "number" ?
       shop.travelPerKmFee :
       MOBILE_SHOP_TRAVEL_PER_KM;
+    const travelKm = meters !== null ? meters / 1000 : null;
     mobileFees.mobileCallOutFee = waived ? 0 : callOutFee;
     mobileFees.mobileCallOutWaived = waived;
-    mobileFees.mobileTravelFee = meters !== null ?
-      roundFare((meters / 1000) * travelPerKm) :
+    mobileFees.mobileTravelKm = travelKm;
+    mobileFees.mobileTravelRate = travelPerKm;
+    mobileFees.mobileTravelFee = travelKm !== null ?
+      roundFare(travelKm * travelPerKm) :
       0;
   }
   const claimed = await dispatchRepository.claimForAssignment(ticketId, {

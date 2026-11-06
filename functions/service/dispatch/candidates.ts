@@ -47,6 +47,7 @@ export const findMobileShopOperators = async ({
   vehicleType,
   excludeOperatorUids = [],
   excludeShopIds = [],
+  serviceCategory,
 }: {
   lat: number;
   lng: number;
@@ -54,6 +55,7 @@ export const findMobileShopOperators = async ({
   vehicleType?: string;
   excludeOperatorUids?: string[];
   excludeShopIds?: string[];
+  serviceCategory?: string;
 }): Promise<string[]> => {
   const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
   const cells = cellsCoveringBounds(bounds, 6);
@@ -68,7 +70,7 @@ export const findMobileShopOperators = async ({
   const providers = await Promise.all(
     fresh.map((loc) => providerRepository.findById(loc.providerId)),
   );
-  const eligible: Array<{uid: string; providerId: string}> = [];
+  const eligible: Array<{uid: string; providerId: string; match: boolean}> = [];
   for (const provider of providers) {
     if (!provider) continue;
     if (provider.kind !== PROVIDER_KIND.MOBILE_SHOP) continue;
@@ -79,16 +81,27 @@ export const findMobileShopOperators = async ({
     if (!servesVehicleClass(provider, vehicleClassOf(vehicleType))) continue;
     if (excludeOperatorUids.includes(provider.operatorUid)) continue;
     if (excludeShopIds.includes(provider.id)) continue;
+    const services = Array.isArray(provider.services) ?
+      provider.services :
+      [];
+    const match = serviceCategory === undefined ||
+      services.some((service) =>
+        (service as {category?: unknown}).category === serviceCategory);
     if (!eligible.some((item) => item.uid === provider.operatorUid)) {
       eligible.push({
         uid: provider.operatorUid,
         providerId: provider.id,
+        match,
       });
     }
   }
+  const preferred = serviceCategory !== undefined &&
+    eligible.some((item) => item.match) ?
+    eligible.filter((item) => item.match) :
+    eligible;
   const free: string[] = [];
   const busyCache = new Map<string, boolean>();
-  for (const item of eligible) {
+  for (const item of preferred) {
     if (!(await operatorBusy(item.uid, busyCache))) free.push(item.uid);
   }
   return free;
@@ -101,6 +114,7 @@ export const findCandidates = async (input: {
   vehicleType?: string;
   excludeOperatorUids?: string[];
   excludeShopIds?: string[];
+  serviceCategory?: string;
 }): Promise<string[]> => findMobileShopOperators(input);
 
 export const findTowOperators = async ({

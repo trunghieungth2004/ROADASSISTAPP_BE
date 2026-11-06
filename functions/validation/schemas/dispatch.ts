@@ -10,6 +10,7 @@ import {
 import Joi from "joi";
 import {
   DECLINE_REASON,
+  SERVICE_CATEGORY,
   SHOP_SEARCH_MAX_RADIUS,
   STATUS_DISPATCH,
   VEHICLE_TYPE,
@@ -22,15 +23,36 @@ const workItemList = (): Joi.ArraySchema =>
     name: Joi.string().trim().min(1).max(120).required(),
     qty: Joi.number().integer().min(1).max(99).required(),
     unitPrice: Joi.number().integer().min(0).max(999999999).required(),
+    kind: Joi.string().valid("SERVICE", "EXTRA").optional(),
+    serviceCode: Joi.string().trim().max(64).allow("", null).optional(),
+    note: Joi.string().trim().max(280).allow("", null).optional(),
   })).max(20);
 
 export const dispatchSchemas = {
+  dispatchHold: Joi.object({
+    ticketId: strReq(),
+    reason: Joi.string()
+      .valid("PARTS", "RIDER_UNREACHABLE", "ACCESS", "WEATHER",
+        "TRAFFIC", "OTHER")
+      .required(),
+    note: Joi.string().trim().max(280).allow("", null).optional(),
+    etaAt: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+      .optional(),
+  }),
+  dispatchHoldClear: Joi.object({
+    ticketId: strReq(),
+  }),
   createDispatch: Joi.object({
     ticketType: Joi.string().valid("MECHANIC", "TOW", "SOS", "WALK_IN")
       .required(),
     lat: latAttr(),
     lng: langAttr(),
     diagnosticId: strOpt(),
+    symptom: Joi.string()
+      .valid(...Object.values(SERVICE_CATEGORY))
+      .optional(),
     note: Joi.string().max(280).allow("", null).optional(),
     description: Joi.string().trim().max(1000).allow("", null).optional(),
     photoUrls: photoList().optional(),
@@ -47,6 +69,7 @@ export const dispatchSchemas = {
       .optional(),
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
     vehicleLabel: Joi.string().trim().max(120).allow("", null).optional(),
+    bookingId: strOpt(),
   }),
   getDispatch: Joi.object({
     ticketId: strReq(),
@@ -79,6 +102,7 @@ export const dispatchSchemas = {
     quotedAmount: Joi.number().integer().min(0).max(999999999).optional(),
     finalAmount: Joi.number().integer().min(0).max(999999999).optional(),
     invoiceRef: Joi.string().trim().max(120).allow("", null).optional(),
+    warrantyDays: Joi.number().integer().min(0).max(90).optional(),
     items: workItemList().optional(),
   }),
   shopTickets: Joi.object({
@@ -168,9 +192,11 @@ export const dispatchSchemas = {
   }),
   markTowLoaded: Joi.object({
     ticketId: strReq(),
+    photoUrls: photoList().optional(),
   }),
   confirmTowReceived: Joi.object({
     ticketId: strReq(),
+    photoUrls: photoList().optional(),
   }),
   cancelTowerSearch: Joi.object({
     ticketId: strReq(),
@@ -223,5 +249,31 @@ export const dispatchSchemas = {
     minRating: Joi.number().min(0).max(5).optional(),
     sortBy: Joi.string().valid("distance", "rating").optional(),
     ticketId: strOpt(),
+  }),
+  releaseDispatch: Joi.object({
+    ticketId: strReq(),
+    reason: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  quickFix: Joi.object({
+    ticketId: strReq(),
+    items: Joi.array().items(Joi.object({
+      name: Joi.string().trim().min(1).max(120).required(),
+      qty: Joi.number().integer().min(1).max(10).required(),
+      unitPrice: Joi.number().integer().min(0).max(999999999).required(),
+    })).min(1).max(10).required(),
+  }),
+  shareDispatch: Joi.object({
+    ticketId: strReq(),
+  }),
+  shareBeat: Joi.object({
+    ticketId: strReq(),
+    lat: latAttr(),
+    lng: langAttr(),
+  }),
+  revokeDispatchShare: Joi.object({
+    ticketId: strReq(),
+  }),
+  viewDispatchShare: Joi.object({
+    token: Joi.string().trim().pattern(/^[a-f0-9]{16,64}$/).required(),
   }),
 };

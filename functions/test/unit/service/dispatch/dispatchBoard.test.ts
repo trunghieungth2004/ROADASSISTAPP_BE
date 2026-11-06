@@ -175,6 +175,50 @@ describe("dispatchService.nearDispatch", () => {
     expect(result.map((t) => (t as {id: string}).id)).toEqual(["bike"]);
   });
 
+  it("attaches rider details to nearby SOS tickets", async () => {
+    jest.mocked(dispatchRepository.findByStatusForTypes).mockResolvedValue([
+      {id: "sos", userId: "rider1", lat: 10.7626, lng: 106.6602,
+        ticketType: "SOS", vehicleType: "SCOOTER", status: "1"},
+    ] as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "shopop",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {
+        id: "mobile1",
+        kind: "MOBILE_SHOP",
+        status: "ACTIVE",
+        accepting: true,
+        vehicleClasses: ["SOLO_BIKE"],
+      },
+    ] as never);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([["rider1", {
+        id: "rider1",
+        displayName: "Rider One",
+        role: "2",
+        phone: "0909000001",
+        ratingAvg: 4.7,
+        ratingCount: 9,
+      }]]),
+    );
+    const result = await nearDispatch({
+      userId: "shopop",
+      lat: 10.7626,
+      lng: 106.6602,
+      ticketType: "SOS",
+    }) as Array<{riderName?: unknown; riderParty?: unknown}>;
+    expect(result[0]?.riderName).toBe("Rider One");
+    expect(result[0]?.riderParty).toEqual({
+      id: "rider1",
+      name: "Rider One",
+      kind: "RIDER",
+      ratingAvg: 4.7,
+      ratingCount: 9,
+    });
+  });
+
   it("shows car tow tickets to operators without a capability", async () => {
     jest.mocked(dispatchRepository.findByStatusForTypes).mockResolvedValue([
       {id: "tow", lat: 10.7626, lng: 106.6602, ticketType: "TOW",

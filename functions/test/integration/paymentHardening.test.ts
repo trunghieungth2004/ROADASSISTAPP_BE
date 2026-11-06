@@ -111,17 +111,23 @@ describe("payment create", () => {
     expect(reused).toHaveLength(1);
   });
 
-  it("rejects a cash-to-SePay switch while cash is active", async () => {
+  it("switches cash to SePay by cancelling pending cash", async () => {
     const ticketId = await makeTicket();
-    await create(ticketId, "CASH");
+    const cash = await create(ticketId, "CASH");
     const res = await create(ticketId, "SEPAY");
-    expect(res.status).toBe(409);
-    expect(res.body.message).toContain("active payment");
+    expect(res.status).toBe(201);
+    expect(res.body.data.method).toBe("SEPAY");
     const snaps = await db
       .collection("payments")
       .where("ticketId", "==", ticketId)
       .get();
-    expect(snaps.size).toBe(1);
+    expect(snaps.size).toBe(2);
+    const rows = snaps.docs.map((doc) => doc.data());
+    const cancelled = rows.find((row) =>
+      row.id === cash.body.data.id);
+    expect(cancelled?.status).toBe("CANCELLED");
+    expect(rows.find((row) => row.method === "SEPAY")?.status)
+      .toBe("PENDING");
   });
 
   it("cancels a pending charge and clears its guard", async () => {

@@ -1,5 +1,6 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
+import * as bookingRepository from "../../../repository/bookingRepository";
 
 
 import {NS} from "../constants";
@@ -99,7 +100,21 @@ export const respondReturnTow = async ({
   });
   await dispatchRepository.update(created.id, {
     linkedTicketIds: [ticketId],
+    ...(typeof ticket.bookingId === "string" && ticket.bookingId !== "" ?
+      {bookingId: ticket.bookingId} :
+      {}),
   });
+  if (typeof ticket.bookingId === "string" && ticket.bookingId !== "") {
+    const booking = await bookingRepository.findById(ticket.bookingId);
+    if (booking) {
+      const bookingLinks = Array.isArray(booking.linkedTicketIds) ?
+        booking.linkedTicketIds as string[] :
+        [];
+      await bookingRepository.update(booking.id, {
+        linkedTicketIds: [...new Set([...bookingLinks, created.id])],
+      });
+    }
+  }
   cacheManager.del(NS);
   return {accepted: true, ticketId: created.id};
 };

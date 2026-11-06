@@ -217,58 +217,61 @@ describe("bills", () => {
     expect(quote.status).toBe(200);
   });
 
-  it("aggregates the journey into one bill", async () => {
+  it("lists one bill per ticket", async () => {
     const list = await request(app)
       .post("/bills/all")
       .set("Authorization", bearer(RIDER))
       .send({});
     expect(list.status).toBe(200);
     const bills = list.body.data as Bill[];
-    expect(bills).toHaveLength(1);
-    const bill = bills[0];
-    expect(bill.billId).toBe(towTicket);
-    expect(bill.items).toHaveLength(2);
-    expect(bill.items[0]).toMatchObject({
+    expect(bills.map((b) => b.billId).sort()).toEqual(
+      [towTicket, spawnedId].sort(),
+    );
+    const tow = bills.find((b) => b.billId === towTicket);
+    expect(tow?.items).toHaveLength(1);
+    expect(tow?.items[0]).toMatchObject({
       kind: "TOW_FARE",
       ticketId: towTicket,
       amount: towAmount,
       waitingFee,
       status: "UNPAID",
     });
-    expect(bill.items[1]).toMatchObject({
+    expect(tow?.total).toBe(towAmount);
+    expect(tow?.due).toBe(towAmount);
+    const repair = bills.find((b) => b.billId === spawnedId);
+    expect(repair?.items).toHaveLength(1);
+    expect(repair?.items[0]).toMatchObject({
       kind: "REPAIR",
       ticketId: spawnedId,
       amount: repairAmount,
       status: "UNPAID",
     });
-    expect(bill.total).toBe(towAmount + repairAmount);
-    expect(bill.due).toBe(towAmount + repairAmount);
-    expect(bill.status).toBe("UNPAID");
+    expect(repair?.total).toBe(repairAmount);
     const fromChild = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(RIDER))
       .send({ticketId: spawnedId});
     expect(fromChild.status).toBe(200);
-    expect(fromChild.body.data.billId).toBe(towTicket);
+    expect(fromChild.body.data.billId).toBe(spawnedId);
     const fromBill = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(RIDER))
-      .send({billId: towTicket});
+      .send({billId: spawnedId});
     expect(fromBill.status).toBe(200);
-    expect(fromBill.body.data.billId).toBe(towTicket);
+    expect(fromBill.body.data.billId).toBe(spawnedId);
   });
 
-  it("scopes the journey to each payee", async () => {
-    const full = await request(app)
+  it("scopes each ticket to its payee", async () => {
+    const shopOnTow = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(SHOPOP))
       .send({billId: towTicket});
-    expect(full.status).toBe(200);
-    expect(full.body.data).toMatchObject({
-      viewer: "PAYEE",
+    expect(shopOnTow.status).toBe(200);
+    expect(shopOnTow.body.data).toMatchObject({
+      viewer: "OPERATOR",
       canPay: false,
+      total: towAmount,
     });
-    expect((full.body.data as Bill).items).toHaveLength(2);
     const towPayee = await request(app)
       .post("/bills/payee")
       .set("Authorization", bearer(TOWOP))
@@ -296,7 +299,7 @@ describe("bills", () => {
     const shopBills = shopPayee.body.data as Bill[];
     expect(shopBills).toHaveLength(1);
     expect(shopBills[0]).toMatchObject({
-      billId: towTicket,
+      billId: spawnedId,
       total: repairAmount,
     });
     expect(shopBills[0].items).toHaveLength(1);
@@ -310,15 +313,13 @@ describe("bills", () => {
       .set("Authorization", bearer(SHOPOP))
       .send({ticketId: spawnedId, scope: "payee"});
     expect(shopScoped.status).toBe(200);
-    expect(shopScoped.body.data.items).toHaveLength(1);
-    expect(shopScoped.body.data.items[0].ticketId).toBe(spawnedId);
+    expect(shopScoped.body.data.billId).toBe(spawnedId);
     const towScoped = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(TOWOP))
       .send({ticketId: towTicket, scope: "payee"});
     expect(towScoped.status).toBe(200);
-    expect(towScoped.body.data.items).toHaveLength(1);
-    expect(towScoped.body.data.items[0].ticketId).toBe(towTicket);
+    expect(towScoped.body.data.billId).toBe(towTicket);
     const riderScoped = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(RIDER))
@@ -332,7 +333,7 @@ describe("bills", () => {
     expect(other.body.data).toEqual([]);
   });
 
-  it("settles one item without clearing the journey", async () => {
+  it("settles a ticket without touching the tow", async () => {
     const pay = await request(app)
       .post("/payments/create")
       .set("Authorization", bearer(RIDER))
@@ -361,13 +362,13 @@ describe("bills", () => {
       .set("Authorization", bearer(RIDER))
       .send({ticketId: spawnedId});
     expect(approve.status).toBe(200);
-    const bill = await request(app)
+    const repair = await request(app)
       .post("/bills/one")
       .set("Authorization", bearer(RIDER))
-      .send({billId: towTicket});
-    expect(bill.status).toBe(200);
-    const data = bill.body.data as Bill;
-    expect(data.items[1]).toMatchObject({
+      .send({billId: spawnedId});
+    expect(repair.status).toBe(200);
+    const repairBill = repair.body.data as Bill;
+    expect(repairBill.items[0]).toMatchObject({
       status: "PAID",
       payment: {
         method: "CASH",
@@ -376,11 +377,21 @@ describe("bills", () => {
         canConfirmCash: false,
       },
     });
-    expect(typeof data.items[1].payment?.commissionAmount).toBe("number");
-    expect(typeof data.items[1].payment?.payoutAmount).toBe("number");
-    expect(data.paid).toBe(repairAmount);
-    expect(data.due).toBe(towAmount);
-    expect(data.status).toBe("PARTIAL");
+    expect(typeof repairBill.items[0].payment?.commissionAmount)
+      .toBe("number");
+    expect(typeof repairBill.items[0].payment?.payoutAmount).toBe("number");
+    expect(repairBill.paid).toBe(repairAmount);
+    expect(repairBill.due).toBe(0);
+    expect(repairBill.status).toBe("PAID");
+    const tow = await request(app)
+      .post("/bills/one")
+      .set("Authorization", bearer(RIDER))
+      .send({billId: towTicket});
+    expect(tow.status).toBe(200);
+    const towBill = tow.body.data as Bill;
+    expect(towBill.paid).toBe(0);
+    expect(towBill.due).toBe(towAmount);
+    expect(towBill.status).toBe("UNPAID");
     const payee = await request(app)
       .post("/bills/payee")
       .set("Authorization", bearer(SHOPOP))
@@ -388,6 +399,7 @@ describe("bills", () => {
     expect(payee.status).toBe(200);
     const payeeBills = payee.body.data as Bill[];
     expect(payeeBills).toHaveLength(1);
+    expect(payeeBills[0].billId).toBe(spawnedId);
     expect(payeeBills[0].paid).toBe(repairAmount);
     expect(payeeBills[0].items[0].payment).toMatchObject({
       status: "CONFIRMED",
@@ -403,6 +415,28 @@ describe("bills", () => {
       .set("Authorization", bearer(RIDER))
       .send({ticketId: spawnedId, status: "4"});
     expect(done.status).toBe(200);
+  });
+
+  it("creates one invoice PDF for a paid ticket", async () => {
+    const first = await request(app)
+      .post("/bills/invoice")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId: spawnedId});
+    expect(first.status).toBe(200);
+    expect(first.body.data.number).toMatch(/^INV-\d{4}-\d{6}$/);
+    expect(first.body.data.invoiceId).toBe(spawnedId);
+    expect(typeof first.body.data.url).toBe("string");
+    const second = await request(app)
+      .post("/bills/invoice")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId: spawnedId});
+    expect(second.status).toBe(200);
+    expect(second.body.data.number).toBe(first.body.data.number);
+    const unpaid = await request(app)
+      .post("/bills/invoice")
+      .set("Authorization", bearer(RIDER))
+      .send({ticketId: towTicket});
+    expect(unpaid.status).toBe(400);
   });
 
   it("keeps a standalone walk-in as its own bill", async () => {
@@ -434,13 +468,12 @@ describe("bills", () => {
       .send({});
     const bills = list.body.data as Bill[];
     expect(bills.map((b) => b.billId).sort()).toEqual(
-      [towTicket, standaloneId].sort(),
+      [towTicket, spawnedId, standaloneId].sort(),
     );
-    expect(bills.some((b) => b.billId === spawnedId)).toBe(false);
-    const journey = bills.find((b) => b.billId === towTicket);
-    expect(journey?.total).toBe(towAmount + repairAmount);
-    expect(journey?.paid).toBe(repairAmount);
-    expect(journey?.due).toBe(towAmount);
+    const tow = bills.find((b) => b.billId === towTicket);
+    expect(tow?.total).toBe(towAmount);
+    const repair = bills.find((b) => b.billId === spawnedId);
+    expect(repair?.paid).toBe(repairAmount);
     const standalone = bills.find((b) => b.billId === standaloneId);
     expect(standalone?.total).toBe(standaloneAmount);
     expect(standalone?.status).toBe("UNPAID");
@@ -451,14 +484,14 @@ describe("bills", () => {
     expect(payee.status).toBe(200);
     const payeeBills = payee.body.data as Bill[];
     expect(payeeBills.map((b) => b.billId).sort()).toEqual(
-      [towTicket, standaloneId].sort(),
+      [spawnedId, standaloneId].sort(),
     );
     const payeeStandalone = payeeBills.find((b) => b.billId === standaloneId);
     expect(payeeStandalone?.items).toHaveLength(1);
     expect(payeeStandalone?.total).toBe(standaloneAmount);
   });
 
-  it("marks an armed SePay item as pending", async () => {
+  it("marks an armed SePay ticket as pending", async () => {
     const pay = await request(app)
       .post("/payments/create")
       .set("Authorization", bearer(RIDER))
@@ -473,9 +506,9 @@ describe("bills", () => {
       status: "PENDING",
       payment: {method: "SEPAY", status: "PENDING"},
     });
-    expect(data.paid).toBe(repairAmount);
+    expect(data.paid).toBe(0);
     expect(data.due).toBe(towAmount);
-    expect(data.status).toBe("PARTIAL");
+    expect(data.status).toBe("UNPAID");
   });
 
   it("hides the bill from unrelated riders", async () => {

@@ -9,6 +9,7 @@ import {normalizeWorkItems, workItemsTotal} from "./items";
 import {findCandidates} from "../candidates";
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as paymentService from "../../paymentService";
+import * as refundService from "../../refundService";
 import {FieldValue} from "../../../config/firebase";
 
 
@@ -80,7 +81,14 @@ export const setMobileShopFix = async ({
   if (!Number.isInteger(fixAmount) || fixAmount < 0) {
     throw new ValidationError("Fix fee must be a non-negative integer");
   }
-  const invoiceItems = items === undefined ? null : normalizeWorkItems(items);
+  const invoiceItems = items === undefined ?
+    null :
+    normalizeWorkItems(items, {
+      services: (Array.isArray(shop.services) ? shop.services : []) as never,
+      allowExtras: true,
+      ...(typeof ticket.vehicleClass === "string" ?
+        {vehicleClass: ticket.vehicleClass} : {}),
+    });
   if (invoiceItems !== null && workItemsTotal(invoiceItems) !== fixAmount) {
     throw new ValidationError("Fix items must match the fix fee");
   }
@@ -311,9 +319,11 @@ export const declineMobileFix = async ({
       if (payment.status === "HELD" ||
         payment.status === "CONFIRMED" ||
         payment.status === "PARTIAL") {
-        await paymentService.refundPayment({
+        await refundService.requestRefund({
           paymentId: payment.id,
-          adminUid: userId,
+          requestedBy: userId,
+          automatic: true,
+          reason: "Mobile fix declined",
         });
       }
     }
