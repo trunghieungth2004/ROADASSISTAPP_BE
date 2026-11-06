@@ -12,6 +12,7 @@ import {
 } from "../constants/payments";
 import {ValidationError} from "../utils/errors";
 import {logWarn} from "../utils/logger";
+import * as auditService from "./auditService";
 
 interface TowRates {
   SOLO_BIKE: {base: number; perKm: number; includedKm: number};
@@ -134,6 +135,13 @@ const updateConfig = async (
   clean.updatedBy = adminUid;
   const updated = await platformConfigRepository.update(clean);
   configCached.invalidate(PLATFORM_CONFIG_ID);
+  await auditService.record({
+    adminUid,
+    action: "CONFIG_UPDATED",
+    targetType: "platform_config",
+    targetId: PLATFORM_CONFIG_ID,
+    meta: {keys: Object.keys(clean)},
+  });
   return updated;
 };
 

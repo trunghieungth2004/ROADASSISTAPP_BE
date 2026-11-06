@@ -5,6 +5,7 @@ import * as paymentRepository from "../../../repository/paymentRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as paymentService from "../../../service/paymentService";
+import * as refundService from "../../../service/refundService";
 import {chatService} from "../../../service/chatService";
 import {userFile, resolve} from "../../../service/disputeService";
 
@@ -14,6 +15,7 @@ jest.mock("../../../repository/paymentRepository");
 jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../service/paymentService");
+jest.mock("../../../service/refundService");
 jest.mock("../../../service/chatService", () => ({
   chatService: {addSystemEvent: jest.fn(async () => undefined)},
 }));
@@ -66,6 +68,9 @@ function disputeFor(
 }
 
 beforeEach(() => {
+  jest.mocked(refundService.requestRefund).mockResolvedValue({
+    id: "refund1",
+  } as never);
   jest.clearAllMocks();
   jest.mocked(userRepository.findById).mockResolvedValue(admin as never);
   jest.mocked(disputeRepository.findByTicketId).mockResolvedValue([]);

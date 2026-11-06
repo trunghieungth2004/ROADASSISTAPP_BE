@@ -25,6 +25,7 @@ import {
   USER_COLLECTION,
 } from "../constants/payments";
 import * as paymentService from "./paymentService";
+import * as refundService from "./refundService";
 import {chatService} from "./chatService";
 import {enqueueDispatchPush} from "./taskQueueService";
 import {NS} from "./dispatch/constants";
@@ -379,10 +380,12 @@ const refundTicketPayments = async (
       undefined;
     if (amount === 0) continue;
     try {
-      await paymentService.refundPayment({
+      await refundService.requestRefund({
         paymentId: payment.id,
-        adminUid: by,
+        requestedBy: by,
         ...(typeof amount === "number" ? {amount} : {}),
+        automatic: true,
+        reason: "Dispute outcome",
       });
     } catch {
       continue;

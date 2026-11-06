@@ -3,11 +3,14 @@ import {db} from "../../../config/firebase";
 import {
   ACTIVE_TICKET_STATUSES,
   claimForAssignment,
+  create,
   findBusyUids,
   findByStatusForTypes,
   findPendingForShop,
   findRecentForShop,
   findStaleWalkIns,
+  findExpiredHolds,
+  updateStatus,
 } from "../../../repository/dispatchRepository";
 
 jest.mock("../../../config/firebase", () => ({
@@ -22,6 +25,7 @@ jest.mock("../../../config/firebase", () => ({
 }));
 
 type Snap = {exists: boolean; id: string; data: () => unknown};
+type UpdateFn = (_patch: Record<string, unknown>) => Promise<void>;
 
 const snap = (
   id: string,
@@ -44,11 +48,16 @@ const installCollection = () => {
   }));
   const chainable: {
     where: (...args: unknown[]) => unknown;
+    orderBy: (...args: unknown[]) => unknown;
     limit: (...args: unknown[]) => unknown;
     get: unknown;
   } = {
     where: (...args: unknown[]) => {
       whereCalls.push(args);
+      return chainable;
+    },
+    orderBy: (...args: unknown[]) => {
+      whereCalls.push(["orderBy", ...args]);
       return chainable;
     },
     limit: (...args: unknown[]) => {
@@ -67,6 +76,41 @@ beforeEach(() => {
   whereCalls.length = 0;
   pages = [];
   installCollection();
+});
+
+describe("dispatchRepository.create", () => {
+  test("keeps the full vehicle snapshot", async () => {
+    const set = jest.fn(async () => undefined);
+    const doc = jest.fn(() => ({id: "t1", set}));
+    jest.mocked(db.collection).mockReturnValue({doc} as never);
+    const created = await create({
+      userId: "u1",
+      ticketType: "SOS",
+      lat: 10.7,
+      lng: 106.6,
+      vehicleId: "v1",
+      vehicleType: "CAR",
+      vehicleWidth: 1.9,
+      vehicleClass: "CAR",
+      vehicleLabel: "Hungary",
+      vehiclePlate: "65-12 12345",
+      vehicleHeight: 1.5,
+    });
+    expect(created).toMatchObject({
+      vehicleId: "v1",
+      vehiclePlate: "65-12 12345",
+      vehicleHeight: 1.5,
+    });
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({
+      vehicleId: "v1",
+      vehicleType: "CAR",
+      vehicleWidth: 1.9,
+      vehicleClass: "CAR",
+      vehicleLabel: "Hungary",
+      vehiclePlate: "65-12 12345",
+      vehicleHeight: 1.5,
+    }));
+  });
 });
 
 describe("dispatchRepository.findBusyUids", () => {
@@ -217,5 +261,48 @@ describe("dispatchRepository typed status lists", () => {
     const result = await findStaleWalkIns("2026-06-01T00:00:00.000Z");
     expect(result.map((t) => t.id)).toEqual(["old"]);
     expect(whereCalls[0]?.slice(0, 2)).toEqual(["ticketType", "=="]);
+  });
+});
+
+describe("dispatchRepository.updateStatus", () => {
+  const installUpdate = () => {
+    const update = jest.fn<UpdateFn>(async () => undefined);
+    jest.mocked(db.collection).mockReturnValue({
+      doc: jest.fn(() => ({update})),
+    } as never);
+    return update;
+  };
+
+  test("clears the hold when a ticket reaches a terminal status", async () => {
+    const update = installUpdate();
+    await updateStatus("t1", "4", "u1");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "4",
+      hold: null,
+    }));
+  });
+
+  test("keeps the hold for active statuses", async () => {
+    const update = installUpdate();
+    await updateStatus("t1", "2", "u1");
+    const patch = update.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty("hold");
+  });
+});
+
+describe("dispatchRepository.findExpiredHolds", () => {
+  test("queries holds at or before the cutoff", async () => {
+    pages = [[snap("t1", {
+      userId: "rider1",
+      hold: {reason: "TRAFFIC", etaAt: "2026-01-01T00:00:00.000Z"},
+    })]];
+    const rows = await findExpiredHolds("2026-01-01T00:15:00.000Z", 10);
+    expect(rows.map((row) => row.id)).toEqual(["t1"]);
+    expect(whereCalls[0]).toEqual([
+      "hold.etaAt",
+      "<=",
+      "2026-01-01T00:15:00.000Z",
+    ]);
+    expect(whereCalls[1]).toEqual(["limit", 10]);
   });
 });

@@ -7,7 +7,6 @@ import {routesSchemas} from "./routes";
 import {pushSchemas} from "./push";
 import {providersSchemas} from "./providers";
 import {placesSchemas} from "./places";
-import {diagnosticsSchemas} from "./diagnostics";
 import {dispatchSchemas} from "./dispatch";
 import {ratingsSchemas} from "./ratings";
 import {metaSchemas} from "./meta";
@@ -15,6 +14,8 @@ import {paymentsSchemas} from "./payments";
 import {adminSchemas} from "./admin";
 import {notificationsSchemas} from "./notifications";
 import {disputesSchemas} from "./disputes";
+import {bookingsSchemas} from "./bookings";
+import {supportSchemas} from "./support";
 
 export const schemas = {
   ...usersSchemas,
@@ -26,7 +27,6 @@ export const schemas = {
   ...pushSchemas,
   ...providersSchemas,
   ...placesSchemas,
-  ...diagnosticsSchemas,
   ...dispatchSchemas,
   ...ratingsSchemas,
   ...metaSchemas,
@@ -34,6 +34,8 @@ export const schemas = {
   ...adminSchemas,
   ...notificationsSchemas,
   ...disputesSchemas,
+  ...bookingsSchemas,
+  ...supportSchemas,
 };
 
 export {locationBody, MAX_STOPS} from "./primitives";

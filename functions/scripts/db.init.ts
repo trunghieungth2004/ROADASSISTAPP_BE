@@ -7,7 +7,7 @@ import {
 import {getFirestore} from "firebase-admin/firestore";
 import * as serviceAccount from "../config/serviceAccountKey.json";
 import {ROLES} from "../constants/roles";
-import {STATUS_GROUPS} from "../constants/status";
+import {STATUS_GROUPS, STATUS_NAMES_VI} from "../constants/status";
 
 const useEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 
@@ -45,6 +45,7 @@ const main = async (): Promise<void> => {
         domain: status.domain,
         code: status.code,
         name: status.name,
+        nameVi: STATUS_NAMES_VI[`${status.domain}:${status.code}`] ?? null,
         description: status.description,
         order: status.order,
       },

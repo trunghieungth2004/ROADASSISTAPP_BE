@@ -1,5 +1,6 @@
 import {db, FieldValue} from "../config/firebase";
 import {STATUS_DISPATCH} from "../constants/status";
+import {TERMINAL_STATUSES} from "../constants/dispatch";
 
 interface DispatchTicket {
   id: string;
@@ -70,10 +71,10 @@ interface DispatchTicket {
     at: string;
   } | null;
   vehicleId?: string | null;
-  vehicleType?: string | null;
-  vehicleWidth?: number | null;
-  vehicleClass?: string | null;
-  vehicleLabel?: string | null;
+  vehicleType?: string | null; vehicleWidth?: number | null;
+  vehicleClass?: string | null; vehicleLabel?: string | null;
+  vehiclePlate?: string | null;
+  vehicleHeight?: number | null;
   workType?: string | null;
   quoteItems?: Array<{
     name: string;
@@ -110,9 +111,9 @@ interface DispatchTicket {
   quotedBy?: string | null;
   quotedAt?: string | null;
   finalAmount?: number | null;
-  mobileCallOutFee?: number | null;
-  mobileCallOutWaived?: boolean | null;
-  mobileTravelFee?: number | null;
+  mobileCallOutFee?: number | null; mobileCallOutWaived?: boolean | null;
+  mobileTravelFee?: number | null; mobileTravelKm?: number | null;
+  mobileTravelRate?: number | null;
   mobileFeeHistory?: Array<{
     shopId: string;
     shopName?: string | null;
@@ -192,6 +193,13 @@ interface DispatchTicket {
   excludedShopIds?: string[];
   excludedOperatorUids?: string[];
   sourceTicketId?: string | null;
+  bookingId?: string | null;
+  depositAmount?: number | null;
+  depositStatus?: string | null;
+  depositMethod?: string | null;
+  depositPaymentId?: string | null;
+  depositPaidAt?: string | null;
+  depositCollectedBy?: string | null;
   invoiceRef?: string | null;
   fulfilledByShopId?: string | null;
   declineReason?: string | null;
@@ -239,10 +247,25 @@ interface DispatchTicket {
   }>;
   candidates?: string[];
   candidateTs?: string | null;
-  riderRating?: number | null;
-  helperRating?: number | null;
+  riderRating?: number | null; helperRating?: number | null;
+  paymentDueAt?: string | null; paymentReminderCount?: number;
+  paymentRemindedAt?: string | null;
+  hold?: {
+    reason: string;
+    note?: string | null;
+    etaAt?: string | null;
+    by: string;
+    at: string;
+  } | null;
+  loadedPhotos?: string[];
+  receivedPhotos?: string[];
+  riderLat?: number | null;
+  riderLng?: number | null;
+  riderSeenAt?: string | null;
   [key: string]: unknown;
 }
+
+const orNull = <T>(value: T | null | undefined): T | null => value ?? null;
 
 const create = async (data: {
   userId: string;
@@ -264,9 +287,8 @@ const create = async (data: {
     fee: number | null;
   } | null;
   towActual?: {
-    quotedKm: number | null;
-    actualKm: number | null;
-    cappedKm: number | null;
+    quotedKm: number | null; actualKm: number | null; gpsKm?: number | null;
+    cappedKm: number | null; distanceSource?: string | null;
   } | null;
   unfixable?: {
     reason: string;
@@ -284,7 +306,7 @@ const create = async (data: {
   vehicleType?: string;
   vehicleWidth?: number;
   vehicleClass?: string;
-  vehicleLabel?: string;
+  vehicleLabel?: string; vehiclePlate?: string; vehicleHeight?: number | null;
   towKind?: "NORMAL" | "RETURN";
   expiresAt?: string;
   sosAttempt?: number;
@@ -293,6 +315,7 @@ const create = async (data: {
   excludedShopIds?: string[];
   excludedOperatorUids?: string[];
   sourceTicketId?: string | null;
+  bookingId?: string | null;
   id?: string;
 }): Promise<DispatchTicket> => {
   const ref = data.id !== undefined ?
@@ -302,12 +325,9 @@ const create = async (data: {
     id: ref.id,
     userId: data.userId,
     ticketType: data.ticketType,
-    lat: data.lat,
-    lng: data.lng,
-    diagnosticId: data.diagnosticId ?? null,
-    note: data.note ?? null,
-    description: data.description ?? null,
-    photoUrls: data.photoUrls ?? [],
+    lat: data.lat, lng: data.lng,
+    diagnosticId: orNull(data.diagnosticId), note: orNull(data.note),
+    description: orNull(data.description), photoUrls: data.photoUrls ?? [],
     declinedShopIds: data.declinedShopIds ?? [],
     pickupHistory: data.pickupHistory ?? [],
     towerSearch: data.towerSearch ?? "ACTIVE",
@@ -321,6 +341,7 @@ const create = async (data: {
     excludedShopIds: data.excludedShopIds ?? [],
     excludedOperatorUids: data.excludedOperatorUids ?? [],
     sourceTicketId: data.sourceTicketId ?? null,
+    bookingId: data.bookingId ?? null,
     estimateAmount: null,
     estimateNote: null,
     estimateEta: null,
@@ -340,6 +361,9 @@ const create = async (data: {
     vehicleWidth: data.vehicleWidth ?? null,
     vehicleClass: data.vehicleClass ?? null,
     vehicleLabel: data.vehicleLabel ?? null,
+    vehicleId: orNull(data.vehicleId),
+    vehiclePlate: orNull(data.vehiclePlate),
+    vehicleHeight: orNull(data.vehicleHeight),
     chatVersion: 0,
     chatHistory: [],
     workType: null,
@@ -388,6 +412,19 @@ const create = async (data: {
   return doc;
 };
 
+const findByShareToken = async (
+  token: string,
+): Promise<DispatchTicket | null> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("shareToken", "==", token)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return {id: doc.id, ...doc.data()} as DispatchTicket;
+};
+
 const findById = async (id: string): Promise<DispatchTicket | null> => {
   const doc = await db.collection("dispatch_tickets").doc(id).get();
   if (!doc.exists) return null;
@@ -399,7 +436,10 @@ const updateStatus = async (
   status: string,
   byUserId?: string,
 ): Promise<void> => {
-  const patch: Record<string, unknown> = {status};
+  const patch: Record<string, unknown> = {
+    status,
+    ...(TERMINAL_STATUSES.has(status) ? {hold: null} : {}),
+  };
   if (byUserId !== undefined) {
     patch.statusHistory = FieldValue.arrayUnion({
       status,
@@ -445,6 +485,51 @@ const claimForAssignment = async (
     claimed = true;
   });
   return claimed;
+};
+
+const findAll = async (limit = 2000): Promise<DispatchTicket[]> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  const results: DispatchTicket[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as DispatchTicket),
+  );
+  return results;
+};
+
+const findDueForSla = async (
+  nowIso: string,
+  limit = 200,
+): Promise<DispatchTicket[]> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("status", "==", STATUS_DISPATCH.PENDING)
+    .where("acceptByAt", "<=", nowIso)
+    .limit(limit)
+    .get();
+  const res: DispatchTicket[] = [];
+  snap.forEach((doc) =>
+    res.push({id: doc.id, ...doc.data()} as DispatchTicket));
+  return res;
+};
+
+const findExpiredHolds = async (
+  cutoffIso: string,
+  limit = 200,
+): Promise<DispatchTicket[]> => {
+  const snap = await db
+    .collection("dispatch_tickets")
+    .where("hold.etaAt", "<=", cutoffIso)
+    .limit(limit)
+    .get();
+  const results: DispatchTicket[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as DispatchTicket),
+  );
+  return results;
 };
 
 const findByStatus = async (
@@ -502,6 +587,8 @@ const findByUserId = async (
   const snap = await db
     .collection("dispatch_tickets")
     .where("userId", "==", userId)
+    .orderBy("createdAt", "desc")
+    .limit(limit)
     .get();
   const results: DispatchTicket[] = [];
   snap.forEach((doc) =>
@@ -537,6 +624,8 @@ const findByAssignee = async (
   const snap = await db
     .collection("dispatch_tickets")
     .where("assignedUid", "==", uid)
+    .orderBy("createdAt", "desc")
+    .limit(limit)
     .get();
   const results: DispatchTicket[] = [];
   snap.forEach((doc) =>
@@ -631,12 +720,18 @@ const findRecentForShop = async (
   const [assigned, addressed, former] = await Promise.all([
     db.collection("dispatch_tickets")
       .where("assignedShopId", "==", shopId)
+      .orderBy("createdAt", "desc")
+      .limit(limit)
       .get(),
     db.collection("dispatch_tickets")
       .where("destinationShopId", "==", shopId)
+      .orderBy("createdAt", "desc")
+      .limit(limit)
       .get(),
     db.collection("dispatch_tickets")
       .where("formerAssignedShopIds", "array-contains", shopId)
+      .orderBy("createdAt", "desc")
+      .limit(limit)
       .get(),
   ]);
   const seen = new Set<string>();
@@ -654,6 +749,27 @@ const findRecentForShop = async (
     return av < bv ? 1 : av > bv ? -1 : 0;
   });
   return results.slice(0, limit);
+};
+
+const findByIds = async (
+  ids: string[],
+): Promise<DispatchTicket[]> => {
+  const unique = [...new Set(ids.filter((id) => id !== ""))];
+  if (unique.length === 0) return [];
+  const out: DispatchTicket[] = [];
+  const CHUNK = 30;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const snaps = await db.getAll(
+      ...chunk.map((id) => db.collection("dispatch_tickets").doc(id)),
+    );
+    for (const snap of snaps) {
+      if (snap.exists) {
+        out.push({id: snap.id, ...snap.data()} as DispatchTicket);
+      }
+    }
+  }
+  return out;
 };
 
 const findBusyUids = async (uids: string[]): Promise<Set<string>> => {
@@ -699,10 +815,11 @@ const countFulfilled = async (shopId: string): Promise<number> => {
   });
   return done;
 };
-
-export {create, findById, updateStatus, update, claimForAssignment,
-  findByStatus, findByStatusForTypes, findByUserId, findActiveForUid,
-  findByAssignee, findActiveForShop, findActiveForDestination,
-  findPendingForShop, findRecentForShop,
-  findStaleWalkIns, appendJobTrack, countFulfilled,
-  findBusyUids, ACTIVE_TICKET_STATUSES, DispatchTicket};
+export {create, findById, findByShareToken, updateStatus, update,
+  claimForAssignment, findDueForSla, findByStatus, findByStatusForTypes,
+  findByUserId, findActiveForUid, findByAssignee, findActiveForShop,
+  findActiveForDestination,
+  findPendingForShop, findRecentForShop, findByIds,
+  findStaleWalkIns, findExpiredHolds,
+  appendJobTrack, countFulfilled,
+  findBusyUids, findAll, ACTIVE_TICKET_STATUSES, DispatchTicket};

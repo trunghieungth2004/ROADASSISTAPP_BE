@@ -7,7 +7,7 @@ import morgan from "morgan";
 import * as functions from "firebase-functions";
 import {requireAuth, requireRole, requireService} from "./middleware/auth";
 import {validate} from "./middleware/validate";
-import {requestIdMiddleware} from "./utils/logger";
+import {requestIdMiddleware, logError} from "./utils/logger";
 import {sanitizeObject} from "./utils/sanitize";
 import {handleServiceError} from "./utils/response";
 import {schemas} from "./validation/schemas";
@@ -21,7 +21,6 @@ import placesRoutes from "./routes/placesRoutes";
 import savedPlaceRoutes from "./routes/savedPlaceRoutes";
 import routingRoutes from "./routes/routingRoutes";
 import providerRoutes from "./routes/providerRoutes";
-import diagnosticRoutes from "./routes/diagnosticRoutes";
 import dispatchRoutes, {mountDispatchDeliver} from "./routes/dispatchRoutes";
 import ratingRoutes from "./routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "./routes/pushRoutes";
@@ -31,13 +30,20 @@ import payoutRoutes from "./routes/payoutRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import chatRoutes from "./routes/chatRoutes";
 import adminRoutes from "./routes/adminRoutes";
+import refundRoutes from "./routes/refundRoutes";
+import warrantyRoutes from "./routes/warrantyRoutes";
 import disputeRoutes from "./routes/disputeRoutes";
+import bookingRoutes from "./routes/bookingRoutes";
+import supportRoutes from "./routes/supportRoutes";
 import * as flagService from "./service/flagService";
 import {chatService} from "./service/chatService";
 import * as userService from "./service/userService";
 import * as routingService from "./service/routingService";
 import * as routingCacheRepository from "./repository/routingCacheRepository";
 import * as dispatchService from "./service/dispatchService";
+import * as bookingService from "./service/bookingService";
+import * as paymentReminderService from "./service/paymentReminderService";
+import * as warrantyService from "./service/warrantyService";
 
 export {clientIpKey};
 
@@ -131,7 +137,6 @@ placesRoutes(app, routeDeps);
 savedPlaceRoutes(app, routeDeps);
 routingRoutes(app, routeDeps);
 providerRoutes(app, routeDeps);
-diagnosticRoutes(app, routeDeps);
 dispatchRoutes(app, routeDeps);
 ratingRoutes(app, routeDeps);
 pushRoutes(app, routeDeps);
@@ -141,7 +146,11 @@ payoutRoutes(app, routeDeps);
 notificationRoutes(app, routeDeps);
 chatRoutes(app, routeDeps);
 adminRoutes(app, routeDeps);
+refundRoutes(app, routeDeps);
+warrantyRoutes(app, routeDeps);
 disputeRoutes(app, routeDeps);
+bookingRoutes(app, routeDeps);
+supportRoutes(app, routeDeps);
 
 app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);
@@ -160,22 +169,90 @@ export const api = functions.https.onRequest(
   app,
 );
 
-export const sweepFlagsAndPresence = functions.scheduler.onSchedule(
+const runSweep = async (
+  name: string,
+  sweep: () => Promise<unknown>,
+): Promise<void> => {
+  try {
+    await sweep();
+  } catch (err) {
+    logError("scheduler", "sweep-failed", {name}, err);
+  }
+};
+
+export const sweepDispatch = functions.scheduler.onSchedule(
   {
-    schedule: "every 60 minutes",
+    schedule: "every 5 minutes",
     timeZone: "Asia/Ho_Chi_Minh",
     region: "asia-southeast1",
     memory: "256MiB",
     timeoutSeconds: 120,
   },
   async () => {
-    await flagService.expireFlags();
-    await chatService.expireChats();
-    await userService.sweepStalePresence();
+    await runSweep(
+      "sweepDispatchSla",
+      () => dispatchService.sweepDispatchSla(),
+    );
+    await runSweep(
+      "sweepUnfixGrace",
+      () => dispatchService.sweepUnfixGrace(),
+    );
+    await runSweep(
+      "sweepStaleWalkIns",
+      () => dispatchService.sweepStaleWalkIns(),
+    );
+    await runSweep(
+      "sweepLateTows",
+      () => dispatchService.sweepLateTows(),
+    );
+    await runSweep(
+      "sweepMobileTowOffers",
+      () => dispatchService.sweepMobileTowOffers(),
+    );
+    await runSweep(
+      "sweepExpiredQuotes",
+      () => dispatchService.sweepExpiredQuotes(),
+    );
+    await runSweep(
+      "sweepExpiredHolds",
+      () => dispatchService.sweepExpiredHolds(),
+    );
+    await runSweep(
+      "sweepPaymentReminders",
+      () => paymentReminderService.sweepPaymentReminders(),
+    );
+    await runSweep(
+      "sweepBookings",
+      () => bookingService.sweepBookings(),
+    );
   },
 );
 
-export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
+export const sweepMaintenance = functions.scheduler.onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "Asia/Ho_Chi_Minh",
+    region: "asia-southeast1",
+    memory: "256MiB",
+    timeoutSeconds: 120,
+  },
+  async () => {
+    await runSweep(
+      "sweepWarrantyRebooks",
+      () => warrantyService.sweepWarrantyRebooks(),
+    );
+    await runSweep(
+      "expireChats",
+      () => chatService.expireChats(),
+    );
+    await runSweep(
+      "sweepStalePresence",
+      () => userService.sweepStalePresence(),
+    );
+  },
+);
+
+export const sweepData = functions.scheduler.onSchedule(
   {
     schedule: "every 30 minutes",
     timeZone: "Asia/Ho_Chi_Minh",
@@ -184,11 +261,17 @@ export const sweepRoutesAndWalkIns = functions.scheduler.onSchedule(
     timeoutSeconds: 120,
   },
   async () => {
-    await routingService.sweepActiveRoutes();
-    await routingCacheRepository.deleteExpired();
-    await dispatchService.sweepStaleWalkIns();
-    await dispatchService.sweepLateTows();
-    await dispatchService.sweepMobileTowOffers();
-    await dispatchService.sweepUnfixGrace();
+    await runSweep(
+      "expireFlags",
+      () => flagService.expireFlags(),
+    );
+    await runSweep(
+      "sweepActiveRoutes",
+      () => routingService.sweepActiveRoutes(),
+    );
+    await runSweep(
+      "deleteExpiredRoutes",
+      () => routingCacheRepository.deleteExpired(),
+    );
   },
 );

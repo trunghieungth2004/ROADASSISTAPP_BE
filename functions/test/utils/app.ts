@@ -21,7 +21,6 @@ import placesRoutes from "../../routes/placesRoutes";
 import savedPlaceRoutes from "../../routes/savedPlaceRoutes";
 import routingRoutes from "../../routes/routingRoutes";
 import providerRoutes from "../../routes/providerRoutes";
-import diagnosticRoutes from "../../routes/diagnosticRoutes";
 import dispatchRoutes from "../../routes/dispatchRoutes";
 import ratingRoutes from "../../routes/ratingRoutes";
 import pushRoutes, {mountPushDeliver} from "../../routes/pushRoutes";
@@ -45,7 +44,6 @@ const registerRoutes = (app: Express, deps: RouteDeps): void => {
   savedPlaceRoutes(app, deps);
   routingRoutes(app, deps);
   providerRoutes(app, deps);
-  diagnosticRoutes(app, deps);
   dispatchRoutes(app, deps);
   ratingRoutes(app, deps);
   pushRoutes(app, deps);
