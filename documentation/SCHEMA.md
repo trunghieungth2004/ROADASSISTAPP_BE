@@ -104,6 +104,25 @@ No body schema (lists the authenticated caller's profiles).
 | `type` | enum: BIKE, CAR | req |
 | `baseWidth` | number | req |
 | `baseHeight` | number | req |
+| `label` | string (max 80) | opt |
+| `plate` | string (max 32) | opt |
+
+### `POST /vehicleProfiles/update` — `updateVehicleProfile`
+| Field | Type | |
+|-------|------|---|
+| `profileId` | string | req |
+| `label` | string (max 80, allows `""`/`null`) | opt |
+| `plate` | string (max 32, allows `""`/`null`) | opt |
+| `baseWidth` | number 0.3–3 | opt |
+| `baseHeight` | number 0.5–3 | opt |
+
+### `POST /vehicleProfiles/history` — `vehicleHistory`
+| Field | Type | |
+|-------|------|---|
+| `profileId` | string | req |
+| `limit` | number 1–100 | opt (default 50) |
+
+Returns resolved non-TOW service lines for the vehicle, with provider, service date, amount, `warrantyUntil`, and claim summary.
 
 ### `POST /vehicleProfiles/rideConfig` — `addRideConfig`
 | Field | Type | |
@@ -176,18 +195,6 @@ No body schema (any body allowed; still admin-gated).
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `displayLabel` | string | req |
-
-### `POST /landmarks/match` — `matchLandmark`
-| Field | Type | |
-|-------|------|---|
-| `lat` | lat | req |
-| `lng` | lng | req |
-| `embedding` | arr (min1) of number | req |
-| `radiusMeters` | number | opt (default 300) |
-
----
-
-## Routing
 
 ### `POST /routes` — `getRoute`
 | Field | Type | |
@@ -387,9 +394,11 @@ rows spread the stored doc):
 | `providerId` | string | req for `WALK_IN` |
 | `destinationShopId` | string (allows `""`/`null`) | opt (TOW drop-off) |
 | `destinationPoint` | `{lat, lng, label?}` | opt (free-form drop-off) |
+| `vehicleId` | string | required for non-`WALK_IN`; vehicle profile id snapshotted onto the ticket |
 | `vehicleType` | enum: `BIKE`, `CAR` | opt |
 | `vehicleWidth` | number (0.3–3 m) | opt |
 | `vehicleLabel` | string (allows `""`/`null`) | opt |
+| `vehiclePlate` / `vehicleHeight` | string / number | snapshotted from the vehicle profile at create |
 | `note` | string (max 280) | opt |
 | `description` | string (max 1000) | opt (richer job description) |
 | `photoUrls` | string[] Storage paths (0–5) | opt (evidence photos) |
@@ -544,6 +553,7 @@ flows:
 | `pickupHistory` | array of `{lat, lng, at, reason}` — pickup-point corrections (`created`, `tower-cancel`, `REMATCH`, `tower-breakdown`) | ticket filing, legacy tower cancel, re-match |
 | `assignedAt` | ISO timestamp — start of the current provider assignment; scopes `jobTrack` for cancel distance | accept / re-match |
 | `loadedAt` | ISO timestamp — vehicle loaded at pickup; scopes the loaded leg for a genuine-breakdown partial | `POST /dispatch/tow/loaded` |
+| `loadedPhotos` / `receivedPhotos` | string[] — handover photos (Storage paths), shown to the rider in Notes and pictures | `POST /dispatch/tow/loaded` / `POST /dispatch/tow/received` |
 | `towKind` | `"NORMAL"` / `"RETURN"` — distinguishes a return tow from the usual tow | return-tow acceptance |
 | `returnTowOffer` | `{status, shopId, by, at}` — rider-facing return-tow offer | WALK_IN/MECHANIC `READY` or `UNFIXABLE` |
 | `deliveredAt` / `deliveredBy` | ISO timestamp / uid — tower marked delivery and closed the tow | TOW resolve by the tower |
@@ -555,8 +565,8 @@ flows:
 | `towCancelHistory` | array of `{shopId, by, at, reasonCode}` — tower cancellation reasons; returned to the rider and the former tower, stripped for the next tower | tower cancel |
 | `towerSearch` | `"ACTIVE"` / `"PAUSED"` — tow broadcasting state | re-match / retarget |
 | `waiting` | `{active, startedAt, endedAt, fee, withinRadius, accruedAt}` — accrual window + fee (integer VND) | waiting clock (`startWaiting`/`accrue`/`stopWaiting`) |
-| `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, vehicleClass?, baseFee?, perKmFee?, waitingFee?}` — stamped at accept from the provider card when set (platform fallback), partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve; a genuine breakdown clears the partial and leaves the remaining ceiling | accept / re-match / breakdown / waiting / resolve |
-| `towActual` | `{quotedKm, actualKm, cappedKm, loadedTraveledKm?, breakdown?}` — quoted vs GPS-measured vs ceiling-capped haul; the breakdown marker and tracked loaded distance drive the payable partial | re-match / breakdown / resolve settle |
+| `towFare` | `{estimate, ceiling, final, partial?, deadheadKm?, loadedKm?, night?, nightMultiplier?, vehicleClass?, baseFee?, perKmFee?, includedKm?, billableKm?, waitingFee?}` — stamped at accept from the provider card when set (platform fallback), partial-settled on re-match, `waitingFee` folded in while waiting, `final` settled on resolve; `includedKm`/`billableKm` expose the fare formula; a genuine breakdown clears the partial and leaves the remaining ceiling | accept / re-match / breakdown / waiting / resolve |
+| `towActual` | `{quotedKm, actualKm, gpsKm?, cappedKm, distanceSource?, loadedTraveledKm?, breakdown?}` — quoted vs GPS-measured vs ceiling-capped haul; `distanceSource` is `GPS` or `ROUTE_QUOTE` when the loaded track is too sparse; the breakdown marker and tracked loaded distance drive the payable partial | re-match / breakdown / resolve settle |
 | `towFeeHistory` | array of `{shopId, shopName, amount, deadheadKm, loadedKm, at, reasonCode}` — genuine-breakdown partials paid to the outgoing tower; added to the journey bill | tower breakdown re-match |
 | `towFeeCap` | integer VND / `null` — original ceiling preserved across a breakdown; the replacement tower's estimate is capped at `towFeeCap − sum(towFeeHistory.amount)` | tower breakdown re-match |
 | `towLegs` | array of `{toShopId, km, traveledKm, actual, at}` — frozen legs; `km` is the remaining distance at freeze, `traveledKm` is the tracked distance traveled on the leg; `actual` only when the tower fix was fresh | destination decline / re-match / cancel freeze |
@@ -570,7 +580,8 @@ flows:
 | `chatVersion` | number — current assignment chat room version; tower cancel or a declined mobile fix increments it | tower cancel / mobile fix decline |
 | `chatHistory` | array of `{version, roomId, shopId, shopName, at}` — archived chat rooms; returned to the rider/former tower, stripped for the next tower | tower cancel |
 | `mobileTowAvailable` / `mobileTowMode` / `mobileTowState` | feed/read flags: `DIRECT` or `NETWORK` availability, with `TOW_OFF_DUTY`, `TOW_BUSY`, `NO_TOW`, or `NONE_NEARBY` | unfixable SOS feed |
-| `mobileCallOutWaived` | true when the shop was within 1 km at accept; call-out is 0 | SOS accept |
+| `mobileCallOutFee` / `mobileCallOutWaived` | call-out charge in VND and the within-1-km waiver flag stamped at accept | SOS accept |
+| `mobileTravelFee` / `mobileTravelKm` / `mobileTravelRate` | travel charge in VND plus the straight-line distance and per-km rate used to compute it; older tickets may have only the fee | SOS accept (fresh mobile-shop fix) |
 | `mobileFeeHistory` | array of `{shopId, shopName, callOutFee, travelFee, waived, fixAmount, items, declinedAt, reason}` — prior mobile-shop visits kept payable when a fix quote is declined; declined fix amount/items are audit-only | mobile fix decline |
 | `mobileFixApprovedAt` / `mobileFixDeclinedAt` / `mobileFixDeclineReason` | rider decision stamps and optional reason for the current SOS fix quote | `POST /dispatch/mobile-shop/fix/approve` / `/decline` |
 | `unfixGraceAt` | 2-minute grace marker after an eligible unfixable close | unfixable |
@@ -578,12 +589,13 @@ flows:
 | `quoteItems` / `invoiceItems` | itemized `[{name, qty, unitPrice, amount}]` lists; quote total must equal `shopQuotedAmount`; invoice total must match the approved quote | `sendQuote` / `updateWorkOrder` |
 | `preQuoteStatus` | status captured when a fresh shop quote is sent; restored when the rider declines | `sendQuote` / `declineQuote` |
 | `quoteVersion` / `quoteHistory` | quote version and prior versions `[{version, amount, items, at, by}]`; amendments are allowed only while status `"9"` | `sendQuote` amendment |
-| `quoteDeclinedAt` / `quoteDeclineReason` | rider's quote-decline stamp and optional reason; the quote fields clear and the ticket returns to `"3"` | `POST /dispatch/quote/decline` |
+| `quoteDeclinedAt` / `quoteDeclineReason` | rider's quote-decline stamp and optional reason; the quote fields clear and the ticket returns to `preQuoteStatus` (fallback `"3"`, walk-ins `"2"`). A fresh quote clears `quoteDeclinedAt`, `quoteDeclineReason`, and `quoteExpiredAt` | `POST /dispatch/quote/decline` / `sendQuote` |
 | `invoiceAmount` / `invoiceApproval` / `invoiceVersion` / `invoiceApprovedAt` | revised invoice total and rider approval state (`PENDING`/`APPROVED`); a pending invoice blocks resolve | `updateWorkOrder` / `POST /dispatch/invoice/approve` |
 | `estimateAmount` / `estimateNote` / `estimateEta` / `estimateBy` / `estimatedAt` / `estimateExpiresAt` / `estimateApprovedAt` | tow drop-off advisory estimate + 24-hour TTL | `sendEstimate` / `approveEstimate` |
 | `paymentArmed` / `quoteApprovedAt` | work-start gate stamp | `approveQuote` |
 | `fulfilledByShopId` | provider id stamped when the ticket reaches `READY` (including mobile-fix approval); gates destination-shop ratings | `PUT /dispatch/status` / mobile-fix approve |
 | `paymentId` / `paymentMethod` / `paymentStatus` / `checkoutUrl` | latest charge link, stamped on every payment transition | `POST /payments/*` |
+| `paymentDueAt` / `paymentReminderCount` / `paymentRemindedAt` | unpaid reminder schedule: first due 30 minutes after a payable close, then +6 hours, then +24 hours; cleared on payment or zero amount | `schedulePaymentReminder` / `sweepPaymentReminders` |
 
 ## Payments
 
@@ -906,6 +918,125 @@ Rating a `destinationShopId` requires `fulfilledByShopId` (stamped on `READY` or
 |-------|------|---|
 | `ratingId` | string | req |
 | `reply` | string (1–280) | req |
+
+## Payout accounts & dashboards
+
+### `POST /payouts/banks` — `banks` (auth)
+Empty body. Returns `[{code, name, bin}]` from `constants/banks.ts`.
+
+### `POST /payouts/account` — `getAccount` / `PUT /payouts/account` — `setAccount` (auth)
+| Field | Type | |
+|-------|------|---|
+| `bankCode` | string (2–24, known bank) | req |
+| `accountNumber` | string, 6–19 digits | req |
+| `holderName` | string (2–80; letters/spaces/`.\'-`) | req |
+
+### `POST /payouts/request` — `request` (auth)
+| Field | Type | |
+|-------|------|---|
+| `amount` | integer VND (10,000–999,999,999) | req |
+| `note` | string (≤280) | opt |
+
+Requires a saved account and no other pending request; the amount cannot exceed
+`pending.net - pending.commissionOwed`.
+
+### `POST /dispatch/quick-fix` / `POST /dispatch/release`
+
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req |
+| `items` | array of `{name, qty 1–10, unitPrice}` (1–10) | req (quick-fix) |
+| `reason` | string (≤280) | opt (release) |
+
+### Warranty claims
+
+| Endpoint | Fields |
+|---|---|
+| `POST /warranty/claims` | `ticketId`, `lineId` req; `reason` 5–280 req; `photoUrls` 0–5 opt |
+| `POST /warranty/mine` | `limit` 1–100 opt |
+| `POST /warranty/shop` | `providerId` opt; `limit` 1–200 opt |
+| `POST /warranty/respond` | `claimId` req; `accept` bool req; `note` ≤280 opt |
+| `POST /warranty/dispute` | `claimId` req; `note` ≤280 opt |
+| `POST /admin/warranty/claims` | `status` opt; `limit` 1–200 opt |
+| `POST /admin/warranty/resolve` | `claimId`, `outcome` (`SHOP`/`RIDER`/`PARTIAL`) req; `refundAmount` opt; `note` opt |
+
+### Work items (quote/invoice lines)
+
+`items` accepts up to 20 lines. `SERVICE` lines require `serviceCode` from the
+provider catalog; fixed-price services must use the catalog price and are
+unique per quote. `EXTRA` lines require a `note` (3–280 chars), max 5 per
+quote, and are rejected by quick-fix. Lines carry a stable `lineId` and
+snapshot `name`, `category`, `listPrice`, `warrantyDays`, `warrantyParts`.
+
+### Refund requests
+
+| Endpoint | Fields |
+|---|---|
+| `POST /refunds/request` | `paymentId` req; `amount` int opt; `reason` ≤280 opt |
+| `POST /refunds/mine` | `limit` 1–100 opt |
+| `POST /admin/refunds` | `status` (`REQUESTED`/`APPROVED`/`SENT`/`CONFIRMED`/`REJECTED`/`FAILED`) opt; `limit` 1–100 opt |
+| `POST /admin/refunds/decide` | `refundId` req; `approve` bool req; `note` ≤280 opt |
+| `POST /admin/refunds/send` | `refundId` req; `transferRef` ≤120 opt |
+| `POST /admin/refunds/confirm` | `refundId` req; `transferRef` ≤120 opt |
+| `POST /admin/refunds/fail` | `refundId` req; `reason` ≤280 opt |
+
+### `POST /dispatch/share` / `POST /dispatch/share/view`
+
+| Field | Type | |
+|-------|------|---|
+| `ticketId` | string | req (share) |
+| `token` | 16–64 lowercase hex | req (view) |
+
+### `POST /providers/stats` — `myStats` (auth)
+Empty body. Per-provider scorecards plus payout totals and outstanding
+commission.
+
+### `POST /admin/payouts/requests` — `requests` (admin)
+| Field | Type | |
+|-------|------|---|
+| `status` | `PENDING`, `PAID`, `REJECTED`, `CANCELLED` | opt |
+| `limit` | integer (1–100) | opt |
+
+### `POST /admin/payouts/requests/decide` — `decideRequest` (admin)
+| Field | Type | |
+|-------|------|---|
+| `requestId` | string | req |
+| `approve` | boolean | req |
+| `note` | string (≤280) | opt |
+| `payoutRef` | string (≤80) | opt |
+
+### `POST /admin/payouts/commission` — `settleCommission` (admin)
+| Field | Type | |
+|-------|------|---|
+| `payeeId` | string | req |
+
+### `POST /admin/dashboard` — `dashboard` (admin)
+| Field | Type | |
+|-------|------|---|
+| `days` | integer (1–365) | opt |
+
+### `POST /admin/providers/stats` — `providerStats` (admin)
+| Field | Type | |
+|-------|------|---|
+| `providerId` | string | req |
+
+### Provider service catalog
+`services` on `POST /providers` and `PUT /providers` (SHOP and MOBILE_SHOP),
+up to 20 rows:
+
+| Field | Type | |
+|-------|------|---|
+| `code` | uppercase `[A-Z0-9_]{1,64}`, unique per provider | req |
+| `name` | string (1–120) | req |
+| `displayPrice` | integer VND (0–999,999,999) | req |
+| `quoteRequired` | boolean | req |
+| `category` | `FLAT_TIRE`, `FLUID_LEAK`, `CHAIN_SLACK`, `SPARK_CAP`, `ELECTRICAL`, `ENGINE`, `BRAKES`, `OTHER` | opt (default `OTHER`) |
+
+`POST /providers/near` and `POST /providers/search` accept `serviceCategory`
+to filter on the catalog.
+
+TOW providers may also set `waitingRatePer15Min` (0–100,000 VND), which
+overrides the platform waiting rate for their jobs.
 
 ---
 

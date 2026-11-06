@@ -93,12 +93,16 @@ The planned suites run with `CACHE_ENABLED=false` (`test/setup/unit.ts`, `test/s
 
 ## Scheduled functions
 
-Two Cloud Scheduler jobs, all `asia-southeast1`, all 256 MiB / 120 s timeout.
+Three Cloud Scheduler jobs, all `asia-southeast1`, all 256 MiB / 120 s timeout.
 None has emulator coverage; all are billed invocations.
 
 | Function | Schedule | Sweeps | Notes |
 |----------|----------|--------|-------|
-| `sweepFlagsAndPresence` | every 60 min | flags past TTL (`flagService.expireFlags`) + stale provider presence (`userService.sweepStalePresence`) | merged scheduled sweep |
-| `sweepRoutesAndWalkIns` | every 30 min | expired `active_routes` rows (`routingService.sweepActiveRoutes`) + unanswered walk-ins past their 2 h `expiresAt` (`dispatchService.sweepStaleWalkIns`, cancelled) | merged — was `sweepActiveRoutes` (15 min) + `sweepStaleWalkIns` (30 min); expired route rows may now linger up to 30 min |
+| `sweepDispatch` | every 5 min | acceptance SLA rebroadcasts (`dispatchService.sweepDispatchSla`), 2-minute unfix-grace continuations (`dispatchService.sweepUnfixGrace`), stale walk-ins (`dispatchService.sweepStaleWalkIns`), late tows, overdue mobile-tow offers, expired shop quotes (`dispatchService.sweepExpiredQuotes`), expired delay holds (`dispatchService.sweepExpiredHolds`), unpaid payment reminders (`paymentReminderService.sweepPaymentReminders`), and booking reminders/no-shows (`bookingService.sweepBookings`) | exact booking reminders are also enqueued as Cloud Tasks at `reminder.reminderAt`; the sweep is the fallback if a task is lost. Delay holds clear 15 minutes after their ETA. Each sweep is isolated so one failure does not skip the rest |
+| `sweepMaintenance` | every 15 min | warranty rework cleanup (`warrantyService.sweepWarrantyRebooks`), expired chats (`chatService.expireChats`), and stale provider presence (`userService.sweepStalePresence`) | slower lifecycle cleanup |
+| `sweepData` | every 30 min | flags past TTL (`flagService.expireFlags`), expired `active_routes` rows (`routingService.sweepActiveRoutes`), and expired routing-cache rows | garbage collection only; no user-facing latency |
 
-`POST /routes/sweep` (admin) runs the active-route sweep on demand and is retained for manual purges.
+Unpaid payment reminders are scheduled 30 minutes after a payable close, then
++6 hours, then +24 hours; paid or zero-amount tickets are cleared on the next
+sweep. `POST /routes/sweep` (admin) runs the active-route sweep on demand and
+is retained for manual purges.

@@ -85,8 +85,26 @@ do_storage() {
   fi
 }
 
+do_iam() {
+  echo "[deploy] runtime signing permission"
+  local number
+  number="$(gcloud projects describe "$PROJECT"     --format='value(projectNumber)' 2>/dev/null || true)"
+  if [ -z "$number" ]; then
+    echo "[deploy] WARNING: could not resolve project number for signing IAM" >&2
+    return 0
+  fi
+  local runtime_sa="${number}-compute@developer.gserviceaccount.com"
+  if gcloud iam service-accounts add-iam-policy-binding "$runtime_sa"     --member="serviceAccount:${runtime_sa}"     --role="roles/iam.serviceAccountTokenCreator"     --project="$PROJECT" --quiet >/dev/null 2>&1; then
+    echo "[deploy] granted token creator to $runtime_sa"
+  else
+    echo "[deploy] WARNING: could not grant token creator to $runtime_sa" >&2
+    echo "  invoice downloads use Firebase download tokens, so deploy can continue" >&2
+  fi
+}
+
 do_functions() {
   echo "[deploy] functions"
+  do_iam
   firebase deploy --only functions --project="$PROJECT"
 }
 

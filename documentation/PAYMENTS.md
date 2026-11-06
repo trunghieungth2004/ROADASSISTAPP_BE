@@ -6,12 +6,11 @@ and when does it settle?** Provider pricing, platform bounds, itemized shop
 quotes, tow fare lifecycle, cancel partials, refunds, and commission all live
 here.
 
-Two rails, itemized bills. One journey is one bill — a TOW fare (plus waiting
-fee) sits beside the repair quote on the walk-in spawned at the drop-off shop,
-and an SOS that continues into a TOW keeps the SOS call-out and the
-continuation TOW on the same bill. Each item settles on its own ticket with
-its own payee. Shop work is itemized (`quoteItems` / `invoiceItems`, see
-the case book below).
+Two rails, itemized bills. **One ticket is one bill** — a TOW fare, the
+walk-in repair, and a return TOW are separate bills even when linked by the
+same journey. Each settles on its own ticket with its own payee. Booking/job
+summaries group linked tickets for display only. Shop work is itemized
+(`quoteItems` / `invoiceItems`, see the case book below).
 Canonical routes: `POST /payments/create`, `POST /payments/ipn`,
 `POST /payments/confirm-cash`, `POST /payments/one`, `POST /payments/all`,
 `POST /payouts/mine`, `POST /bills/all`, `POST /bills/payee`, `POST /bills/one`
@@ -20,11 +19,10 @@ Canonical routes: `POST /payments/create`, `POST /payments/ipn`,
 ## Bill, ticket, payment
 
 A **ticket** is the operational job (one tow leg, one walk-in repair, one SOS
-assist). A **bill** is the rider-facing money view derived from one ticket or
-a TOW journey plus its linked walk-in tickets; it is not its own collection.
-A **payment** is one charge against one ticket and one payee. That split is
-why a TOW journey can show a single bill total while the tower and the shop
-are paid separately.
+assist). A **bill** is the rider-facing money view of exactly one ticket; it
+is not its own collection. A **payment** is one charge against one ticket and
+one payee. Linked tickets remain linked for navigation and job summaries, but
+they never share a bill.
 
 The amount is always computed from the ticket at charge creation time
 (`billableAmountFor`). A bill is a read model and never stores money. A
@@ -37,16 +35,18 @@ All amounts are integer VND. `round1k(x) = round(x / 1000) × 1000`.
 
 | Source | Formula |
 |---|---|
-| TOW fare | `round1k(max(minimumTowFee, night × (base + perKm × max(0, loadedKm − includedKm))))`; `base`/`perKm` come from the provider's `towBaseFee`/`towPerKmFee` when set, otherwise the platform card |
+| TOW fare | `round1k(max(minimumTowFee, night × (base + perKm × max(0, loadedKm − includedKm))))`; `base`/`perKm` come from the provider's `towBaseFee`/`towPerKmFee` when set, otherwise the platform card. Resolve and cancel recomputes reuse the assigned tower's card, not the platform defaults. The bill shows loaded distance for a completed tow and deadhead distance for a partial/cancelled tow; `totalDistanceKm` is audit-only. Sparse GPS tracks fall back to the quoted loaded distance for billing |
 | TOW ceiling | `round1k(estimate × ceilingMultiplier)`; bound at accept |
 | TOW final | `min(estimate, ceiling)` |
 | TOW cancel partial | `deadheadPayable ? round1k(night × perKm × actualTraveledDeadheadKm) : 0`; `traveledKm` is summed from the current assignment's `jobTrack` points (`shopId` + `assignedAt`), stopping at pickup; fewer than two points bills 0 |
 | TOW breakdown partial | `deadheadPayable ? round1k(night × perKm × (actualTraveledDeadheadKm + loadedTraveledKm)) : 0`; no base; loaded km is summed from `jobTrack` after `loadedAt` |
 | SOS call-out | provider `callOutFee`, else `50,000`; `0` when the mobile shop was within 1 km on a fresh fix at accept |
-| SOS travel | `round1k(km × provider travelPerKmFee)`, else `5,000`; only on a fresh fix |
+| SOS travel | `round1k(km × provider travelPerKmFee)`, else `5,000`; only on a fresh fix. Accept snapshots `mobileTravelKm` and `mobileTravelRate` so the bill shows `km × rate` |
 | WALK_IN / MECHANIC | itemized `quoteItems` total (`shopQuotedAmount`), else legacy `finalAmount` |
 | TOW waiting | `ceil(billableMs / 60s) × (waitingRatePer15Min / 15)`, capped by grace/cap |
 | SOS fix | shop-entered `finalAmount` |
+
+Feature gates live in `platform_config/global.features` (`quickFix`, `towCashAtDelivery` default true; `phoneMasking` default false). Providers may store `taxCode`, printed on monthly statements and on the on-demand PDF invoice. Warranty rework tickets carry no bill; their work lines are forced to zero and payment endpoints reject them.
 
 Rate-card defaults (`platform_config/global`, admin-editable through
 `PUT /admin/config`):
@@ -80,6 +80,10 @@ Provider pricing overrides and bounds (validated on provider create/update):
 Commission defaults: `TOW` 15%, `SOS`/`MECHANIC`/`WALK_IN` 10%.
 `commissionAmount = round(amount × rate / 100)` and
 `payoutAmount = amount − commissionAmount` are snapshotted on the charge.
+Rates come from `platform_config.commissionRate`: defaults are 15% for TOW and
+10% for MECHANIC, SOS, and WALK_IN. TOW commission is ledgered only when the
+tow cash charge is confirmed (or a SePay hold is received), and the payee bill
+shows gross, commission, and net so the deduction is visible.
 
 ## Case book — payable amount by case
 
@@ -91,6 +95,7 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 |---|---|---|---|
 | Pending / matched / arrived, not resolved | `1`–`3` | 0 now | A TOW charge is only creatable after `4` (resolved). The live estimate is display-only. |
 | Tower accepted, job resolved | `4` | `final + waitingFee` | `final = min(recomputed estimate, ceiling)`. Loaded km is GPS-measured, capped at quoted km × 1.15; without GPS it falls back to quoted km. |
+| Tower tries to resolve away from the drop-off | `3` | no change | The assigned tower's fresh fix must be within 200 m of the drop-off; a farther fix returns `400 "Too far from the drop-off point to mark delivered"` before any status or charge change. A stale or missing fix skips the guard. |
 | GPS haul overruns the quote | `4` | recomputed on capped km | Quoted 10 km, actual 13 km → bill 11.5 km. The ceiling still binds. |
 | Bike, day, 8 loaded km | `4` | 200,000 | 150,000 + 10,000 × (8 − 3). Ceiling 220,000; final 200,000. |
 | Car, night, 12 loaded km | `4` | 825,000 | 1.5 × (500,000 + 25,000 × (12 − 10)). Ceiling 908,000; final 825,000. |
@@ -102,8 +107,8 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Tower cancels / re-match (not breakdown) | back to `1` | 0 now | The partial is recorded on the ticket for the audit trail only; no charge is created while the ticket is pending. A new tower re-stamps the quote. |
 | Tower breaks down (genuine) | back to `1` | `round1k(night × perKm × (deadhead + loaded))` | No base; loaded is 0 before `loadedAt`. The outgoing partial is appended to `towFeeHistory` and stays payable; `towFeeCap` keeps the original ceiling and the replacement tower's estimate is capped at `towFeeCap − history`. No `TOWER_CANCEL_MID` dispute or cancel counters. |
 | Destination shop declines | `3`/`7` | no change | The tower stays engaged; waiting may start. The partial lands only if the tow is later re-matched or cancelled. |
-| TOW resolved at a drop-off shop | `4` + child walk-in | tow item + repair item | The drop-off spawns a `WALK_IN`; the journey bill shows both. Each item has its own payee and charge. |
-| Return tow after a walk-in is ready | new TOW | separate tow item | Accepting the return-tow offer creates a linked TOW; the journey bill combines the repair and the return tow. |
+| TOW resolved at a drop-off shop | `4` + child walk-in | two tickets, two bills | The drop-off spawns a `WALK_IN`; the tower bill and the repair bill are separate. |
+| Return tow after a walk-in is ready | new TOW | separate bill | Accepting the return-tow offer creates a linked TOW with its own bill. |
 
 ### SOS mobile shop
 
@@ -123,7 +128,7 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Continuation attempt 2+ | `1`→… | each accepted attempt adds its own call-out | Prior call-outs stay payable. A visit within 1 km adds 0. An attempt that never gets a shop adds 0. The UI shows the running total and warns that a new call-out will apply. |
 | Network tow handoff accepted | `15` + new TOW | SOS call-out as above + normal TOW fare on the new ticket | The accepting network tower gets the normal TOW fare; there is no mobile-shop referral fee. The mobile shop's call-out remains on the SOS. |
 
-The call-out waiver is inclusive at 1,000 m and requires a fresh location fix. A stale or missing fix is treated as unknown distance: the provider's call-out (default 50,000) applies, travel is 0, and the waiver flag is false.
+The call-out waiver is inclusive at 1,000 m and requires a fresh location fix. A stale or missing fix is treated as unknown distance: the provider's call-out (default 50,000) applies, travel is 0, and the waiver flag is false. When travel is stamped, the ticket keeps the straight-line `mobileTravelKm` and the applied `mobileTravelRate`; the SOS bill renders the travel line as `km × rate` and falls back to the fee alone for older tickets.
 
 Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch and carries its own call-out. There is no chain-level cap and prior call-outs are not refunded when the rider continues; a waived visit contributes 0. An attempt that never gets a shop contributes 0.
 
@@ -138,7 +143,7 @@ Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch an
 | Marked unfixable | `15` | 0 | Pending charges are cancelled and held SePay charges are refunded in full; confirmed charges are handled by an admin. No new charge. The rider may accept a pending return-tow offer; the return TOW bills separately. |
 | Rider cancels | `5` | 0 | Pending charges are cancelled and held/confirmed charges are refunded in full. A recorded quote does not make a cancelled ticket payable. |
 | Ready, no return tow | `7` | quote | The rider may still resolve; the quote remains payable. |
-| Ready, return tow accepted | `7` + new TOW | quote + normal TOW fare | Two items on one journey bill. The return TOW is `towKind: "RETURN"`; an unconfirmed CASH repair charge blocks acceptance. The linked WALK_IN auto-resolves only when its invoice is approved and any CASH charge is confirmed. |
+| Ready, return tow accepted | `7` + new TOW | two bills | The return TOW is `towKind: "RETURN"` and bills separately. An unconfirmed CASH repair charge blocks acceptance. The linked WALK_IN auto-resolves only when its invoice is approved and any CASH charge is confirmed. |
 
 ### Payment-method cases
 
@@ -154,7 +159,7 @@ Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch an
 | SePay quote approval | A `HELD`/`CONFIRMED` charge is required before approval; otherwise the rider is sent to pay. The same gate applies to mobile-fix approval. |
 | Method disabled in config | `400` "Payment method is disabled". |
 | Same method retried while active | Existing charge returned with `reused: true` and `201`. |
-| Different method while active | `409` "Ticket already has an active payment". |
+| Different method while active | A pending CASH charge can switch to SePay and vice versa (the pending charge is cancelled first); switching from a received/held charge is `409`, and other active-method changes are `409` "Ticket already has an active payment". |
 | Ticket not payable yet | `400` "Ticket has no payable amount yet" or a status-specific refusal. |
 | Unfixable SOS | Payable at `15` for the call-out only when the call-out is above 0; a waived visit has no charge. |
 | TOW rider-cancelled with a recorded partial | Payable at `5` for the deadhead partial. |
@@ -236,7 +241,8 @@ referral fee. If the mobile shop has a usable same-vehicle TOW, the offer is
 
 ## Waiting-time billing
 
-Accrues only on tow tickets, while the tower is on site and work has not
+The rate is the assigned tower's `waitingRatePer15Min` when set, otherwise the
+platform `waitingRatePer15Min`. Accrues only on tow tickets, while the tower is on site and work has not
 started: `fee = ceil(billableMs / 60s) × (waitingRatePer15Min ÷ 15)`, where
 `billableMs = min(max(0, elapsed − grace), cap)`. Grace
 (`waitingGraceMinutes`, default 10) and cap (`waitingCapMinutes`, default 60)
@@ -379,7 +385,22 @@ Mark ready, and the server refuses to resolve while it is still pending.
 
 ## Refunds
 
-Refunds are cumulative and capped at the charge's remaining amount.
+Refunds are **requested, then executed manually** — the database never claims
+money moved until an admin confirms the transfer:
+
+1. `POST /refunds/request` (or an automatic close-out) creates a `refunds` row
+   (`REQUESTED`) with the rider's bank snapshot and amount. The payment status
+   is unchanged.
+2. Admin approves (`APPROVED`) and marks the transfer sent (`SENT`,
+   `transferRef`).
+3. `POST /admin/refunds/confirm` applies the refund to the payment (cumulative
+   `refundAmount`, `PARTIAL` → `REFUNDED`), clears the guard on a full refund,
+   reverses the proportional cash-commission ledger share, and closes the
+   request `CONFIRMED`.
+4. A failed bank transfer is marked `FAILED`, freeing the payment for a new
+   request.
+
+Applied refunds are cumulative and capped at the charge's remaining amount.
 `refundAmount` stores the total refunded, and the status becomes `PARTIAL`
 until the total reaches `amount`, then `REFUNDED`. A full refund also clears
 `payment_guards/{ticketId}`. The operator's `refundPolicy` controls the
@@ -402,9 +423,10 @@ the refunded remainder.
 
 ## Unfixable and cancellation refunds
 
-- `UNFIXABLE` on a shop ticket cancels every `PENDING` charge and refunds every
-  `HELD` SePay charge in full. Confirmed cash or SePay charges are handled by
-  an admin out of band. No commission is collected on the cancelled charges.
+- `UNFIXABLE` on a shop ticket cancels every `PENDING` charge and files refund
+  requests for every `HELD`/`CONFIRMED`/`PARTIAL` charge. The request queue owns
+  the bank transfer; money states stay honest until an admin confirms. No
+  commission is collected on confirmed refunds (the ledger share is reversed).
 - `UNFIXABLE` on an SOS keeps the call-out payable (or 0 when waived); travel
   and repair are not charged.
 - A rider cancel cancels pending charges and refunds held/confirmed charges in
@@ -432,7 +454,10 @@ changes the money as follows:
 
 ## Payout batches
 
-Settlement is a batch operation, not a per-charge flag:
+Settlement is a batch operation, not a per-charge flag. The batch doc, every
+payment stamp and every commission-ledger row are written in one Firestore
+transaction (`payoutRepository.applySettlement`), so a failure cannot leave a
+paid batch with unsettled charges:
 
 1. `POST /admin/payouts/pending` groups settleable charges (received status,
    no `payoutAt`, no `payoutBatchId`) by payee, highest net first. Net is the
@@ -445,13 +470,128 @@ Settlement is a batch operation, not a per-charge flag:
    generated `PO…` ref unless supplied) and stamps each charge with
    `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`.
 3. `POST /admin/payouts/batches` lists batches; `POST /payouts/mine` returns
-   the caller's baf`, `payoutAt`, `payoutBy`, and `payoutBatchId`.
-3. `POST /admin/payouts/batches` lists batches; `POST /payouts/mine` returns
-   the caller's batches plus pending and settled totals.
+   the caller's batches plus pending, commission-owed, available, account,
+   and withdrawal-request state.
 
 The legacy `POST /admin/payouts` single-charge stamp remains for
 compatibility. Batches created by the new flow are terminal and are not
 reopened or edited.
+
+## Payout accounts and withdrawal requests
+
+Providers store a payout account before withdrawing: `POST /payouts/account`
+reads it, `PUT /payouts/account` replaces it. `POST /payouts/banks` returns the
+supported Vietnamese bank list (`code`, `name`, `bin`) sourced from
+`functions/constants/banks.ts`. Validation: bank code must exist, the account
+number is 6–19 digits, and the holder name is normalized to uppercase and
+limited to letters, digits, spaces, dots, hyphens and apostrophes. Responses
+expose the full account to its owner and snapshot it onto withdrawal requests;
+public provider search/detail never returns payout or license fields.
+
+`POST /payouts/request` files a withdrawal against
+`pending.net - pending.commissionOwed` (floored at 0) and requires a saved
+account plus no other pending request. The request snapshots the bank details
+so later edits cannot redirect an already-reviewed transfer. Admins list
+requests (`POST /admin/payouts/requests`), then approve or reject
+(`POST /admin/payouts/requests/decide`). Approval runs the normal batch
+settlement for that payee, deducts outstanding cash commission, and stamps the
+request `PAID` with its `payoutBatchId`. Rejection records a decision note.
+
+## Cash commission settlement
+
+CASH charges start `PENDING`; when the payee confirms receipt, the platform's
+commission is written to `commission_ledger` as `OWED`. The provider keeps the
+cash — the platform never asks for roadside commission collection. At the next
+batch settlement the outstanding balance is deducted from the payout
+(`commissionDeducted`, `netPayout = net - commissionDeducted`) and ledger rows
+are marked `SETTLED`. If the balance exceeds the payout it carries forward. Refund confirmations
+reduce the ledger through `reversedAmount`, so clawed-back commission is never
+collected. An off-platform transfer is closed with
+`POST /admin/payouts/commission`
+(`payeeId`), which marks every open row settled.
+
+## Quote expiry
+
+Shop quotes carry `quoteExpiresAt` (15 minutes, `QUOTE_TTL_MS`). The 30-minute
+maintenance sweep (`sweepMaintenance` → `sweepExpiredQuotes`) returns an
+unanswered `"9"` quote to its pre-quote state (`2` walk-in, `3` mechanic),
+clears the quote/invoice fields, cancels pending charges, writes a
+`QUOTE_EXPIRED` chat event and pushes the operator. Expiry can therefore land
+up to one sweep interval after the deadline; admin resolution is not required.
+
+## Bill transparency
+
+Bill items now expose the arithmetic, not just the total:
+
+- `distanceKm` — actual route distance (`towActual.actualKm`, else quoted
+  `loadedKm`); `cappedKm` is only the 15% route cap, never the billed distance.
+- `baseFee`, `perKmFee`, `includedKm`, `billableKm`, `ceiling`, `night`,
+  `nightMultiplier`, `vehicleClass` — the TOW formula, with
+  `billableKm = max(0, distanceKm − includedKm)`. The base fare covers the
+  tower's approach and the first `includedKm` km; extra distance, waiting, the
+  night surcharge, and prior tower travel are separate lines.
+- `pickup` and `destination` — the ticket's pickup coordinates and the
+  resolved drop-off (shop snapshot, free-form point, or destination provider).
+  Only TOW bills render the pickup/drop-off row; the drop-off column shows the
+  address label (provider `label`, point label, or reverse-geocoded
+  coordinates), never the shop name.
+- `breakdown` — `[{code, label, amount, detail}]`: TOW `BASE`, `DISTANCE`,
+  `NIGHT`, `WAITING`, `PRIOR_TOW`, and `CEILING`/`ROUNDING`; SOS `CALLOUT`,
+  `TRAVEL`, `REPAIR`, `PRIOR_VISIT`; shop `VISIT`. Row amounts add up to the
+  item total; `CEILING` is negative when the fare cap limits the fare.
+- payment snapshot `createdAt`/`confirmedAt` — when the charge was opened and
+  when it was confirmed.
+- payee items keep the charge snapshot (`commissionRate`,
+  `commissionAmount`, `payoutAmount`, `payoutStatus`) next to the lines.
+
+## Invoices
+
+An invoice is an internal receipt for a **fully paid** bill, generated on
+demand by `POST /bills/invoice`; it is not a tax-authority e-invoice. One PDF
+is stored per ticket at
+`invoices/{providerId}/{year}/INV-YYYY-000123.pdf`, numbered per provider and
+year. The invoice document carries the provider tax code, rider, service
+lines, total, deposit credit, and paid amount.
+
+The PDF is served by a Firebase Storage download-token URL. A random
+`downloadToken` is written to the invoice document and to the object's
+`firebaseStorageDownloadTokens` metadata; the returned URL embeds that token,
+so it works without IAM signed-URL permissions or public bucket access.
+`expiresAt` is a client refresh hint, not a real URL expiry. When an older
+invoice is read without object metadata, the service re-applies the stored
+token before returning the URL.
+
+## Payment reminders
+
+A ticket that closes payable (`4`, `12`, or `15`) with a positive amount and
+no received charge is scheduled for a reminder after 30 minutes
+(`paymentDueAt`). `sweepPaymentReminders`, in the 5-minute dispatch sweep,
+processes up to 200 due tickets. It re-checks the charge and billable amount,
+sends a `PAYMENT_REMINDER` push (title "Payment due", amount and reminder
+number) through the `paymentUpdates` preference, and advances
+`paymentReminderCount`/`paymentRemindedAt`. The next reminder follows after 6
+hours, then after 24 hours, then stops. A received payment, a zero billable
+amount, or a no-longer-payable ticket clears `paymentDueAt`,
+`paymentReminderCount`, and `paymentRemindedAt`. The push opens the bill.
+
+## Warranty
+
+Warranty is per catalog service: each `SERVICE` line snapshots the catalog
+`warrantyDays` (0–90) and `warrantyParts` (`LABOR_ONLY` /
+`PARTS_AND_LABOR`). Resolving stamps `warrantyUntil` on every service line and
+sets the ticket-level summary to the latest date. The legacy ticket-level
+`warrantyDays` payload remains supported.
+
+Claims are filed per line (`POST /warranty/claims`) within the window. The shop
+accepts (a linked free `WALK_IN` rework ticket, no charge/commission) or
+declines; the rider can dispute, and admins resolve `SHOP`/`RIDER`/`PARTIAL`
+with a line-scoped refund request. `LABOR_ONLY` claims may still charge parts
+on the rework ticket; `PARTS_AND_LABOR` is free.
+
+Shops may also send `warrantyDays` (0–90) with the work-done payload
+(`POST /dispatch/work`). Resolving the ticket stamps `warrantyUntil`
+(`resolvedAt + days`); the bill item exposes it so riders keep the date after
+the job closes. Warranty claims are handled through the normal dispute flow.
 
 ## Commission
 
