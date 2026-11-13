@@ -1,4 +1,3 @@
-
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
@@ -6,13 +5,10 @@ import * as providerRepository from "../../../repository/providerRepository";
 import * as paymentService from "../../paymentService";
 import * as refundService from "../../refundService";
 
-
 import {PROVIDER_KIND} from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
-
 import {ForbiddenError, NotFoundError} from "../../../utils/errors";
-
 
 export const resolveShopOperator = async (
   userId: string,
@@ -26,7 +22,6 @@ export const resolveShopOperator = async (
     throw new ForbiddenError("Only the operator views this shop");
   }
 };
-
 
 type TicketActors = {
   assignedShopId?: unknown;
@@ -78,7 +73,6 @@ export const requireDestinationShopOperator = async (
     );
   }
 };
-
 
 export const tryRefundPayment = async (
   ticketId: string,

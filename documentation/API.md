@@ -35,7 +35,6 @@ Request-body field schemas (per-endpoint validation rules) are documented separa
 - [Routing](#routing)
 - [Providers](#providers)
 - [Places](#places)
-- [Diagnostics](#diagnostics)
 - [Dispatch](#dispatch)
 - [Ratings](#ratings)
 - [Payments](#payments)
@@ -139,7 +138,12 @@ Login bootstrap: the authenticated caller's profile plus their registered vehicl
       "role": "2",
       "onboarded": false,
       "services": ["RIDER"],
-            "capability": "CAR"
+      "trustScore": 95,
+      "standingScore": 95,
+      "bookingBlocked": false,
+      "restrictedUntil": null,
+      "restrictionReason": null,
+      "conductFlag": false
     },
     "vehicles": [
       { "id": "v1", "type": "SCOOTER", "baseWidth": 0.7, "baseHeight": 1.1 }
@@ -218,11 +222,11 @@ Grant or revoke service licenses (`grant`/`revoke` reject duplicated entries). S
 
 ### `PUT /users/role` **(Admin)**
 
-Change a user's role. Cannot change your own role (`400`).
+Change a user's role. Cannot change your own role (`400`). Optional `note` is stored in the admin audit entry.
 
 **Request:**
 ```json
-{ "targetUserId": "abc123", "role": "1" }
+{ "targetUserId": "abc123", "role": "1", "note": "Promoted after review" }
 ```
 
 | Field | Type | Required | Description |
@@ -255,11 +259,11 @@ Set a user's trust score (feeds flag vote weighting).
 
 ### `PUT /users/status` **(Admin)**
 
-Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled`. Cannot change your own status (`400`).
+Activate (`"1"`) / deactivate (`"0"`) a user. Also syncs Firebase Auth `disabled`. Cannot change your own status (`400`). Optional `note` is stored in the admin audit entry.
 
 **Request:**
 ```json
-{ "targetUserId": "abc123", "status": "0" }
+{ "targetUserId": "abc123", "status": "0", "note": "Repeated abuse reports" }
 ```
 
 **Response `200`:**
@@ -302,7 +306,7 @@ Provider capabilities are licensed per user in `users.services` (`RIDER`; single
 
 | License | Grants |
 |---|---|
-| `RIDER` | All base rider mutations (tickets, flags, landmarks, routes, places, push, diagnostics, vehicles, profile). Granted at register/self-heal; backfilled to every active user |
+| `RIDER` | All base rider mutations (tickets, flags, landmarks, routes, places, push, vehicles, profile). Granted at register/self-heal; backfilled to every active user |
 
 Shops and tow operators are not licenses — they are [provider records](#providers). `POST /dispatch/near` is auth-only and returns `[]` unless the caller operates an `ACTIVE` `TOW` or `MOBILE_SHOP` provider; `POST /dispatch/one` is visible to the ticket rider, assignee, provider operator, notified candidates, and admins.
 
@@ -338,7 +342,7 @@ Read the live `providerPricing` bounds from `platform_config/global` so provider
 
 ### `POST /providers/near` **(Auth)**
 
-List `ACTIVE`, non-suspended providers near a point, capped (`limit` 1–20, default 10). Search covers the full radius (exhaustive geocell coverage, not sampled). Each hit carries `distance`, `openNow` (`true`/`false`, or `null` when no hours are set), and `closesInMinutes` (minutes until close when open, else `null`). Results sort open-first (open, then unknown hours, then closed) with nearest-first inside each band. `radiusMeters` is 200–20000 (default 2000); the walk panel uses 500–2000 m. `vehicleClass` (`SOLO_BIKE`/`CAR`) filters hard — shops that declare classes and exclude it are dropped; undeclared shops match every class. `minRating` (0–5) drops shops below the average, `sortBy` (`distance`/`rating`) re-ranks, and `ticketId` marks rows that shop already declined with `declined: true`.
+List `ACTIVE`, non-suspended providers near a point, capped (`limit` 1–20, default 10). Search covers the full radius (exhaustive geocell coverage, not sampled). Each hit carries `distance`, `openNow` (`true`/`false`, or `null` when no hours are set), and `closesInMinutes` (minutes until close when open, else `null`). Results sort open-first (open, then unknown hours, then closed) with nearest-first inside each band. `radiusMeters` is 200–20000 (default 2000); the walk panel uses 500–2000 m. `vehicleClass` (`SOLO_BIKE`/`CAR`) filters hard — shops that declare classes and exclude it are dropped; undeclared shops match every class. `minRating` (0–5) drops shops below the average, `sortBy` (`distance`/`rating`/`price`) re-ranks, and `ticketId` marks rows that shop already declined with `declined: true`. `sortBy=price` estimates the cheapest matching catalog service plus travel beyond a 1 km free walking radius at the platform TOW per-km rate for the rider's vehicle class. It returns `estimatedServicePrice`, `estimatedTravelFee`, `estimatedTotal`, `pricingMode` (`FIXED`/`SERVICE_FEE`/`QUOTE`), `matchedServiceCode`, `matchedServiceName` and `estimatedDistanceKm`; quote-only shops without a service fee rank after priced shops. Top candidates use routed pickup→shop distance with straight-line fallback.
 
 ```json
 { "lat": 10.7626, "lng": 106.6602, "radiusMeters": 2000, "kind": "SHOP", "acceptingOnly": true, "openOnly": true, "vehicleClass": "SOLO_BIKE", "limit": 10 }
@@ -352,7 +356,7 @@ Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercas
 { "lat": 10.7626, "lng": 106.6602, "query": "Thanh Cong", "kind": "SHOP", "vehicleClass": "SOLO_BIKE", "radiusMeters": 10000, "limit": 10, "minRating": 4, "sortBy": "rating" }
 ```
 
-`minRating` (0–5) drops shops below the average; `sortBy` is `distance` (default) or `rating`. Rows carry the provider `services` catalog (`{code, name, displayPrice, quoteRequired, channels, vehicleClasses}`; legacy services without `channels` mean both `BOOKING` and `ASSIST`, while MOBILE_SHOP services are always `ASSIST`; missing `vehicleClasses` inherits the provider classes) plus `towBaseFee`/`towPerKmFee` or `callOutFee`/`travelPerKmFee` when set, and `declined: true` when that shop already declined the ticket, so the picker can mark it (greyed but tappable). Passing `ticketId` scopes the declined marking to that ticket; re-picking a declined shop is refused with `400` for the life of the ticket.
+`minRating` (0–5) drops shops below the average; `sortBy` is `distance` (default), `rating`, or `price` (same estimate fields and matching rules as `/providers/near`). Rows carry the provider `services` catalog (`{code, name, displayPrice, quoteRequired, channels, vehicleClasses}`; legacy services without `channels` mean both `BOOKING` and `ASSIST`, while MOBILE_SHOP services are always `ASSIST`; missing `vehicleClasses` inherits the provider classes) plus `towBaseFee`/`towPerKmFee` or `callOutFee`/`travelPerKmFee` when set, and `declined: true` when that shop already declined the ticket, so the picker can mark it (greyed but tappable). Passing `ticketId` scopes the declined marking to that ticket; re-picking a declined shop is refused with `400` for the life of the ticket.
 
 ### `PUT /providers` **(Auth)**
 
@@ -581,7 +585,7 @@ Update the editable fields of a vehicle profile. The rider must own the profile.
 
 ### `POST /vehicleProfiles/history` **(Auth + `RIDER` license)**
 
-Resolved service history for one vehicle, newest first. Returns only `SERVICE` lines from resolved non-TOW tickets, with provider, service date, amount, `warrantyUntil`, and the rider's claim summary when one exists.
+Resolved service history for one vehicle, newest first. Returns only `SERVICE` lines from resolved non-TOW tickets, with provider, service date, category, quantity, unit price, amount, `warrantyDays`, `warrantyParts`, `warrantyUntil`, and the rider's claim summary when one exists.
 
 **Request:**
 ```json
@@ -983,6 +987,48 @@ Delete expired `active_routes` rows. Also runs every 15 min on a schedule (see C
 
 ---
 
+## Behavior reports and standing
+
+Behavior/complaint reports are separate from money disputes. Targets are providers or riders, optionally tied to a ticket.
+
+Ticket-scoped reports require the caller to be the rider or a provider operator on the ticket and the target to be the counterparty; `PENDING` tickets are not reportable. Reasons are status-gated:
+
+- Provider target: `NO_SHOW` only before arrival or after a non-resolved termination, never on `RESOLVED`; `LATE` through `RESOLVED`; `UNSAFE`, `HARASSMENT`, `OTHER` on any non-pending status.
+- Rider target: `NO_SHOW` before pickup or after a non-resolved termination; `LATE` through `RESOLVED`; `PAYMENT_REFUSED` only on `RESOLVED`; `CONDUCT`, `UNSAFE`, `OTHER` on any non-pending status.
+- `CANCEL_MID` and `DECLINE_DROPOFF` are not report reasons. Mid-tow cancels and destination declines auto-file system disputes instead.
+
+Ticketless reports accept only generic reasons (`FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER` for providers; `CONDUCT`, `UNSAFE`, `OTHER` for riders).
+
+### `POST /reports` **(Auth)**
+
+**Request:** `{ "targetKind": "PROVIDER" | "RIDER", "targetId": "id", "ticketId": "t1", "reason": "NO_SHOW", "note": "…", "photoUrls": [] }`
+
+Creates an open report (one open report per reporter + target + ticket). Provider reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `NO_SHOW`, `LATE`, `OTHER`. Rider reasons: `NO_SHOW`, `LATE`, `CONDUCT`, `PAYMENT_REFUSED`, `UNSAFE`, `OTHER`. Admins are notified by push.
+
+### `POST /reports/mine` **(Auth)**
+
+List the caller's filed reports.
+
+### `POST /admin/reports` **(Admin)**
+
+List reports, optional `targetKind` and `status` filters; returns target/reporter names plus the linked ticket's type, status, amounts, payment status, and `statusHistory` timeline. The `OPEN` filter and duplicate check use the `reports(status ASC, createdAt DESC)` composite index.
+
+### `POST /admin/reports/decide` **(Admin)**
+
+**Request:** `{ "reportId": "r1", "action": "NONE" | "WARN" | "RESTRICT" | "SUSPEND" | "BLOCK", "note": "…" }`
+
+`NONE` dismisses. Provider actions: `WARN`, `RESTRICT`, `SUSPEND`; rider actions: `WARN`, `RESTRICT`, `BLOCK`. A note is required for any non-`NONE` action. Actions adjust `standingScore`, may set a time-bound restriction (rider `bookingBlocked`, provider `accepting:false`), suspend the provider, or block the rider account. Three upheld reports in 90 days flags the target for review. Both parties receive a decision push.
+
+`RESTRICT` lasts 30 days; falling below 50 standing auto-restricts for 7 days. The 15-minute `recoverStanding` sweep clears the rider's `bookingBlocked`/`restrictedUntil` and the provider's restriction, restoring the provider's pre-restriction `accepting` state. Both sides get a “Restriction ended” push.
+
+### `POST /admin/reports/restriction/clear` **(Admin)**
+
+**Request:** `{ "targetKind": "PROVIDER" | "RIDER", "targetId": "id" }` — clears an active restriction without changing the standing score.
+
+### `POST /admin/users/standing` · `POST /admin/users/standing/reset` **(Admin)**
+
+Read the standing score, restriction state, conduct flag and recent `standing_events`; reset returns the score to 100 and clears the conduct flag.
+
 ## Push
 
 Hazard push notifications (FCM, direct-to-token — no topics). Clients register device tokens; every `POST /routes` 200 records the live route geometry for 30 min (`active_routes`); fresh reports (`"1"`) and transitions that newly block (consensus flip to `"2"`, admin moderate to `"2"`/`"3"`, blocking types only) enqueue one Cloud Tasks job per status that fans out to riders whose active route still crosses the flag, excluding the reporter. All push paths are env-gated (`FCM_ENABLED`, `CLOUD_TASKS_ENABLED`) and idle when the gates are off. Full pipeline in [`PIPELINE.md`](./PIPELINE.md).
@@ -1010,6 +1056,13 @@ Hazard push notifications (FCM, direct-to-token — no topics). Clients register
 **Request:** `{}`
 
 **Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "tokens": 2, "sent": 1, "failed": 0, "firstError": null } }` — sends a test notification to the caller's own tokens only, prunes dead tokens with the same codes as dispatch delivery, and never touches another user's tokens. `firstError` is `"FCM_DISABLED"` with FCM off and `"NO_TOKENS"` when the caller has no registered tokens.
+
+### `POST /admin/push/register` · `POST /admin/push/unregister` **(Auth, admin)**
+
+Admin-only browser push registration for the management FE. These endpoints require role `1` and store tokens in the `push_tokens` collection, separate from the mobile `fcm_tokens` device store, so rider/provider device notifications and admin browser notifications never mix. Records from the former `admin_push_tokens` collection are migrated lazily on first read. Admin pushes are sent for new disputes, warranty claims/disputes, refund requests, payout requests, provider reports, support messages, and similar queue events.
+
+**Register request:** `{ "token": "fcm-web-token" }`
+**Unregister request:** `{ "token": "fcm-web-token" }`
 
 Payment and payout pushes use Android channel `payments`, carry `screen: "payments"`, `event` (`PAYMENT_OPENED`, `PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED`, `PAYMENT_REFUNDED`, `PAYOUT_SETTLED`), `paymentId`, `ticketId`, and optional `payoutId`, and respect the caller's notification preferences below.
 
@@ -1090,44 +1143,6 @@ Delete one of the current user's saved places (`403` when it belongs to someone 
 
 ---
 
-## Diagnostics
-
-XeAssist stub endpoints.
-
-### `POST /diagnostics` **(Auth + `RIDER` license)**
-
-Record a photo diagnostic.
-
-**Request:**
-```json
-{ "category": "FLAT_TIRE", "imagePath": "diagnostics/abc123/img1.jpg" }
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `category` | string | yes | One of `FLAT_TIRE`, `FLUID_LEAK`, `CHAIN_SLACK`, `SPARK_CAP` |
-| `imagePath` | string | yes | Storage path of the photo |
-
-**Response `201`:**
-```json
-{ "statusCode": 201, "status": "SUCCESS", "message": "Diagnostic created", "data": { "id": "diag1", "...": "..." } }
-```
-
----
-
-### `POST /diagnostics/one` **(Auth)**
-
-Get a diagnostic by ID.
-
-**Request:**
-```json
-{ "diagnosticId": "diag1" }
-```
-
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "id": "diag1", "...": "..." } }`
-
----
-
 ## Dispatch
 
 Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"` In progress → `"7"` Ready → `"4"` Resolved, with `"5"` Cancelled (rider) and `"8"` Declined (shop, walk-in only) as side exits. Status moves are validated per actor, not just per role: `MATCHED` is set only by `POST /dispatch/accept` (never by the status endpoint), TOW arrival and resolution belong to the assigned tower while SOS and shop-ticket resolution stay with the rider, work states belong to the helper, and terminal tickets (`4`/`5`/`8`) accept no further moves. Nobody is auto-assigned: providers accept at will, and the rider picks from the offer list.
@@ -1139,18 +1154,17 @@ Tickets move through `"1"` Pending → `"2"` Matched → `"3"` Arrived → `"6"`
 
 ### `POST /dispatch` **(Auth + `RIDER` license)**
 
-Open a dispatch ticket, optionally linked to a diagnostic and the rider vehicle. `SOS`, `TOW`, and `MECHANIC` **require** a `vehicleId` owned by the caller (`400 "Select a vehicle before filing this request"` otherwise). `WALK_IN` is exempt because it is a shop check-in, not a dispatch request; system-spawned walk-ins may omit the vehicle. `TOW` tickets **require** a destination — a registered `destinationShopId` or a free-form `destinationPoint {lat,lng,label}` (`400 "Tow tickets need a destination"` otherwise); `MECHANIC` and manually filed `WALK_IN` tickets are bike-only (`400` for car-class vehicles); the internal walk-in spawned when a TOW resolves at a shop may be car-class. `WALK_IN` records an arrival at a chosen shop (`providerId`) instead of requesting dispatch; the shop is pushed and accepts or declines. Filing to a shop that switched duty off is rejected as unavailable, and duty-off shops receive no shop-audience pushes — the duty switch is enforced inbound, not just on accept. Opening hours are advisory; the shop's `accepting` switch is the operational gate for walk-ins and tow drop-offs. The creation response flags `providerSnapshot.closed` when the shop's own hours say closed (advisory only — creation is never blocked), and walk-ins carry `expiresAt` (45 min); unanswered walk-ins are cancelled by the half-hourly sweep.
+Open a dispatch ticket for the rider vehicle. `SOS`, `TOW`, and `MECHANIC` **require** a `vehicleId` owned by the caller (`400 "Select a vehicle before filing this request"` otherwise). `WALK_IN` is exempt because it is a shop check-in, not a dispatch request; system-spawned walk-ins may omit the vehicle. `TOW` tickets **require** a destination — a registered `destinationShopId` or a free-form `destinationPoint {lat,lng,label}` (`400 "Tow tickets need a destination"` otherwise); `MECHANIC` and manually filed `WALK_IN` tickets are bike-only (`400` for car-class vehicles); the internal walk-in spawned when a TOW resolves at a shop may be car-class. `WALK_IN` records an arrival at a chosen shop (`providerId`) instead of requesting dispatch; the shop is pushed and accepts or declines. Filing to a shop that switched duty off is rejected as unavailable, and duty-off shops receive no shop-audience pushes — the duty switch is enforced inbound, not just on accept. Opening hours are advisory; the shop's `accepting` switch is the operational gate for walk-ins and tow drop-offs. The creation response flags `providerSnapshot.closed` when the shop's own hours say closed (advisory only — creation is never blocked), and walk-ins carry `expiresAt` (45 min); unanswered walk-ins are cancelled by the half-hourly sweep.
 
 **Request:**
 ```json
-{ "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "diagnosticId": "diag1", "note": "Tow request", "vehicleId": "veh1", "destinationShopId": "shop9", "destinationPoint": {"lat": 10.71, "lng": 106.61, "label": "Home"}, "vehicleType": "CAR", "vehicleWidth": 1.9 }
+{ "ticketType": "TOW", "lat": 10.7626, "lng": 106.6602, "note": "Tow request", "vehicleId": "veh1", "destinationShopId": "shop9", "destinationPoint": {"lat": 10.71, "lng": 106.61, "label": "Home"}, "vehicleType": "CAR", "vehicleWidth": 1.9 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `ticketType` | string | yes | One of `MECHANIC`, `TOW`, `SOS`, `WALK_IN` |
 | `vehicleId` | string | SOS/TOW/MECHANIC | Vehicle profile owned by the caller; omitted only for `WALK_IN` |
-| `diagnosticId` | string | no | May be `""`/`null` |
 | `note` | string | no | Free text, max 280 chars |
 | `providerId` | string | no | Required for `WALK_IN`: the shop the rider arrived at (must be `ACTIVE`, non-suspended, and serve the rider's vehicle class) |
 | `destinationShopId` | string | no | Repair shop the tow should drop the vehicle at (wins over `destinationPoint`; blocked when the shop does not service the towed class) |
@@ -1205,12 +1219,12 @@ line. The provider is pushed.
 
 ### `POST /warranty/mine` **(Auth)**
 
-The caller's warranty claims, newest first. **Request:** `{ "limit": 50 }`
+The caller's warranty claims, newest first. Each claim includes the stored claim fields plus the provider snapshot and name, the original ticket type/status/service date, and the matched service line terms (`qty`, `unitPrice`, `warrantyDays`, `warrantyParts`, category) when available. **Request:** `{ "limit": 50 }`
 
 ### `POST /warranty/shop` **(Auth, provider)**
 
 Warranty claims for the providers the caller operates, newest first.
-Optional `providerId` narrows to one shop; `limit` 1–200.
+Optional `providerId` narrows to one shop; `limit` 1–200. Claims carry the same enriched provider and warranty-term fields as `/warranty/mine`.
 
 **Request:** `{ "providerId": "shop1", "limit": 50 }`
 
@@ -1219,16 +1233,22 @@ Optional `providerId` narrows to one shop; `limit` 1–200.
 Accept or decline an open claim. Accept creates a linked free `WALK_IN` rework
 ticket at the same shop (`warrantyClaimId`, `warrantyOfTicketId`) and returns
 the claim as `REBOOKED`. The rework ticket cannot be quoted, invoiced, or paid:
-all work lines are forced to zero and no bill is produced. Decline records the
-response and pushes the rider.
+all work lines are forced to zero and no bill is produced. A decline requires
+a structured `reasonCode` and a 5–280 character `note`, stores them separately
+from later dispute text, and pushes the rider. Reason codes are `NOT_COVERED`,
+`WEAR_AND_TEAR`, `EXPIRED`, `WRONG_SERVICE`, `MISUSE`, and `OTHER`.
 
-**Request:** `{ "claimId": "wc1", "accept": true, "note": "Bring it in" }`
+**Accept:** `{ "claimId": "wc1", "accept": true, "note": "Bring it in" }`
+
+**Decline:** `{ "claimId": "wc1", "accept": false, "reasonCode": "WEAR_AND_TEAR", "note": "Pad wear is not covered" }`
 
 ### `POST /warranty/dispute` **(Auth, rider)**
 
-Escalate a declined claim to admin review (`DISPUTED`).
+Escalate a declined claim to admin review (`DISPUTED`). A 5–280 character
+`note` is required. The rider note is stored as `disputeNote` without
+overwriting the provider's original `shopResponse`.
 
-**Request:** `{ "claimId": "wc1", "note": "Shop refused" }`
+**Request:** `{ "claimId": "wc1", "note": "The same failure came back" }`
 
 ### `POST /dispatch/hold` **(Auth, rider or provider)**
 
@@ -1857,7 +1877,7 @@ Body `{providerId}`. Lists bookings for a shop owned by the caller.
 
 ## Ratings
 
-Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update), each with an optional ≤280-char comment. Targets are `SHOP` or `RIDER` — towers are rated under `SHOP` by design (same provider collection and target-id keying, so the kind is moot; splitting kinds would strand historic ratings across two aggregates). Averages denormalize to `ratingAvg`/`ratingCount` on users/providers and onto the ticket (`helperRating`/`riderRating`). Provider reads additionally report `completedJobs` (resolved tickets fulfilled by the shop).
+Bidirectional 1–5 ratings per ticket (one per rater/target/ticket; resubmits update), each with an optional ≤280-char comment. Targets are `SHOP` or `RIDER` — towers are rated under `SHOP` by design (same provider collection and target-id keying, so the kind is moot; splitting kinds would strand historic ratings across two aggregates). The displayed average and count use the **latest 100 non-excluded ratings** per target; older ratings remain in history and roll out as new ones arrive. Ratings excluded by an appeal or a dispute outcome never count. Averages denormalize to `ratingAvg`/`ratingCount` on users/providers and onto the ticket (`helperRating`/`riderRating`). Provider reads additionally report `completedJobs` (resolved tickets fulfilled by the shop) and `window` (100).
 
 ### `POST /ratings` **(Auth)**
 
@@ -1893,14 +1913,56 @@ Reply to a rating. Only the rated party: the shop's operator for `SHOP` targets,
 
 ### `POST /ratings/by-ticket` **(Auth)**
 
-Ratings filed on one ticket (either direction), so the reply box can bind to the real rating id. Visible to the ticket rider, the assigned/named provider's operator, and admins (`403` otherwise).
+Ratings filed on one ticket (either direction), so the reply box can bind to the real rating id. Visible to the ticket rider, the assigned/named provider's operator, and admins (`403` otherwise). Each row includes `excluded` and the latest `appealStatus`.
 
 **Request:**
 ```json
 { "ticketId": "tick1" }
 ```
 
-**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "rate1", "targetId": "shop9", "targetKind": "SHOP", "score": 5, "reply": null, "repliedAt": null }] }`
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": [{ "id": "rate1", "targetId": "shop9", "targetKind": "SHOP", "score": 5, "reply": null, "repliedAt": null, "excluded": false, "appealStatus": null }] }`
+
+---
+
+### `POST /ratings/received` **(Auth)**
+
+Ratings received by the caller as a rider and for every provider they operate. Each rating includes the author, score, comment, ticket, `excluded`, `appealStatus`, `appealResolution`, and `canAppeal` (30-day window, no open appeal, fewer than 2 lifetime appeals).
+
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "rider": { "id": "rider1", "name": "Rider", "avg": 4.8, "count": 12, "window": 100, "ratings": [] }, "providers": [{ "id": "shop1", "name": "Shop", "avg": 4.9, "count": 40, "window": 100, "ratings": [] }] } }`
+
+### `POST /appeals` **(Auth)**
+
+File an appeal for one of three subjects. `note` is required; up to 5 photos. One open appeal per subject per filer; lifetime limits apply.
+
+**Request:** `{ "subjectKind": "RATING" | "REPORT" | "DISPUTE", "subjectId": "…", "reason": "…", "note": "…", "photoUrls": [] }`
+
+| Subject | Who can appeal | Window | Reasons | Resolution |
+|---|---|---|---|---|
+| `RATING` | rated party | 30 days | `RETALIATORY`, `NOT_THE_SERVICE`, `WRONG_TICKET`, `ABUSIVE_CONTENT`, `SPAM`, `OTHER` | `REMOVE` / `KEEP` |
+| `REPORT` | sanctioned target of a resolved report with an action | 14 days | `FALSE_REPORT`, `NOT_MY_CONDUCT`, `CONTEXT_MISSING`, `NEW_EVIDENCE`, `PROCEDURAL_ERROR`, `OTHER` | `UPHOLD` / `OVERTURN` |
+| `DISPUTE` | either party to a resolved/dismissed money dispute | 7 days | `NEW_EVIDENCE`, `WRONG_OUTCOME`, `AMOUNT_ERROR`, `PROCEDURAL_ERROR`, `OTHER` | `UPHOLD` / `OVERTURN` / `ADJUST` |
+
+An appeal snapshots the original rating/report/dispute at filing time so later changes cannot rewrite the record.
+
+### `POST /appeals/eligible` **(Auth)**
+
+Empty body. Returns `{ ratings, reports, disputes }` for the caller, with `canAppeal`, `appealStatus`, and the subject snapshot. Report snapshots include the admin `actionNote`; dispute snapshots include the `adjustedAmount`.
+
+### `POST /admin/appeals` **(Admin)**
+
+List appeals, optional `subjectKind` and `status` filters. Each row carries the appellant name and the immutable subject snapshot.
+
+### `POST /admin/appeals/decide` **(Admin)**
+
+**Request:** `{ "appealId": "ap1", "resolution": "UPHOLD" | "OVERTURN" | "ADJUST" | "REMOVE" | "KEEP", "note": "…", "adjustedAmount": 120000 }`
+
+- `RATING`: `REMOVE` excludes the rating and recomputes the last-100 average; `KEEP` leaves it.
+- `REPORT`: `OVERTURN` reverses the report's standing delta, clears a restriction caused by that report, and restores a suspended provider/blocked rider.
+- `DISPUTE`: `OVERTURN` applies the opposite outcome; `ADJUST` applies a new partial amount. A new adjustment/refund is recorded instead of rewriting the original settlement.
+
+### Rating auto-exclusion
+
+When a `SERVICE_QUALITY` dispute resolves `SHOP` (provider wins), the rider's low rating (≤3) of that provider on the same ticket is excluded automatically. When a `RIDER_CONDUCT` dispute resolves `RIDER`, the provider's low rating (≤3) of that rider is excluded. Exclusions are audited with `exclusionSource: "DISPUTE"` and `exclusionRef`; they are not reversible from the rating itself.
 
 ---
 
@@ -2036,7 +2098,7 @@ File a withdrawal request against the caller's available balance (`pending.net -
 
 ### `POST /bills/all` **(Auth)**
 
-The caller's rider bills, newest first (default 20, max 50). **One ticket is one bill**: `billId = ticketId`, and linked TOW/repair/return-TOW tickets appear as separate rows. Each row returns `billId`, `ticketId`, `ticketType`, `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), `viewer` (`RIDER`), `canPay`, and a single-item `items` array. An item carries `kind` (`TOW_FARE`/`REPAIR`), `serviceType` (`TOW`/`REPAIR`/`SOS`), `ticketId`, `amount`, `waitingFee`, `distanceKm`, `baseFee`, `perKmFee`, `includedKm`, `billableKm`, `ceiling`, `night`, `nightMultiplier`, `vehicleClass`, `pickup` (`{lat,lng}`), `destination` (`{lat,lng,shopId?,name?,label?}`), `warrantyUntil`, `breakdown`, service/extra/invoice lines, `rider`, `provider`, `vehicleLabel`, `vehiclePlate`, `ratingTargetId`, item `status`, payee, and the latest payment snapshot when present (`method`, `status`, `commissionRate`, `commissionAmount`, `payoutAmount`, `payoutRef`, `payoutAt`, `payoutStatus`, `canConfirmCash`, `createdAt`, `confirmedAt`). For TOW items the fare is `baseFee + max(0, distanceKm − includedKm) × perKmFee`, multiplied by `nightMultiplier` when `night` is true, capped at `ceiling`; `billableKm` is the charged distance and `distanceKm` is the actual route distance, not the 15% route cap. Each `breakdown` row carries `{code, label, amount, detail}`; TOW codes are `BASE`, `DISTANCE`, `NIGHT`, `WAITING`, `PRIOR_TOW`, `CEILING`/`ROUNDING`; SOS uses `CALLOUT`, `TRAVEL`, `REPAIR`, `PRIOR_VISIT`. Row amounts are additive to `amount`, with a negative `CEILING` row when the cap limits the fare. `due` counts the unpaid or pending item; settled, refunded, and void items are excluded. Warranty rework tickets are free and return an empty `VOID` bill.
+The caller's rider bills, newest first (default 20, max 50). **One ticket is one bill**: `billId = ticketId`, and linked TOW/repair/return-TOW tickets appear as separate rows. Each row returns `billId`, `ticketId`, `ticketType`, `total`, `paid`, `due`, `status` (`UNPAID`/`PARTIAL`/`PAID`/`VOID`), `viewer` (`RIDER`), `canPay`, and a single-item `items` array. An item carries `kind` (`TOW_FARE`/`REPAIR`), `serviceType` (`TOW`/`REPAIR`/`SOS`), `ticketId`, `amount`, `waitingFee`, `distanceKm`, `baseFee`, `perKmFee`, `includedKm`, `billableKm`, `ceiling`, `night`, `nightMultiplier`, `vehicleClass`, `pickup` (`{lat,lng}`), `destination` (`{lat,lng,shopId?,name?,label?}`), `warrantyUntil`, `breakdown`, service/extra/invoice lines, `rider`, `provider`, `vehicleLabel`, `vehiclePlate`, `ratingTargetId`, item `status`, payee, and the latest payment snapshot when present (`method`, `status`, `commissionRate`, `commissionAmount`, `payoutAmount`, `payoutRef`, `payoutAt`, `payoutStatus`, `canConfirmCash`, `disputeId`, `disputedAt`, `disputeHold`, `disputeResolvedAt`, `createdAt`, `confirmedAt`). Each item also returns a `dispute` summary when one exists (`id`, `status`, `type`, `reasonCode`, `outcome`, `resolution`, `createdAt`, `resolvedAt`) and a `disputes` history array for the ticket. `canPay` is false for riders while the ticket's `disputeHold` is active. For TOW items the fare is `baseFee + max(0, distanceKm − includedKm) × perKmFee`, multiplied by `nightMultiplier` when `night` is true, capped at `ceiling`; `billableKm` is the charged distance and `distanceKm` is the actual route distance, not the 15% route cap. Each `breakdown` row carries `{code, label, amount, detail}`; TOW codes are `BASE`, `DISTANCE`, `NIGHT`, `WAITING`, `PRIOR_TOW`, `CEILING`/`ROUNDING`; SOS uses `CALLOUT`, `TRAVEL`, `REPAIR`, `PRIOR_VISIT`. Row amounts are additive to `amount`, with a negative `CEILING` row when the cap limits the fare. `due` counts the unpaid or pending item; settled, refunded, and void items are excluded. Warranty rework tickets are free and return an empty `VOID` bill.
 
 **Request:**
 ```json
@@ -2079,11 +2141,11 @@ One bill by `billId` or `ticketId` (they are the same value). Visible to the tic
 
 ## Disputes
 
-Disputes carry `accusedKind` (`TOWER`/`SHOP`/`RIDER`) and a `reasonCode` validated against the codes in `functions/constants/disputes.ts`. Auto-filed on mid-tow tower cancels (`TOWER_CANCEL_MID`) and destination declines (`SHOP_DECLINE_DROPOFF`); everything else is manual. A manual rider service/fare dispute at SOS `ARRIVED`/`READY` or WALK_IN/MECHANIC `READY` puts the ticket on `disputeHold`, blocking resolve/payment/provider actions until an admin resolves it. Mobile clients may send the simplified `reason` alias (`LATE`, `NO_SHOW`, `OVERCHARGE`, `WRONG_ROUTE`, `UNSAFE`, `RUDE`, `FIX_NOT_DONE`, `POOR_QUALITY`, `UNFIXABLE_DISAGREE`, `RIDER_NO_SHOW`, `RIDER_UNREACHABLE`, `RIDER_REFUSED_PAYMENT`, `RIDER_ABUSIVE`, `OTHER`) instead of `accusedKind`/`type`/`reasonCode`; the server maps it by ticket type and filer. Full model in [`DISPUTES.md`](./DISPUTES.md).
+Disputes carry `accusedKind` (`TOWER`/`SHOP`/`RIDER`) and a `reasonCode` validated against the codes in `functions/constants/disputes.ts`. Mid-tow tower cancellations (`TOWER_CANCEL_MID`) and destination declines (`SHOP_DECLINE_DROPOFF`) auto-file system disputes; breakdown cancellations are excluded. The rider is stored as `filedBy` (beneficiary) but `filedByRole: "SYSTEM"` marks the creator, while manual filings use `filedByRole` `RIDER`/`PROVIDER`/`ADMIN`. Structured cancel/decline reasons are preserved (`TOWER_CANCEL_UNREACHABLE`, `SHOP_FULL`, `SHOP_PART_DELAY`, …). A manual rider service/fare dispute at SOS `ARRIVED`/`READY` or WALK_IN/MECHANIC `READY` puts the ticket on `disputeHold`, blocking resolve/payment/provider actions until an admin resolves it. Mobile clients may send a money-only `reason` alias (`OVERCHARGE`, `FIX_NOT_DONE`, `POOR_QUALITY`, `UNFIXABLE_DISAGREE`, `RIDER_REFUSED_PAYMENT`, `OTHER`) instead of `accusedKind`/`type`/`reasonCode`; behavior aliases are rejected with `400 Behavior issues are handled as reports`. Full model in [`DISPUTES.md`](./DISPUTES.md).
 
 ### `POST /disputes` **(Auth, participant)**
 
-File a dispute on own ticket. The caller must be the rider, the ticket's operator/assignee, or an admin (`403` otherwise).
+File a money dispute on own ticket. The caller must be the rider, the ticket's operator/assignee, or an admin (`403` otherwise). Disputes are money-only: `FARE_DISPUTE`, `SERVICE_QUALITY`, `UNFIXABLE_DISAGREEMENT`, `RIDER_PAYMENT`. Conduct issues (no-show, late, cancel, safety, rider conduct) are rejected with `400 Behavior issues are handled as reports` and filed through `/reports` instead. Rider `FARE_DISPUTE` filings require a received payment on the ticket (`HELD`/`CONFIRMED`/`PARTIAL`/`DISPUTED`), otherwise `400 Pay the fare before disputing it`. Filing marks received payments with `disputeId`/`disputedAt`/`disputeHold` (payment status is unchanged); resolving or dismissing clears the hold flag and stamps `disputeResolvedAt`. Anti-abuse guards (system/admin filings exempt): only one open dispute per ticket, at most 3 disputes per ticket lifetime, a 24-hour cooldown after a resolved/dismissed dispute on the same ticket, at most 2 open disputes per filer, and at least one evidence photo for `FARE_DISPUTE`/`SERVICE_QUALITY`. Each filing increments the filer's `disputeCount` and stamps `lastDisputeAt`.
 
 **Request:**
 ```json
@@ -2106,12 +2168,18 @@ One dispute by id, visible to the filer, the accused party, and admins.
 
 ### `POST /disputes/all` **(Admin)**
 
-Dispute queue, newest first, with optional `status` / `limit`.
+Dispute queue, newest first, with optional `status` / `limit`. Each row includes a `context` object joining the linked ticket (type, status, symptom, quote/final/waiting amounts, payment status, photos), rider profile (name, email, rating, trust), provider profile (name, kind, status, rating, suspension, operator uid), a `payments` summary (amount, method, status, refund amount, dispute hold), a `history` array of every dispute on the same ticket (id, status, type, reasonCode, outcome, createdAt, resolvedAt), and the `filer` role (`RIDER`, `PROVIDER`, `ADMIN`) so an admin can review both sides and the money state without leaving the queue.
 
 **Request:**
 ```json
 { "status": "OPEN", "limit": 50 }
 ```
+
+### `POST /disputes/dismiss` **(Admin)**
+
+Close a dispute without a ruling. The optional `resolution` note is stored for the audit trail; the ticket's dispute hold is released and any open-dispute marker is cleared. No charges or refunds change.
+
+**Request:** `{ "disputeId": "dsp1", "resolution": "Withdrawn by rider" }`
 
 ### `POST /disputes/resolve` **(Admin)**
 
@@ -2211,12 +2279,22 @@ Mark every outstanding cash-commission entry for a payee as settled after an off
 
 ### `POST /admin/dashboard` **(Admin)**
 
-Aggregate marketplace snapshot over `days` (default 30): `users` (total/active/admins), `providers` (total/suspended, `byKind` with status counts, rating average/count), `tickets` (total/active/matched/matchRate/avgAcceptMinutes, `byType`, `byStatus`), `money` (gross/commission/refunded/net, payouts net and deducted commission, `commissionOwed`, `payeesOwingCommission`, `byMethod`, `byStatus`), and `flags` (total/recent7d/`byStatus`).
+Aggregate marketplace snapshot over `days` (default 30): `users` (total/active/admins), `providers` (total/suspended, `byKind` with status counts, rating average/count), `tickets` (total/active/matched/matchRate/avgAcceptMinutes, `byType`, `byStatus`), `money` (gross/commission/refunded/net, payouts net and deducted commission, `commissionOwed`, `payeesOwingCommission`, `byMethod`, `byStatus`), and `flags` (total/recent7d/`byStatus`). `series` adds daily revenue/SLA/ticket/user/provider/case buckets, payment/ticket/case/flag breakdowns, and `topProviders`.
 
 **Request:**
 ```json
 { "days": 30 }
 ```
+
+### `POST /admin/tickets` **(Admin)**
+
+List recent dispatch tickets with rider/provider names, ticket/payment status, amount, and `statusHistory`. Optional `status` and `limit` (1–500, default 200).
+
+### `POST /admin/search` **(Admin)**
+
+**Request:** `{ "query": "email, name, plate, ticket, payment or user id" }`
+
+Returns grouped matches for users, providers, tickets, and payments. Used by the admin global search. Tickets and payments link to the bill; entity details are shown inline.
 
 ### `POST /admin/providers/stats` **(Admin)**
 
@@ -2303,11 +2381,20 @@ outstanding commission.
 
 ### `POST /admin/audit` **(Admin)**
 
-Admin audit trail, newest first (default 100, max 200). Rows carry `adminUid`,
-`action` (`PAYOUT_SETTLED`, `REFUND_APPROVED`/`REJECTED`/`CONFIRMED`/`FAILED`,
-`CONFIG_UPDATED`), `targetType`, `targetId`, `meta`, and `createdAt`.
+Admin audit trail, newest first (default 100, max 200). Rows carry
+`adminUid`, `actorName`, `actorEmail`, `action`, `category`, `targetType`,
+`targetId`, `targetLabel`, `before`, `after`, `note`, `requestId`, `meta`,
+and `createdAt`. `before`/`after` capture changed fields; `note` carries the
+admin reason when supplied.
 
-**Request:** `{ "limit": 100 }`
+Actions cover case decisions, provider review/suspension/restoration,
+refunds, payouts and commission, config, user role/status/trust, standing
+reset/restriction clearing, warranty, support, and flag moderation.
+
+**Request:** `{ "limit": 100, "before": "2026-11-01T00:00:00.000Z", "from": "2026-10-01T00:00:00.000Z", "to": "2026-10-31T23:59:59.999Z" }`
+
+`before` is the `createdAt` cursor for the next page; `from`/`to` are
+inclusive ISO bounds.
 
 ### `POST /admin/payments/audit` **(Admin, BE-only)**
 
@@ -2366,7 +2453,7 @@ Validation failures include an `errors` array:
 | `400` | Validation error / business-rule violation (e.g. self role change, invalid dispatch status, unflag of a locked flag) |
 | `401` | Missing or invalid ID token |
 | `403` | Inactive user / insufficient permissions (e.g. unflag by a non-reporter) |
-| `404` | Resource not found (user, segment, flag, landmark match n/a, diagnostic, ticket, route) |
+| `404` | Resource not found (user, segment, flag, landmark match n/a, ticket, route) |
 | `409` | Route blocked by active road hazards (`POST /routes`; blocking zones in `errors`), endpoint inside a hazard zone (`POST /routes`; `errors.control` + `errors.zone`), flag covering an own saved destination/place (`POST /flags`), or impassable for the vehicle width (`POST /routes` with `width`; narrow segments in `errors`) |
 | `500` | Internal server error (e.g. Auth create failure, Valhalla outage) |
 
@@ -2382,7 +2469,7 @@ The rider accepta destination when accepting.
 
 ### `POST /dispatch/mobile-shop/tow-offer/respond` **(Auth, rider)**
 
-The rider accepts or declines a mobile-shop tow offer. Accepting a `DIRECT` offer creates a linked TOW ticket addressed to the same-vehicle TOW and accepts it directly. Accepting a `NETWORK` offer creates a linked pending TOW with `sourceTicketId`, no `providerId`, and `addressedTow: false`, then broadcasts it to nearby towers without auto-accepting one. Both copy the rider's note/photos/diagnostic and capture `destinationShopId` or `destinationPoint` when no shop was offered. Declining or expiry marks the offer declined/expired and creates a linked continuation SOS (attempt 1 automatic; attempt 3+ requires `POST /dispatch/sos/continue`).
+The rider accepts or declines a mobile-shop tow offer. Accepting a `DIRECT` offer creates a linked TOW ticket addressed to the same-vehicle TOW and accepts it directly. Accepting a `NETWORK` offer creates a linked pending TOW with `sourceTicketId`, no `providerId`, and `addressedTow: false`, then broadcasts it to nearby towers without auto-accepting one. Both copy the rider's note and photos and capture `destinationShopId` or `destinationPoint` when no shop was offered. Declining or expiry marks the offer declined/expired and creates a linked continuation SOS (attempt 1 automatic; attempt 3+ requires `POST /dispatch/sos/continue`).
 
 ### `POST /dispatch/sos/continue` **(Auth, rider / assigned mobile shop / admin)**
 
@@ -2399,6 +2486,13 @@ Open or create the chat room for a `TICKET` or `HAZARD` reference. Ticket rooms 
 ### `POST /chat/messages` **(Auth)**
 
 List the latest messages in an authorized chat room. Terminal ticket rooms return history read-only. Archived rooms require the room's `version` and remain readable to their participants.
+
+### `POST /admin/chat/messages` **(Auth, admin)**
+
+Read-only TICKET room transcript for dispute and support review. Admins are not participants, so this endpoint skips the participant check that `/chat/messages` applies.
+
+**Request:** `{ "ticketId": "t1" }`
+**Response `200`:** `{ "statusCode": 200, "status": "SUCCESS", "data": { "messages": [ ... ] } }`
 
 ### `POST /chat/send` **(Auth)**
 

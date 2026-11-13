@@ -6,7 +6,7 @@ import {
   payeesReport,
   revenueCsv,
   revenueReport,
-} from "../../../service/reportService";
+} from "../../../service/financeReportService";
 import {ValidationError} from "../../../utils/errors";
 
 jest.mock("../../../repository/paymentRepository");

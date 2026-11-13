@@ -18,7 +18,6 @@ import {
   VEHICLE_CLASS,
 } from "../../constants/status";
 
-
 export const providersSchemas = {
   createProvider: Joi.object({
     kind: Joi.string().valid("SHOP", "TOW", "MOBILE_SHOP").required(),
@@ -166,7 +165,7 @@ export const providersSchemas = {
       .optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
     minRating: Joi.number().min(0).max(5).optional(),
-    sortBy: Joi.string().valid("distance", "rating").optional(),
+    sortBy: Joi.string().valid("distance", "rating", "price").optional(),
     ticketId: strOpt(),
   }),
   searchProviders: locationBody().append({
@@ -183,7 +182,7 @@ export const providersSchemas = {
       .optional(),
     limit: Joi.number().integer().min(1).max(20).optional(),
     minRating: Joi.number().min(0).max(5).optional(),
-    sortBy: Joi.string().valid("distance", "rating").optional(),
+    sortBy: Joi.string().valid("distance", "rating", "price").optional(),
     ticketId: strOpt(),
   }),
   myProviders: emptyBody(),

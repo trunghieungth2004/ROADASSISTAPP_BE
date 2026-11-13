@@ -2,16 +2,12 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentRepository from "../../../repository/paymentRepository";
 import * as bookingRepository from "../../../repository/bookingRepository";
 
-
 import {NS} from "../constants";
-
 
 import {STATUS_DISPATCH} from "../../../constants/status";
 import {PAYMENT_METHOD, PAYMENT_STATUS} from "../../../constants/payments";
 
-
 import {createDispatch} from "../tickets";
-
 
 import {
   ForbiddenError,
@@ -19,7 +15,6 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const respondReturnTow = async ({
   userId,

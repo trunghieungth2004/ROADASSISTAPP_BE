@@ -185,8 +185,14 @@ const vehicleHistory = async ({
         serviceCode: typeof row.serviceCode === "string" ?
           row.serviceCode : "",
         name: typeof row.name === "string" ? row.name : "",
+        category: typeof row.category === "string" ? row.category : null,
         qty: typeof row.qty === "number" ? row.qty : 1,
+        unitPrice: typeof row.unitPrice === "number" ? row.unitPrice : null,
         amount: typeof row.amount === "number" ? row.amount : 0,
+        warrantyDays: typeof row.warrantyDays === "number" ?
+          row.warrantyDays : null,
+        warrantyParts: typeof row.warrantyParts === "string" ?
+          row.warrantyParts : null,
         warrantyUntil: typeof row.warrantyUntil === "string" ?
           row.warrantyUntil : null,
         claim: claim === null ? null : {
@@ -292,7 +298,6 @@ const addRideConfig = async ({
   cacheManager.del(NS, userId);
   return config;
 };
-
 
 export {
   getProfiles,

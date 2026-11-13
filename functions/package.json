@@ -30,9 +30,7 @@
     "push:setup": "npm run build && node lib/scripts/setupPush.js",
     "push:check": "npm run build && node lib/scripts/setupPush.js --check",
     "logs": "firebase functions:log",
-    "db:backfill-vehicle-profiles": "npm run build && node lib/scripts/backfillVehicleProfiles.js",
-    "db:cleanup-volunteer": "npm run build && node lib/scripts/cleanupVolunteerRole.js",
-    "db:backfill-cash-commission": "npm run build && node lib/scripts/backfillCashCommission.js"
+    "ratings:recompute": "npm run build && node lib/scripts/recomputeRatings.js"
   },
   "engines": {
     "node": "22"

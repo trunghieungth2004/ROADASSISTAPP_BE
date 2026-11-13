@@ -30,13 +30,29 @@ import {chatService} from "./chatService";
 import {enqueueDispatchPush} from "./taskQueueService";
 import {NS} from "./dispatch/constants";
 import * as cacheManager from "../utils/cacheManager";
+import {deliverAdminPush} from "./push/admin";
 import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from "../utils/errors";
+  recordDisputeDismissed,
+  recordDisputeResolved,
+} from "./dispute/audit";
+import {ForbiddenError, NotFoundError, ValidationError} from "../utils/errors";
 import {validatePhotoPathsStructure} from "../utils/media";
+import {
+  AUTO_DISPUTE_TYPES,
+  MONETARY_DISPUTE_TYPES,
+} from "../constants/behaviorReports";
+import * as reportService from "./behaviorReportService";
+import * as ratingService from "./ratingService";
+import {
+  assertCanFileDispute,
+  assertDisputeEvidence,
+  clearPaymentDisputeFlags,
+  DISPUTE_PAYMENT_STATUSES,
+  markPaymentsDisputed,
+  trackDisputeFiling,
+} from "./dispute/guard";
+import {attachDisputeContext} from "./dispute/context";
+import type {AdminDispute} from "./dispute/context";
 
 type TicketLike = {
   id: string;
@@ -206,18 +222,13 @@ const holdFor = (
 };
 
 const disputeSnapshot = (dispute: disputeRepository.Dispute) => ({
-  id: dispute.id,
-  status: dispute.status,
-  type: dispute.type,
-  reasonCode: dispute.reasonCode,
-  filedBy: dispute.filedBy,
-  accusedKind: dispute.accusedKind,
-  accusedId: dispute.accusedId,
-  hold: dispute.hold === true,
-  outcome: dispute.outcome ?? null,
-  resolution: dispute.resolution ?? null,
-  at: dispute.createdAt,
-  resolvedAt: dispute.resolvedAt ?? null,
+  id: dispute.id, status: dispute.status, type: dispute.type,
+  reasonCode: dispute.reasonCode, filedBy: dispute.filedBy,
+  filedByRole: dispute.filedByRole ?? null, accusedKind: dispute.accusedKind,
+  accusedId: dispute.accusedId, hold: dispute.hold === true,
+  note: dispute.note ?? null, photoUrls: dispute.photoUrls ?? [],
+  outcome: dispute.outcome ?? null, resolution: dispute.resolution ?? null,
+  at: dispute.createdAt, resolvedAt: dispute.resolvedAt ?? null,
 });
 
 const assertAdmin = async (userId: string): Promise<void> => {
@@ -243,6 +254,7 @@ const file = async (
   const dispute = await disputeRepository.create({
     ticketId: input.ticketId,
     filedBy: input.filedBy,
+    filedByRole: input.filer ?? null,
     accusedKind: input.accusedKind,
     accusedId: input.accusedId ?? null,
     type: input.type,
@@ -258,6 +270,7 @@ const file = async (
     disputeHold: hold,
     openDisputeId: dispute.id,
   });
+  await markPaymentsDisputed(ticket.id, dispute.id, hold);
   cacheManager.del(NS);
   if (hold) {
     try {
@@ -285,6 +298,13 @@ const file = async (
   } catch {
     void 0;
   }
+  await deliverAdminPush({
+    event: "DISPUTE_FILED",
+    title: "New dispute",
+    body: `${input.reasonCode} · ${dispute.ticketId}`,
+    refId: dispute.id,
+    route: "/admin?section=cases&kind=DISPUTE",
+  }).catch(() => undefined);
   return dispute;
 };
 
@@ -302,11 +322,11 @@ const userFile = async (
   if (!isAdmin && !isRider && !isProvider) {
     throw new ForbiddenError("Only ticket participants file disputes");
   }
-  const open = (await disputeRepository.findByTicketId(input.ticketId))
-    .filter((dispute) => dispute.status === DISPUTE_STATUS.OPEN);
-  if (open.length > 0) {
-    throw new ConflictError("A dispute is already open on this ticket");
-  }
+  await assertCanFileDispute({
+    ticketId: input.ticketId,
+    filedBy: input.filedBy,
+    adminFiling: isAdmin,
+  });
   const filer: "RIDER" | "PROVIDER" | "ADMIN" = isAdmin ?
     "ADMIN" :
     isProvider ? "PROVIDER" : "RIDER";
@@ -324,13 +344,27 @@ const userFile = async (
     filer,
     ...(defaultAccusedKind ? {defaultAccusedKind} : {}),
   });
+  if (filer === "RIDER" && codes.type === DISPUTE_TYPE.FARE_DISPUTE) {
+    const payments = await paymentRepository.findByTicketId(input.ticketId);
+    const hasPaid = payments.some((payment) =>
+      DISPUTE_PAYMENT_STATUSES.has(payment.status) ||
+      payment.status === PAYMENT_STATUS.DISPUTED,
+    );
+    if (!hasPaid) {
+      throw new ValidationError("Pay the fare before disputing it");
+    }
+  }
+  if (!isAdmin && !MONETARY_DISPUTE_TYPES.includes(codes.type)) {
+    throw new ValidationError("Behavior issues are handled as reports");
+  }
+  assertDisputeEvidence(filer, codes.type, input.photoUrls?.length ?? 0);
   const accusedId = filer === "PROVIDER" ?
     ticket.userId :
     input.accusedId ?? providerParty?.id ?? null;
   const accusedKind = filer === "PROVIDER" ?
     ACCUSED_KIND.RIDER :
     providerParty?.accusedKind ?? codes.accusedKind;
-  return file({
+  const created = await file({
     ...input,
     ...codes,
     accusedKind,
@@ -338,6 +372,8 @@ const userFile = async (
     filer,
     hold: holdFor(ticket, codes.type, filer),
   });
+  await trackDisputeFiling(input.filedBy);
+  return created;
 };
 
 const one = async ({
@@ -393,7 +429,7 @@ const refundTicketPayments = async (
   }
 };
 
-const applyDisputeOutcome = async ({
+export const applyDisputeOutcome = async ({
   ticket,
   outcome,
   adjustedAmount,
@@ -575,16 +611,37 @@ const resolve = async ({
       void 0;
     }
     try {
+      const outcomeLabel = resolvedOutcome === DISPUTE_OUTCOME.RIDER ?
+        "Rider wins" :
+        resolvedOutcome === DISPUTE_OUTCOME.PARTIAL ?
+          "Partial" :
+          "Provider wins";
       await enqueueDispatchPush(ticket.id, "-dispute-resolved", {
-        audience: "status-blind",
+        audience: "participants",
         urgent: "true",
         title: "Dispute resolved",
-        body: resolution,
+        body: `${outcomeLabel} · ${resolution}`,
       });
     } catch {
       void 0;
     }
   }
+  await clearPaymentDisputeFlags(dispute.ticketId, dispute.id);
+  await ratingService.autoExcludeForDispute({
+    ticketId: dispute.ticketId,
+    disputeId: dispute.id,
+    type: dispute.type,
+    outcome: resolvedOutcome,
+    filedBy: dispute.filedBy,
+  }).catch(() => undefined);
+
+  await recordDisputeResolved({
+    by,
+    dispute,
+    outcome: resolvedOutcome,
+    resolution,
+    ...(typeof adjustedAmount === "number" ? {adjustedAmount} : {}),
+  });
   return resolved;
 };
 
@@ -614,6 +671,7 @@ const dismiss = async ({
     (ticket.dispute && typeof ticket.dispute === "object" &&
       (ticket.dispute as {id?: unknown}).id === dispute.id)
   );
+  await clearPaymentDisputeFlags(dispute.ticketId, dispute.id);
   if (ticket && activeDispute) {
     await dispatchRepository.update(ticket.id, {
       dispute: {...disputeSnapshot(dismissed), hold: false},
@@ -621,7 +679,26 @@ const dismiss = async ({
       openDisputeId: null,
     });
     cacheManager.del(NS);
+    try {
+      await chatService.addSystemEvent(
+        ticket.id,
+        `Dispute dismissed${resolution ? `: ${resolution}` : ""}.`,
+      );
+    } catch {
+      void 0;
+    }
+    try {
+      await enqueueDispatchPush(ticket.id, "-dispute-dismissed", {
+        audience: "participants",
+        urgent: "true",
+        title: "Dispute dismissed",
+        body: resolution ?? "The dispute was closed.",
+      });
+    } catch {
+      void 0;
+    }
   }
+  await recordDisputeDismissed({by, dispute, resolution});
   return dismissed;
 };
 
@@ -633,15 +710,15 @@ const list = async ({
   adminUid: string;
   status?: string;
   limit?: number;
-}): Promise<disputeRepository.Dispute[]> => {
+}): Promise<AdminDispute[]> => {
   await assertAdmin(adminUid);
   const capped = typeof limit === "number" ?
     Math.min(limit, DISPUTE_LIST_MAX) :
     DISPUTE_LIST_LIMIT;
-  if (typeof status === "string" && status !== "") {
-    return disputeRepository.findByStatus(status, capped);
-  }
-  return disputeRepository.findAll(capped);
+  const rows = typeof status === "string" && status !== "" ?
+    await disputeRepository.findByStatus(status, capped) :
+    await disputeRepository.findAll(capped);
+  return attachDisputeContext(rows);
 };
 
 const bumpUserCancelRate = async (uid: string): Promise<void> => {
@@ -670,7 +747,10 @@ const bumpProviderCounters = async (
 };
 
 const normalizeReason = (accusedKind: string, reasonCode: string): string => {
-  if (isReasonCode(reasonCode)) return reasonCode;
+  const aliased = reasonCode === "SHOP_PARTS_DELAY" ?
+    DISPUTE_REASON.SHOP_PART_DELAY :
+    reasonCode;
+  if (isReasonCode(aliased)) return aliased;
   return DISPUTE_FALLBACK_REASON[accusedKind] ?? DISPUTE_REASON.RIDER_OTHER;
 };
 
@@ -690,16 +770,29 @@ const autoFile = async (input: {
 }): Promise<void> => {
   const filedBy = input.filedBy ?? input.reporterUid ?? "";
   if (!nonEmpty(filedBy) || !isAccusedKind(input.accusedKind)) return;
+  const type = normalizeType(input.accusedKind, input.type);
+  if (!AUTO_DISPUTE_TYPES.includes(type)) {
+    await reportService.fileAutoReport({
+      ticketId: input.ticketId,
+      reportedBy: filedBy,
+      accusedKind: input.accusedKind,
+      accusedId: input.accusedId ?? null,
+      reasonCode: input.reasonCode,
+      type,
+    }).catch(() => undefined);
+    return;
+  }
   await disputeRepository.create({
     ticketId: input.ticketId,
     filedBy,
     accusedKind: input.accusedKind,
     accusedId: input.accusedId ?? null,
-    type: normalizeType(input.accusedKind, input.type),
+    type,
     reasonCode: normalizeReason(input.accusedKind, input.reasonCode),
     note: null,
     photoUrls: [],
     status: DISPUTE_STATUS.OPEN,
+    filedByRole: "SYSTEM",
   });
 };
 

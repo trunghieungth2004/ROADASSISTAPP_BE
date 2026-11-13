@@ -1,5 +1,12 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
+import {assertRiderCanRequest} from "../../standing";
+
+const assertDescription = (description?: string): void => {
+  if (typeof description === "string" && description.length > 1000) {
+    throw new ValidationError("Description is too long");
+  }
+};
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as vehicleProfileRepository from
@@ -12,7 +19,6 @@ import {
 } from "../../providerService";
 import {enqueueDispatchPush} from "../../taskQueueService";
 
-
 import {
   NS,
   TERMINAL_STATUSES,
@@ -20,12 +26,9 @@ import {
   TOWER_SEARCH_ACTIVE,
 } from "../constants";
 
-
 import {resolveDestination} from "../helpers";
 
-
 import {findCandidates, findTowOperators} from "../candidates";
-
 
 import {
   MOBILE_SHOP_DEFAULT_RADIUS,
@@ -44,7 +47,6 @@ import {
 
 import * as cacheManager from "../../../utils/cacheManager";
 import {validatePhotoPathsStructure} from "../../../utils/media";
-
 
 const liveTicketConflict = (
   mine: dispatchRepository.DispatchTicket[],
@@ -103,7 +105,6 @@ export const createDispatch = async ({
   ticketType,
   lat,
   lng,
-  diagnosticId,
   symptom,
   note,
   description,
@@ -134,7 +135,6 @@ export const createDispatch = async ({
   ticketType: string;
   lat: number;
   lng: number;
-  diagnosticId?: string;
   symptom?: string;
   note?: string;
   description?: string;
@@ -161,6 +161,7 @@ export const createDispatch = async ({
   addressedTow?: boolean;
   id?: string;
 }) => {
+  await assertRiderCanRequest(userId);
   const user = await userRepository.findById(userId);
   if (!user) throw new NotFoundError("User not found");
   const vehicleProfile = await vehicleProfileFor(userId, vehicleId);
@@ -178,9 +179,7 @@ export const createDispatch = async ({
     (vehicleId === undefined || vehicleId === "")) {
     throw new ValidationError("Select a vehicle before filing this request");
   }
-  if (typeof description === "string" && description.length > 1000) {
-    throw new ValidationError("Description is too long");
-  }
+  assertDescription(description);
   validatePhotoPathsStructure(photoUrls);
   let providerSnapshot: Record<string, unknown> | undefined;
   if (ticketType === "WALK_IN") {
@@ -241,7 +240,6 @@ export const createDispatch = async ({
     ticketType,
     lat,
     lng,
-    diagnosticId,
     ...(symptom !== undefined ? {symptom} : {}),
     note,
     ...(description !== undefined ? {description} : {}),

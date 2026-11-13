@@ -3,10 +3,8 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {currentWaitingFee} from "../waiting";
 import {NS} from "../constants";
-
 
 import {
   linkedSummaryFor,
@@ -14,14 +12,12 @@ import {
   sosCallOutTotalFor,
 } from "../summary";
 
-
 import {PROVIDER_KIND, STATUS_DISPATCH} from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
 import {ForbiddenError, NotFoundError} from "../../../utils/errors";
 
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const getMyTicketsInner = async (userId: string) => {
   return dispatchRepository.findByUserId(userId);
@@ -34,7 +30,6 @@ export const getMyTicketsCached = cacheManager.wrap(getMyTicketsInner, {
 
 export const getMyTickets = async (userId: string) =>
   getMyTicketsCached(userId);
-
 
 export const getDispatch = async (id: string, userId: string) => {
   const ticket = await dispatchRepository.findById(id);

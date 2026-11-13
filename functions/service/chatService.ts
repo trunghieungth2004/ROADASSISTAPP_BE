@@ -308,10 +308,27 @@ const expireChats = async (): Promise<{deleted: number}> => {
   return {deleted};
 };
 
+const adminMessages = async ({
+  ticketId,
+}: {
+  ticketId: string;
+}): Promise<{messages: chatRepository.ChatMessage[]}> => {
+  const ticket = await dispatchRepository.findById(ticketId);
+  if (!ticket) throw new NotFoundError("Dispatch ticket not found");
+  const version = typeof ticket.chatVersion === "number" ?
+    ticket.chatVersion :
+    0;
+  const roomId = chatRepository.roomIdFor("TICKET", ticketId, version);
+  const room = await chatRepository.findById(roomId);
+  if (!room) return {messages: []};
+  return {messages: await chatRepository.listMessages(room.id, 200)};
+};
+
 export const chatService = {
   open,
   messages,
   send,
+  adminMessages,
   addSystemEvent,
   archiveTicketRoom,
   expireChats,

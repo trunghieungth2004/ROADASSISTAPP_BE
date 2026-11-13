@@ -27,4 +27,10 @@ export default (
     validate({body: schemas.ratingsByTicket}),
     ratingController.ratingsByTicket,
   );
+  app.post(
+    "/ratings/received",
+    requireAuth,
+    validate({body: schemas.receivedRatings}),
+    ratingController.receivedRatings,
+  );
 };

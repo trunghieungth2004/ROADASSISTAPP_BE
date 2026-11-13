@@ -10,7 +10,6 @@ import {
 import Joi from "joi";
 import {VEHICLE_TYPE} from "../../constants/status";
 
-
 export const routesSchemas = {
   getRoute: Joi.object({
     originLat: latAttr(),

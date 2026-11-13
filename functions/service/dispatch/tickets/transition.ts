@@ -348,31 +348,33 @@ export const updateDispatchStatus = async ({
       title: "Tow request available",
       body: "A tow request needs a tower — tap to view",
     });
-    try {
-      await autoFile({
-        ticketId: id,
-        reporterUid: ticket.userId,
-        accusedKind: ACCUSED_KIND.TOWER,
-        accusedId: towerId,
-        reasonCode: typeof reasonCode === "string" && reasonCode !== "" ?
-          reasonCode :
-          DISPUTE_REASON.TOWER_CANCEL_OTHER,
-        type: DISPUTE_TYPE.TOWER_CANCEL_MID,
-      });
-    } catch {
-      return {updated: 1, requeued: true};
-    }
-    try {
-      await bumpCancelCounters({providerId: towerId, userId});
+    if (reasonCode !== DISPUTE_REASON.TOWER_CANCEL_BREAKDOWN) {
       try {
-        await db.collection("users").doc(ticket.userId).update({
-          disputes: FieldValue.increment(0),
+        await autoFile({
+          ticketId: id,
+          reporterUid: ticket.userId,
+          accusedKind: ACCUSED_KIND.TOWER,
+          accusedId: towerId,
+          reasonCode: typeof reasonCode === "string" && reasonCode !== "" ?
+            reasonCode :
+            DISPUTE_REASON.TOWER_CANCEL_OTHER,
+          type: DISPUTE_TYPE.TOWER_CANCEL_MID,
         });
       } catch {
         return {updated: 1, requeued: true};
       }
-    } catch {
-      return {updated: 1, requeued: true};
+      try {
+        await bumpCancelCounters({providerId: towerId, userId});
+        try {
+          await db.collection("users").doc(ticket.userId).update({
+            disputes: FieldValue.increment(0),
+          });
+        } catch {
+          return {updated: 1, requeued: true};
+        }
+      } catch {
+        return {updated: 1, requeued: true};
+      }
     }
     return {updated: 1, requeued: true};
   }

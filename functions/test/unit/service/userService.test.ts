@@ -190,6 +190,29 @@ describe("userService.me", () => {
     expect(result.activeVehicle).toBeNull();
   });
 
+  it("returns standing and restriction state", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+      role: "2",
+      phone: "+10000000001",
+      standingScore: 95,
+      bookingBlocked: true,
+      restrictedUntil: "2026-12-01T00:00:00.000Z",
+      restrictionReason: "Repeated no-shows",
+      conductFlag: true,
+    } as never);
+    jest.mocked(vehicleProfileRepository.findByUser).mockResolvedValue([]);
+    const result = await me("u1");
+    expect(result.user).toMatchObject({
+      phone: "+10000000001",
+      standingScore: 95,
+      bookingBlocked: true,
+      restrictedUntil: "2026-12-01T00:00:00.000Z",
+      restrictionReason: "Repeated no-shows",
+      conductFlag: true,
+    });
+  });
+
   it("resolves the persisted active vehicle", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",

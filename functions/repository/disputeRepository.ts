@@ -9,6 +9,7 @@ interface Dispute {
   id: string;
   ticketId: string;
   filedBy: string;
+  filedByRole?: string | null;
   accusedId: string | null;
   accusedKind: string;
   type: string;
@@ -38,6 +39,7 @@ const byCreatedDesc = (a: Dispute, b: Dispute): number => {
 const create = async (data: {
   ticketId: string;
   filedBy: string;
+  filedByRole?: string | null;
   accusedKind: string;
   accusedId?: string | null;
   type: string;
@@ -53,6 +55,7 @@ const create = async (data: {
     id: ref.id,
     ticketId: data.ticketId,
     filedBy: data.filedBy,
+    filedByRole: data.filedByRole ?? null,
     accusedId: data.accusedId ?? null,
     accusedKind: data.accusedKind,
     type: data.type,
@@ -100,6 +103,17 @@ const findByTicketId = async (
   return results;
 };
 
+const findByFiledBy = async (filedBy: string): Promise<Dispute[]> => {
+  const snap = await db
+    .collection(DISPUTE_COLLECTION)
+    .where("filedBy", "==", filedBy)
+    .get();
+  const rows: Dispute[] = [];
+  snap.forEach((doc) => rows.push({id: doc.id, ...doc.data()} as Dispute));
+  rows.sort(byCreatedDesc);
+  return rows;
+};
+
 const findByStatus = async (
   status: string,
   limit: number = DISPUTE_LIST_LIMIT,
@@ -144,6 +158,7 @@ export {
   create,
   findById,
   findByTicketId,
+  findByFiledBy,
   findByStatus,
   update,
   findAll,

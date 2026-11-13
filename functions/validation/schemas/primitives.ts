@@ -7,9 +7,7 @@ import {
   SERVICE_CATEGORY,
 } from "../../constants/status";
 
-
 import {PHOTO_MAX_COUNT, PHOTO_URL_MAX_LENGTH} from "../../constants/media";
-
 
 export const strReq = (): Joi.StringSchema => Joi.string().required();
 export const strOpt = (): Joi.StringSchema =>

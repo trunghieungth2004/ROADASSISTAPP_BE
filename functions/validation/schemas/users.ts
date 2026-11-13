@@ -6,7 +6,6 @@ import {
   STATUS_USER,
 } from "../../constants/status";
 
-
 export const usersSchemas = {
   register: Joi.object({
     email: Joi.string().email().required(),
@@ -31,6 +30,7 @@ export const usersSchemas = {
   updateUserRole: Joi.object({
     targetUserId: strReq(),
     role: Joi.string().valid("1", "2").required(),
+    note: Joi.string().trim().max(300).optional(),
   }),
   updateUserServices: Joi.object({
     targetUserId: strReq(),
@@ -52,6 +52,7 @@ export const usersSchemas = {
     status: Joi.string()
       .valid(...Object.values(STATUS_USER))
       .required(),
+    note: Joi.string().trim().max(300).optional(),
   }),
   updateProfile: Joi.object({
     displayName: Joi.string().trim().min(1).max(120).required(),

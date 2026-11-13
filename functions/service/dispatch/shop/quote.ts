@@ -4,27 +4,22 @@ import * as paymentRepository from "../../../repository/paymentRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {
   enqueueDispatchPush,
 } from "../../taskQueueService";
 import {resolveQuoteAmount} from "./items";
 import {isWarrantyRework} from "../../warrantyRework";
 
-
 import {NS} from "../constants";
 import {QUOTE_TTL_MS} from "../../../constants/dispatch";
-
 
 import {PROVIDER_KIND, STATUS_DISPATCH} from "../../../constants/status";
 import {PAYMENT_ACTIVE_STATUSES} from "../../../constants/payments";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
-
 import {chatService} from "../../chatService";
 import * as paymentService from "../../paymentService";
 import * as refundService from "../../refundService";
-
 
 import {
   ForbiddenError,
@@ -32,7 +27,6 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 type QuoteCatalog = Array<{
   code: string;
@@ -191,7 +185,6 @@ export const sendQuote = async ({
   }
   return {quoted: true, version: version + 1};
 };
-
 
 export const approveQuote = async ({
   userId,

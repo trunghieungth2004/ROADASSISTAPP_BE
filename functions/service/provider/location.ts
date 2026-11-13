@@ -4,14 +4,11 @@ import * as dispatchRepository from "../../repository/dispatchRepository";
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 
-
 import {accrue} from "../dispatch/waiting";
 
 import {PROVIDER_KIND, PROVIDER_STATUS} from "../../constants/status";
 
-
 import {ForbiddenError, NotFoundError} from "../../utils/errors";
-
 
 export const updateProviderLocation = async ({
   userId,

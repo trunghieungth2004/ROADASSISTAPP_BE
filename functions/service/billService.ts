@@ -5,6 +5,13 @@ import {breakdownFor, includedKmFor} from "./bill/breakdown";
 import * as paymentRepository from "../repository/paymentRepository";
 import * as providerRepository from "../repository/providerRepository";
 import * as refundRepository from "../repository/refundRepository";
+import * as disputeRepository from "../repository/disputeRepository";
+import {
+  disputeHistoryFrom,
+  disputeSummaryFrom,
+  type BillDispute,
+  type BillDisputeHistoryRow,
+} from "./bill/disputes";
 import * as userRepository from "../repository/userRepository";
 import {
   BILL_ITEM_KIND,
@@ -50,6 +57,10 @@ type BillPayment = {
   payoutAt: string | null;
   payoutStatus: BillPayoutStatus;
   canConfirmCash: boolean;
+  disputeId: string | null;
+  disputedAt: string | null;
+  disputeHold: boolean;
+  disputeResolvedAt: string | null;
   createdAt: string | null;
   confirmedAt: string | null;
 };
@@ -155,6 +166,8 @@ type BillItem = {
     transferRef: string | null;
     requestedAt: string;
   } | null;
+  dispute: BillDispute | null;
+  disputes: BillDisputeHistoryRow[];
   payment: BillPayment | null;
 };
 
@@ -288,7 +301,6 @@ const refundSummaryFor = async (
     requestedAt: row.requestedAt,
   };
 };
-
 
 type FareParts = {
   baseFee: number | null;
@@ -441,6 +453,37 @@ const distanceTotalsFor = (
   };
 };
 
+const billPaymentView = (
+  payment: paymentRepository.Payment,
+  admin: boolean,
+  viewerUid: string,
+): BillPayment => ({
+  id: payment.id,
+  method: payment.method,
+  status: payment.status,
+  amount: payment.amount,
+  refundAmount: payment.refundAmount,
+  commissionRate: payment.commissionRate,
+  commissionAmount: payment.commissionAmount,
+  payoutAmount: payment.payoutAmount,
+  payoutRef: payment.payoutRef,
+  payoutAt: payment.payoutAt,
+  payoutStatus: payoutStatusFor(payment),
+  canConfirmCash: payment.method === "CASH" &&
+    PAYMENT_CASH_CONFIRMABLE_STATUSES.includes(payment.status) &&
+    (admin || payment.payeeId === viewerUid),
+  disputeId: typeof payment.disputeId === "string" ? payment.disputeId : null,
+  disputedAt: typeof payment.disputedAt === "string" ?
+    payment.disputedAt :
+    null,
+  disputeHold: payment.disputeHold === true,
+  disputeResolvedAt: typeof payment.disputeResolvedAt === "string" ?
+    payment.disputeResolvedAt :
+    null,
+  createdAt: payment.createdAt ?? null,
+  confirmedAt: payment.confirmedAt ?? null,
+});
+
 const buildItem = async (
   ticket: dispatchRepository.DispatchTicket,
   viewerUid: string,
@@ -476,6 +519,8 @@ const buildItem = async (
   const parties = await partyDetailsFor(ticket, partyCache);
   const destination = await destinationFor(ticket, partyCache);
   const refundRequest = await refundSummaryFor(payment);
+  const disputeRows = await disputeRepository.findByTicketId(ticket.id);
+  const dispute = disputeSummaryFrom(disputeRows);
   const lines = lineGroupsFor(ticket);
   return {
     kind: ticket.ticketType === "TOW" ?
@@ -533,24 +578,11 @@ const buildItem = async (
     payeeName: await payeeNameFor(ticket),
     qrUrl: nonEmpty(ticket.checkoutUrl) ? ticket.checkoutUrl : null,
     refundRequest,
-    payment: payment ? {
-      id: payment.id,
-      method: payment.method,
-      status: payment.status,
-      amount: payment.amount,
-      refundAmount: payment.refundAmount,
-      commissionRate: payment.commissionRate,
-      commissionAmount: payment.commissionAmount,
-      payoutAmount: payment.payoutAmount,
-      payoutRef: payment.payoutRef,
-      payoutAt: payment.payoutAt,
-      payoutStatus: payoutStatusFor(payment),
-      canConfirmCash: payment.method === "CASH" &&
-        PAYMENT_CASH_CONFIRMABLE_STATUSES.includes(payment.status) &&
-        (admin || payment.payeeId === viewerUid),
-      createdAt: payment.createdAt ?? null,
-      confirmedAt: payment.confirmedAt ?? null,
-    } : null,
+    dispute,
+    disputes: disputeHistoryFrom(disputeRows),
+    payment: payment ?
+      billPaymentView(payment, admin, viewerUid) :
+      null,
   };
 };
 
@@ -618,7 +650,7 @@ const buildBill = async (
     due,
     status,
     viewer,
-    canPay: viewer === "RIDER",
+    canPay: viewer === "RIDER" && ticket.disputeHold !== true,
     items,
   };
 };

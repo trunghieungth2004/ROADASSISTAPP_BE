@@ -31,6 +31,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../utils/errors";
+import {assertRiderCanRequest} from "./standing";
 import {
   bookingSettings,
   dateKeyOf,
@@ -286,6 +287,7 @@ const createBooking = async (input: {
   origin?: {lat: number; lng: number; label?: string | null};
   bufferMinutes?: number;
 }): Promise<Record<string, unknown>> => {
+  await assertRiderCanRequest(input.userId);
   const provider = await requireProvider(input.providerId);
   const settings = bookingSettings(provider);
   if (provider.status !== PROVIDER_STATUS.ACTIVE ||
@@ -766,7 +768,6 @@ const shopBookings = async (input: {
   const rows = await bookingRepository.findByShop(input.providerId);
   return {bookings: rows, serverTime: new Date().toISOString()};
 };
-
 
 export {
   getAvailability,

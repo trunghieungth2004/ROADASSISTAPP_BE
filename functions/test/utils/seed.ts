@@ -15,7 +15,6 @@ const ALL_COLLECTIONS = [
   "providers",
   "provider_locations",
   "provider_reports",
-  "diagnostics",
   "dispatch_tickets",
   "payments",
   "payment_guards",
@@ -224,20 +223,6 @@ const seedProvider = async (
   return ref.id;
 };
 
-const seedDiagnostic = async (
-  overrides: Record<string, unknown> = {},
-): Promise<string> => {
-  const ref = db.collection("diagnostics").doc();
-  await ref.set({
-    userId: `${PREFIX}-user-1`,
-    category: "FLAT_TIRE",
-    imagePath: `diagnostics/${ref.id}.jpg`,
-    createdAt: new Date().toISOString(),
-    ...overrides,
-  });
-  return ref.id;
-};
-
 const seedTicket = async (
   overrides: Record<string, unknown> = {},
 ): Promise<string> => {
@@ -248,7 +233,6 @@ const seedTicket = async (
     status: "1",
     lat: BASE_LAT,
     lng: BASE_LNG,
-    diagnosticId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   });
@@ -291,7 +275,6 @@ export {
   seedFlag,
   seedLandmark,
   seedProvider,
-  seedDiagnostic,
   seedTicket,
   seedRoute,
 };

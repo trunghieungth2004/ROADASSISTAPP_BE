@@ -7,6 +7,7 @@ import {normalizeVehicleType} from "../utils/vehicleType";
 import * as providerLocationRepository from
   "../repository/providerLocationRepository";
 import * as cacheManager from "../utils/cacheManager";
+import * as auditService from "./auditService";
 import {ROLE_ADMIN, ROLE_USER} from "../constants/roles";
 import {PROVIDER_FRESH_MS, SERVICE_ROLE} from "../constants/status";
 import {auth} from "../config/firebase";
@@ -61,10 +62,12 @@ const updateRole = async ({
   actorId,
   targetUserId,
   role,
+  note,
 }: {
   actorId: string;
   targetUserId: string;
   role: string;
+  note?: string;
 }) => {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("Target user not found");
@@ -77,13 +80,31 @@ const updateRole = async ({
   await userRepository.updateRole(targetUserId, role);
   cacheManager.del(USER_NS, targetUserId);
   cacheManager.del(USER_NS, "__all__");
+  await auditService.record({
+    adminUid: actorId,
+    action: "USER_ROLE_CHANGED",
+    category: "USER",
+    targetType: "USER",
+    targetId: targetUserId,
+    targetLabel: typeof target.email === "string" ?
+      target.email :
+      typeof target.displayName === "string" ?
+        target.displayName :
+        targetUserId,
+    before: {role: target.role},
+    after: {role},
+    note: note ?? null,
+    meta: {role, ...(note ? {note} : {})},
+  });
   return {updated: 1};
 };
 
 const updateTrustScore = async ({
+  actorId,
   targetUserId,
   trustScore,
 }: {
+  actorId?: string;
   targetUserId: string;
   trustScore: number;
 }) => {
@@ -94,6 +115,22 @@ const updateTrustScore = async ({
   }
   await userRepository.updateTrustScore(targetUserId, trustScore);
   cacheManager.del(USER_NS, targetUserId);
+  if (actorId !== undefined) {
+    await auditService.record({
+      adminUid: actorId,
+      action: "TRUST_SCORE_CHANGED",
+      category: "USER",
+      targetType: "USER",
+      targetId: targetUserId,
+      targetLabel: typeof target.email === "string" ?
+        target.email :
+        typeof target.displayName === "string" ?
+          target.displayName :
+          targetUserId,
+      before: {trustScore: target.trustScore ?? 0},
+      after: {trustScore},
+    });
+  }
   return {updated: 1};
 };
 
@@ -101,10 +138,12 @@ const updateStatus = async ({
   actorId,
   targetUserId,
   status,
+  note,
 }: {
   actorId: string;
   targetUserId: string;
   status: string;
+  note?: string;
 }) => {
   const target = await userRepository.findById(targetUserId);
   if (!target) throw new NotFoundError("Target user not found");
@@ -114,6 +153,22 @@ const updateStatus = async ({
   await userRepository.updateStatus(targetUserId, status);
   cacheManager.del(USER_NS, targetUserId);
   cacheManager.del(USER_NS, "__all__");
+  await auditService.record({
+    adminUid: actorId,
+    action: "USER_STATUS_CHANGED",
+    category: "USER",
+    targetType: "USER",
+    targetId: targetUserId,
+    targetLabel: typeof target.email === "string" ?
+      target.email :
+      typeof target.displayName === "string" ?
+        target.displayName :
+        targetUserId,
+    before: {status: target.status ?? null},
+    after: {status},
+    note: note ?? null,
+    meta: {status, ...(note ? {note} : {})},
+  });
   return {updated: 1};
 };
 
@@ -137,6 +192,56 @@ const sweepStalePresence = async (): Promise<number> => {
     new Date(Date.now() - PROVIDER_FRESH_MS).toISOString();
   return providerLocationRepository.deleteStale(providerCutoff);
 };
+
+type MeUserRecord = {
+  id: string;
+  role: string;
+  email?: string | null;
+  displayName?: string | null;
+  phone?: string;
+  status?: string;
+  trustScore?: number;
+  standingScore?: number;
+  bookingBlocked?: boolean;
+  restrictedUntil?: string | null;
+  restrictionReason?: string | null;
+  conductFlag?: boolean;
+  points?: number;
+  ratingAvg?: number;
+  ratingCount?: number;
+  onboarded?: boolean;
+  services?: string[];
+};
+
+const buildMeUser = (user: MeUserRecord) => ({
+  id: user.id,
+  email: user.email ?? null,
+  displayName: user.displayName ?? null,
+  role: user.role,
+  status: user.status ?? null,
+  phone: typeof user.phone === "string" ? user.phone : null,
+  trustScore: user.trustScore ?? 0,
+  standingScore: typeof user.standingScore === "number" ?
+    user.standingScore :
+    100,
+  bookingBlocked: user.bookingBlocked === true,
+  restrictedUntil: typeof user.restrictedUntil === "string" ?
+    user.restrictedUntil :
+    null,
+  restrictionReason: typeof user.restrictionReason === "string" ?
+    user.restrictionReason :
+    null,
+  conductFlag: user.conductFlag === true,
+  points: user.points ?? 0,
+  ratingAvg: user.ratingAvg ?? 0,
+  ratingCount: user.ratingCount ?? 0,
+  onboarded: user.onboarded === true,
+  services: Array.isArray(user.services) ?
+    [...new Set(
+      user.services.filter((s): s is string => typeof s === "string"),
+    )] :
+    [],
+});
 
 const me = async (userId: string) => {
   const user = await userRepository.findById(userId);
@@ -199,23 +304,7 @@ const me = async (userId: string) => {
     vehicles.find((v) => v.id === activeId) ?? null :
     null;
   return {
-    user: {
-      id: user.id,
-      email: user.email ?? null,
-      displayName: user.displayName ?? null,
-      role: user.role,
-      status: user.status ?? null,
-      trustScore: user.trustScore ?? 0,
-      points: user.points ?? 0,
-      ratingAvg: user.ratingAvg ?? 0,
-      ratingCount: user.ratingCount ?? 0,
-      onboarded: user.onboarded === true,
-      services: Array.isArray(user.services) ?
-        [...new Set(
-          user.services.filter((s): s is string => typeof s === "string"),
-        )] :
-        [],
-    },
+    user: buildMeUser(user),
     vehicles: vehicles.map((v) => ({
       id: v.id,
       type: v.type,

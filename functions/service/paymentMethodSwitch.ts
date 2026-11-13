@@ -53,7 +53,6 @@ const cancelActiveForSwitch = async ({
   await paymentRepository.clearGuard(ticketId, active.id);
 };
 
-
 const cancelPendingPayment = async ({
   userId,
   ticketId,

@@ -4,7 +4,6 @@ import * as providerRepository from "../../../../repository/providerRepository";
 import * as vehicleProfileRepository from
   "../../../../repository/vehicleProfileRepository";
 
-
 import * as paymentRepository from "../../../../repository/paymentRepository";
 
 import {
@@ -47,7 +46,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService walk-in tickets", () => {
   const shop = (extra?: Record<string, unknown>) => ({
@@ -163,7 +161,6 @@ describe("dispatchService walk-in tickets", () => {
   });
 });
 
-
 describe("dispatchService declineDispatch", () => {
   it("declines a pending walk-in for its operator", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
@@ -244,7 +241,6 @@ describe("dispatchService declineDispatch", () => {
     ).rejects.toMatchObject({statusCode: 403});
   });
 });
-
 
 describe("dispatchService updateWorkOrder", () => {
   it("lets the operator record work details on a matched ticket", async () => {
@@ -357,7 +353,6 @@ describe("dispatchService updateWorkOrder", () => {
     ).rejects.toMatchObject({statusCode: 400});
   });
 });
-
 
 describe("dispatchService markUnfixable", () => {
   it("refuses SOS unfixable before arrival", async () => {
@@ -516,7 +511,6 @@ describe("dispatchService markUnfixable", () => {
     );
   });
 });
-
 
 describe("dispatchService quote approval", () => {
   it("sends a quote and flips the ticket to quoted", async () => {

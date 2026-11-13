@@ -4,7 +4,7 @@ import * as analyticsService from "../service/analyticsService";
 import * as payoutService from "../service/payoutService";
 import * as paymentService from "../service/paymentService";
 import * as platformConfigService from "../service/platformConfigService";
-import * as reportService from "../service/reportService";
+import * as reportService from "../service/financeReportService";
 import * as opsService from "../service/opsService";
 import * as auditService from "../service/auditService";
 import {REPORT_CSV_MIME, REPORT_FORMAT} from "../constants/reports";
@@ -142,8 +142,14 @@ const ops = async (_req: Request, res: Response) => {
 const audit = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {limit} = req.body ?? {};
-    sendSuccess(res, await auditService.list({adminUid: uid, limit}));
+    const {limit, before, from, to} = req.body ?? {};
+    sendSuccess(res, await auditService.list({
+      adminUid: uid,
+      limit,
+      before,
+      from,
+      to,
+    }));
   } catch (error) {
     handleServiceError(res, error as Error);
   }

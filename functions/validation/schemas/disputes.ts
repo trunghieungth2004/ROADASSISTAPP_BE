@@ -1,7 +1,6 @@
 import {strReq, strOpt, photoList} from "./primitives";
 import Joi from "joi";
 
-
 import {
   ACCUSED_KIND,
   DISPUTE_LIST_MAX,
@@ -10,7 +9,6 @@ import {
   DISPUTE_STATUS,
   DISPUTE_TYPE,
 } from "../../constants/disputes";
-
 
 export const disputesSchemas = {
   fileDispute: Joi.object({
@@ -38,6 +36,10 @@ export const disputesSchemas = {
       .valid(...Object.values(DISPUTE_STATUS))
       .optional(),
     limit: Joi.number().integer().min(1).max(DISPUTE_LIST_MAX).optional(),
+  }),
+  dismissDispute: Joi.object({
+    disputeId: strReq(),
+    resolution: strOpt(),
   }),
   resolveDispute: Joi.object({
     disputeId: strReq(),

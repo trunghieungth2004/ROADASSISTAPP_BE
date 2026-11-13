@@ -1,7 +1,6 @@
 import {resolveShopOperator} from "./helpers";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
-
 export const getShopRequests = async ({
   userId,
   shopId,
@@ -12,7 +11,6 @@ export const getShopRequests = async ({
   await resolveShopOperator(userId, shopId);
   return dispatchRepository.findPendingForShop(shopId);
 };
-
 
 export const getShopRecords = async ({
   userId,

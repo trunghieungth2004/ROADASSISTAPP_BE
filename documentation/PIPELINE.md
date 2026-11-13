@@ -120,7 +120,7 @@ the hazard tooling above never touches them:
 dispatchService: accept / status move / decline / sweep-cancel (+ expired-shop) / walk-in open
 / tow open (+ destination-shop) / quote send+approve / rider cancel (rider confirm + shop-context
 operator + destination-shop on tows) / pending-tow cancel (tower-candidates withdrawn fan-out) /
-destination edit (+ destination-shop on retarget, dropped-shop on move-away, ETA restamp) + decline (rider + operator, any non-terminal status) / late tow / destination decline
+destination edit (+ destination-shop on retarget, dropped-shop on move-away, ETA restamp) + decline (rider + operator, any non-terminal status) / late tow / destination decline / dispute resolved or dismissed (participants audience)
         │
         │ enqueueDispatchPush(ticketId, suffix)   [CLOUD_TASKS_ENABLED]
         ▼
@@ -146,6 +146,9 @@ destination edit (+ destination-shop on retarget, dropped-shop on move-away, ETA
 │                               │  or generic fallback
 │  audience rider → rider       │  explicit title/body at any status
 │                               │  (destination declines)
+│  audience participants →      │  rider + provider (assignedUid or shop
+│  both ticket parties          │  operator); dispute resolved/dismissed
+│  audience shop → carried shop │  explicit fix-decline notices
 │  audience tower-candidates →  │  "Tow request withdrawn" + ticket data
 │  towers (recomputed)          │  (pending-TOW cancel only)
 │  audience destination-shop →  │  explicit title/body to the carried shopId

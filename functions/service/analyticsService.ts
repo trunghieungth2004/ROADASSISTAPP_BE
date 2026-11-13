@@ -4,6 +4,9 @@ import * as payoutRepository from "../repository/payoutRepository";
 import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as flagRepository from "../repository/flagRepository";
+import * as reportRepository from "../repository/reportRepository";
+import * as disputeRepository from "../repository/disputeRepository";
+import * as appealRepository from "../repository/appealRepository";
 import * as commissionRepository from "../repository/commissionRepository";
 import {
   PAYMENT_RECEIVED_STATUSES,
@@ -14,6 +17,7 @@ import {
   STATUS_USER,
 } from "../constants/status";
 import {NotFoundError} from "../utils/errors";
+import {buildDashboardSeries} from "./analyticsSeries";
 
 const num = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -50,16 +54,29 @@ const acceptMinutes = (
 const dashboard = async ({days}: {days?: number}) => {
   const window = typeof days === "number" ? days : 30;
   const from = isoDaysAgo(window);
-  const [users, providers, payments, payouts, tickets, flags, owed] =
-    await Promise.all([
-      userRepository.findAll(),
-      providerRepository.findAll(),
-      paymentRepository.findAll(5000),
-      payoutRepository.findBetween(from, new Date().toISOString(), 1000),
-      dispatchRepository.findAll(2000),
-      flagRepository.findAll(),
-      commissionRepository.findAllOwed(),
-    ]);
+  const [
+    users,
+    providers,
+    payments,
+    payouts,
+    tickets,
+    flags,
+    owed,
+    reports,
+    disputes,
+    appeals,
+  ] = await Promise.all([
+    userRepository.findAll(),
+    providerRepository.findAll(),
+    paymentRepository.findAll(5000),
+    payoutRepository.findBetween(from, new Date().toISOString(), 1000),
+    dispatchRepository.findAll(2000),
+    flagRepository.findAll(),
+    commissionRepository.findAllOwed(),
+    reportRepository.list({limit: 500}),
+    disputeRepository.findAll(500),
+    appealRepository.findAll(500),
+  ]);
   const periodPayments = payments.filter((row) =>
     str(row.createdAt) >= from);
   const periodTickets = tickets.filter((row) =>
@@ -144,6 +161,22 @@ const dashboard = async ({days}: {days?: number}) => {
       (owedByPayee.get(entry.payeeId) ?? 0) + open,
     );
   }
+  const series = buildDashboardSeries({
+    window,
+    payments: periodPayments,
+    tickets: periodTickets,
+    users,
+    providers,
+    flags,
+    reports: reports.filter((row) => str(row.createdAt) >= from),
+    disputes: disputes.filter((row) => str(row.createdAt) >= from),
+    appeals: appeals.filter((row) => str(row.createdAt) >= from),
+    paymentsByStatus,
+    paymentsByMethod,
+    ticketsByStatus,
+    ticketsByType,
+    flagsByStatus,
+  });
   return {
     windowDays: window,
     from,
@@ -173,6 +206,7 @@ const dashboard = async ({days}: {days?: number}) => {
       byType: ticketsByType,
       byStatus: ticketsByStatus,
     },
+    series,
     money: {
       gross,
       commission,

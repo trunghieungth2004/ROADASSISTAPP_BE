@@ -7,7 +7,6 @@ import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 import * as userRepository from "../../repository/userRepository";
 
-
 import {
   PROVIDER_KIND,
   PROVIDER_REPORT_REASON,
@@ -16,7 +15,6 @@ import {
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
 
-
 import {
   ConflictError,
   ForbiddenError,
@@ -24,7 +22,8 @@ import {
   ValidationError,
 } from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
-
+import {deliverAdminPush} from "../push/admin";
+import * as auditService from "../auditService";
 
 export const listPending = async (adminUid?: string) => {
   if (adminUid) {
@@ -82,6 +81,18 @@ export const reviewProvider = async ({
   }
   cacheManager.del(PROVIDER_NS);
   cacheManager.del(SHOP_NS);
+  await auditService.record({
+    adminUid,
+    action: approve ? "PROVIDER_APPROVED" : "PROVIDER_DENIED",
+    category: "PROVIDER",
+    targetType: "PROVIDER",
+    targetId: providerId,
+    targetLabel: existing.name,
+    before: {status: existing.status},
+    after: {status: approve ? PROVIDER_STATUS.ACTIVE : PROVIDER_STATUS.DENIED},
+    note: reviewNote ?? null,
+    meta: {kind: existing.kind},
+  });
   return {
     decided: true,
     status: approve ? PROVIDER_STATUS.ACTIVE : PROVIDER_STATUS.DENIED,
@@ -121,7 +132,7 @@ export const reportProvider = async ({
       "You already have an open report for this provider",
     );
   }
-  return providerReportRepository.create({
+  const report = await providerReportRepository.create({
     providerId,
     providerKind: provider.kind,
     targetUid: (provider.operatorUid as string | null) ?? null,
@@ -130,6 +141,14 @@ export const reportProvider = async ({
     reason,
     note,
   });
+  await deliverAdminPush({
+    event: "PROVIDER_REPORT",
+    title: "New provider report",
+    body: `${provider.name}: ${reason}`,
+    refId: report.id,
+    route: "/admin?section=requests",
+  }).catch(() => undefined);
+  return report;
 };
 
 export const listReports = async (adminUid: string) => {
@@ -171,6 +190,16 @@ export const dismissReport = async ({
     status: PROVIDER_REPORT_STATUS.DISMISSED,
     resolution: "NONE",
     decidedBy: adminUid,
+  });
+  await auditService.record({
+    adminUid,
+    action: "PROVIDER_REPORT_DISMISSED",
+    category: "PROVIDER",
+    targetType: "PROVIDER_REPORT",
+    targetId: reportId,
+    targetLabel: report.providerId,
+    before: {status: report.status},
+    after: {status: PROVIDER_REPORT_STATUS.DISMISSED},
   });
   return {dismissed};
 };
@@ -222,6 +251,18 @@ export const revokeProvider = async ({
   await providerLocationRepository.remove(providerId);
   cacheManager.del(PROVIDER_NS);
   cacheManager.del(SHOP_NS);
+  if (caller.role === ROLE_ADMIN) {
+    await auditService.record({
+      adminUid: userId,
+      action: "PROVIDER_REVOKED",
+      category: "PROVIDER",
+      targetType: "PROVIDER",
+      targetId: providerId,
+      targetLabel: provider.name,
+      before: {status: provider.status},
+      after: {status: PROVIDER_STATUS.DENIED},
+    });
+  }
   return {revoked: true};
 };
 
@@ -264,6 +305,18 @@ export const suspendProvider = async ({
       decidedBy: adminUid,
     });
   }
+  await auditService.record({
+    adminUid,
+    action: "PROVIDER_SUSPENDED",
+    category: "PROVIDER",
+    targetType: "PROVIDER",
+    targetId: providerId,
+    targetLabel: provider.name,
+    before: {suspended: provider.suspended === true},
+    after: {suspended: true},
+    note: reason ?? null,
+    meta: {reportId: reportId ?? null},
+  });
   return {suspended: true, reportDecided};
 };
 
@@ -293,5 +346,15 @@ export const restoreProvider = async ({
   });
   cacheManager.del(PROVIDER_NS);
   cacheManager.del(SHOP_NS);
+  await auditService.record({
+    adminUid,
+    action: "PROVIDER_RESTORED",
+    category: "PROVIDER",
+    targetType: "PROVIDER",
+    targetId: providerId,
+    targetLabel: provider.name,
+    before: {suspended: true},
+    after: {suspended: false},
+  });
   return {restored: true, suspended: false};
 };

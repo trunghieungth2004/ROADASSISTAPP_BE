@@ -2,7 +2,6 @@ import {strReq} from "./primitives";
 import Joi from "joi";
 import {RATING_MAX, RATING_MIN, RATING_TARGET} from "../../constants/status";
 
-
 export const ratingsSchemas = {
   submitRating: Joi.object({
     targetId: strReq(),
@@ -24,4 +23,5 @@ export const ratingsSchemas = {
   ratingsByTicket: Joi.object({
     ticketId: strReq(),
   }),
+  receivedRatings: Joi.object({}),
 };

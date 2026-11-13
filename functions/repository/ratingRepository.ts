@@ -1,4 +1,5 @@
 import {db} from "../config/firebase";
+import {RATING_WINDOW} from "../constants/ratings";
 
 interface Rating {
   id: string;
@@ -8,6 +9,12 @@ interface Rating {
   ticketId: string;
   score: number;
   text?: string;
+  excluded?: boolean;
+  excludedAt?: string | null;
+  excludedBy?: string | null;
+  exclusionReason?: string | null;
+  exclusionSource?: string | null;
+  exclusionRef?: string | null;
   createdAt: string;
   updatedAt: string;
   [key: string]: unknown;
@@ -45,6 +52,12 @@ const create = async (data: {
   const doc = {
     id: ref.id,
     ...data,
+    excluded: false,
+    excludedAt: null,
+    excludedBy: null,
+    exclusionReason: null,
+    exclusionSource: null,
+    exclusionRef: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -99,6 +112,27 @@ const listByTarget = async (
   return results;
 };
 
+const listRecentByTarget = async (
+  targetId: string,
+  targetKind: string,
+  limit = RATING_WINDOW * 3,
+): Promise<Rating[]> => {
+  const snap = await db
+    .collection("ratings")
+    .where("targetId", "==", targetId)
+    .where("targetKind", "==", targetKind)
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  const rows: Rating[] = [];
+  snap.forEach((doc) =>
+    rows.push({id: doc.id, ...doc.data()} as Rating),
+  );
+  return rows
+    .filter((row) => row.excluded !== true)
+    .slice(0, RATING_WINDOW);
+};
+
 const listByTicket = async (ticketId: string): Promise<Rating[]> => {
   const snap = await db
     .collection("ratings")
@@ -111,15 +145,56 @@ const listByTicket = async (ticketId: string): Promise<Rating[]> => {
   return results;
 };
 
+const listAll = async (): Promise<Rating[]> => {
+  const snap = await db.collection("ratings").get();
+  const results: Rating[] = [];
+  snap.forEach((doc) =>
+    results.push({id: doc.id, ...doc.data()} as Rating),
+  );
+  return results;
+};
+
 const aggregate = async (
   targetId: string,
   targetKind: string,
 ): Promise<{avg: number; count: number}> => {
-  const rows = await listByTarget(targetId, targetKind);
+  const rows = await listRecentByTarget(targetId, targetKind);
   if (rows.length === 0) return {avg: 0, count: 0};
   const sum = rows.reduce((acc, r) => acc + (r.score as number), 0);
   return {avg: sum / rows.length, count: rows.length};
 };
 
-export {findExisting, create, updateScore, findById, updateReply,
-  listByTarget, listByTicket, aggregate};
+const exclude = async (
+  id: string,
+  data: {
+    excludedBy: string;
+    exclusionReason: string;
+    exclusionSource: string;
+    exclusionRef: string | null;
+  },
+): Promise<void> => {
+  await db.collection("ratings").doc(id).update({
+    excluded: true,
+    excludedAt: new Date().toISOString(),
+    excludedBy: data.excludedBy,
+    exclusionReason: data.exclusionReason,
+    exclusionSource: data.exclusionSource,
+    exclusionRef: data.exclusionRef,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+export {
+  Rating,
+  findExisting,
+  create,
+  updateScore,
+  findById,
+  updateReply,
+  listByTarget,
+  listRecentByTarget,
+  listByTicket,
+  listAll,
+  aggregate,
+  exclude,
+};

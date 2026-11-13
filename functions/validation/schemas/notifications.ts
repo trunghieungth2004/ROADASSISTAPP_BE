@@ -1,6 +1,5 @@
 import Joi from "joi";
 
-
 export const notificationsSchemas = {
   notificationPrefs: Joi.object({}),
   notificationPrefsUpdate: Joi.object({

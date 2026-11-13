@@ -6,6 +6,7 @@ import * as providerRepository from
 import * as providerLocationRepository from
   "../../repository/providerLocationRepository";
 import {haversineMeters} from "../../utils/geo";
+import {costingForVehicle, postRoute} from "../../utils/valhalla";
 import {enqueueDispatchPush} from "../taskQueueService";
 import {NS} from "./constants";
 import {roundFare, stampTowFare} from "./fare";
@@ -26,7 +27,7 @@ import {
 import {ROLE_ADMIN} from "../../constants/roles";
 import {ConflictError, ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
-import {logError} from "../../utils/logger";
+import {logError, logWarn} from "../../utils/logger";
 import * as cacheManager from "../../utils/cacheManager";
 
 export const acceptAsShop = async (
@@ -95,21 +96,57 @@ export const acceptAsShop = async (
       typeof fix.lng === "number" &&
       typeof fix.lastSeen === "string" &&
       Date.now() - Date.parse(fix.lastSeen) < PROVIDER_FRESH_MS;
-    const meters = fresh && fix ?
-      haversineMeters(ticket.lat, ticket.lng, fix.lat, fix.lng) :
-      null;
-    const waived = meters !== null && meters <= MOBILE_SHOP_CALL_OUT_WAIVER_M;
+    const origin = fresh && fix ?
+      {lat: fix.lat, lng: fix.lng} :
+      typeof shop.lat === "number" && typeof shop.lng === "number" ?
+        {lat: shop.lat, lng: shop.lng} :
+        null;
+    let travelKm: number | null = null;
+    let travelSource: string | null = null;
+    if (origin !== null) {
+      try {
+        const route = await postRoute(
+          [
+            {lat: origin.lat, lng: origin.lng},
+            {lat: ticket.lat, lng: ticket.lng},
+          ],
+          [],
+          costingForVehicle(shop.vehicleType ?? undefined),
+        );
+        const meters = route.distanceMeters;
+        if (typeof meters === "number" && meters > 0) {
+          travelKm = meters / 1000;
+          travelSource = fresh ? "ROUTE" : "PROVIDER_BASE";
+        }
+      } catch (err) {
+        logWarn("dispatch", "sos-travel-route-fallback", {
+          ticketId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      if (travelKm === null) {
+        travelKm = haversineMeters(
+          ticket.lat,
+          ticket.lng,
+          origin.lat,
+          origin.lng,
+        ) / 1000;
+        travelSource = fresh ? "FALLBACK" : "PROVIDER_BASE";
+      }
+    }
+    const waived = travelKm !== null &&
+      travelKm * 1000 <= MOBILE_SHOP_CALL_OUT_WAIVER_M;
     const callOutFee = typeof shop.callOutFee === "number" ?
       shop.callOutFee :
       MOBILE_SHOP_CALL_OUT_FEE;
     const travelPerKm = typeof shop.travelPerKmFee === "number" ?
       shop.travelPerKmFee :
       MOBILE_SHOP_TRAVEL_PER_KM;
-    const travelKm = meters !== null ? meters / 1000 : null;
     mobileFees.mobileCallOutFee = waived ? 0 : callOutFee;
     mobileFees.mobileCallOutWaived = waived;
     mobileFees.mobileTravelKm = travelKm;
     mobileFees.mobileTravelRate = travelPerKm;
+    mobileFees.mobileTravelSource = travelSource;
     mobileFees.mobileTravelFee = travelKm !== null ?
       roundFare(travelKm * travelPerKm) :
       0;
@@ -263,7 +300,6 @@ export const stampTowEta = async (
     return;
   }
 };
-
 
 export const acceptDispatch = async ({
   userId,

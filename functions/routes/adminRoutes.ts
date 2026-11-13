@@ -3,6 +3,8 @@ import {RouteDeps} from "../types/routes";
 import {writeLimited} from "../middleware/rateLimit";
 import {ROLE_ADMIN} from "../constants/roles";
 import * as adminController from "../controller/adminController";
+import * as adminTicketController from "../controller/adminTicketController";
+import * as adminSearchController from "../controller/adminSearchController";
 import * as payoutController from "../controller/payoutController";
 import * as refundController from "../controller/refundController";
 import * as warrantyController from "../controller/warrantyController";
@@ -167,6 +169,20 @@ export default (
     requireRole(ROLE_ADMIN),
     validate({body: schemas.adminAudit}),
     adminController.audit,
+  );
+  app.post(
+    "/admin/search",
+    requireAuth,
+    requireRole(ROLE_ADMIN),
+    validate({body: schemas.adminSearch}),
+    adminSearchController.search,
+  );
+  app.post(
+    "/admin/tickets",
+    requireAuth,
+    requireRole(ROLE_ADMIN),
+    validate({body: schemas.adminTickets}),
+    adminTicketController.list,
   );
   app.post(
     "/admin/dashboard",

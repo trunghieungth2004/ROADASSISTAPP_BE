@@ -8,6 +8,9 @@ const ROUTES_DIR = path.resolve(__dirname, "../../routes");
 const readDoc = (name: string): string =>
   fs.readFileSync(path.join(DOCS_DIR, name), "utf8");
 
+const readRoot = (name: string): string =>
+  fs.readFileSync(path.join(DOCS_DIR, "..", name), "utf8");
+
 describe("docs drift guard", () => {
   it("contains no retired provider-model tokens", () => {
     const retired = [
@@ -28,6 +31,19 @@ describe("docs drift guard", () => {
     for (const token of retired) {
       expect(docs).not.toContain(token);
     }
+  });
+
+  it("contains no retired sub-brand or diagnostics tokens", () => {
+    const docs = [
+      readRoot("README.md"),
+      readDoc("API.md"),
+      readDoc("SCHEMA.md"),
+      readDoc("ARCHITECTURE.md"),
+      readDoc("INFRASTRUCTURE.md"),
+      readDoc("TESTING.md"),
+    ].join("\n");
+    expect(docs).not.toMatch(/xeassist|hẻmnav/i);
+    expect(docs).not.toMatch(/diagnostic/i);
   });
 
   it("documents every registered route path", () => {

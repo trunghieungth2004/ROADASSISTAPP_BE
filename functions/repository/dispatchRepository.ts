@@ -9,7 +9,7 @@ interface DispatchTicket {
   status: string;
   lat: number;
   lng: number;
-  diagnosticId?: string | null;
+  symptom?: string | null;
   note?: string | null;
   description?: string | null;
   photoUrls?: string[];
@@ -113,7 +113,7 @@ interface DispatchTicket {
   finalAmount?: number | null;
   mobileCallOutFee?: number | null; mobileCallOutWaived?: boolean | null;
   mobileTravelFee?: number | null; mobileTravelKm?: number | null;
-  mobileTravelRate?: number | null;
+  mobileTravelRate?: number | null; mobileTravelSource?: string | null;
   mobileFeeHistory?: Array<{
     shopId: string;
     shopName?: string | null;
@@ -272,7 +272,6 @@ const create = async (data: {
   ticketType: string;
   lat: number;
   lng: number;
-  diagnosticId?: string;
   note?: string;
   description?: string;
   photoUrls?: string[];
@@ -326,7 +325,7 @@ const create = async (data: {
     userId: data.userId,
     ticketType: data.ticketType,
     lat: data.lat, lng: data.lng,
-    diagnosticId: orNull(data.diagnosticId), note: orNull(data.note),
+    note: orNull(data.note),
     description: orNull(data.description), photoUrls: data.photoUrls ?? [],
     declinedShopIds: data.declinedShopIds ?? [],
     pickupHistory: data.pickupHistory ?? [],

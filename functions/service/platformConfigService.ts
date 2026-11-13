@@ -132,15 +132,21 @@ const updateConfig = async (
   if (Object.keys(clean).length === 0) {
     throw new ValidationError("Nothing to update");
   }
+  const current = await getConfig();
+  const keys = Object.keys(clean);
   clean.updatedBy = adminUid;
   const updated = await platformConfigRepository.update(clean);
   configCached.invalidate(PLATFORM_CONFIG_ID);
   await auditService.record({
     adminUid,
     action: "CONFIG_UPDATED",
+    category: "CONFIG",
     targetType: "platform_config",
     targetId: PLATFORM_CONFIG_ID,
-    meta: {keys: Object.keys(clean)},
+    targetLabel: "Platform config",
+    before: Object.fromEntries(keys.map((key) => [key, current[key] ?? null])),
+    after: Object.fromEntries(keys.map((key) => [key, clean[key] ?? null])),
+    meta: {keys},
   });
   return updated;
 };

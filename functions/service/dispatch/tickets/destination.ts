@@ -1,12 +1,9 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
-
 
 import {stopWaiting} from "../waiting";
 import {NS} from "../constants";
-
 
 import {resolveDestination} from "../helpers";
 
@@ -16,7 +13,6 @@ import {stampTowEta} from "../accept";
 
 import {STATUS_DISPATCH} from "../../../constants/status";
 
-
 import {
   ForbiddenError,
   NotFoundError,
@@ -24,7 +20,6 @@ import {
 } from "../../../utils/errors";
 
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const updateDispatchDestination = async ({userId,
   ticketId,

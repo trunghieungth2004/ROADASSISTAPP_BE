@@ -1,7 +1,6 @@
 import {strReq} from "./primitives";
 import Joi from "joi";
 
-
 import {
   BILL_LIST_MAX,
   PAYMENT_LIST_MAX,
@@ -9,7 +8,6 @@ import {
   PAYMENT_STATUS,
 } from "../../constants/payments";
 import {SUBSCRIPTION_PLAN_IDS} from "../../constants/subscriptions";
-
 
 export const paymentsSchemas = {
   createPayment: Joi.object({

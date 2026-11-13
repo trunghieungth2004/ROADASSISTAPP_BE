@@ -215,7 +215,6 @@ describe("schemas reject invalid input", () => {
     expect(error).toBeDefined();
   });
 
-
   it("getRoute requires all coordinates", () => {
     const {error} = table.getRoute.validate({
       originLat: 10.7,
@@ -278,6 +277,20 @@ describe("schemas reject invalid input", () => {
     expect(
       table.deliverDispatch.validate(
         {ticketId: "t1", audience: "destination-shop", shopId: "shop9"},
+      ).error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate(
+        {ticketId: "t1", audience: "participants"},
+      ).error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate({ticketId: "t1", audience: "shop"})
+        .error,
+    ).toBeUndefined();
+    expect(
+      table.deliverDispatch.validate(
+        {ticketId: "t1", audience: "status-blind"},
       ).error,
     ).toBeUndefined();
     expect(

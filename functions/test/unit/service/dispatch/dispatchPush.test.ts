@@ -40,7 +40,6 @@ beforeEach(() => {
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
 
-
 describe("dispatchService.deliverDispatchPush", () => {
   it("skips when FCM is disabled", async () => {
     await expect(deliverDispatchPush("t1")).resolves.toEqual({
@@ -1132,5 +1131,41 @@ describe("dispatchService.deliverDispatchPush", () => {
     const payload = messaging.sendEach.mock.calls.at(-1)?.[0]?.[0];
     expect(payload?.android?.priority).toBe("high");
     expect(payload?.data?.urgent).toBe("true");
+  });
+});
+
+describe("dispatchService.deliverDispatchPush participants", () => {
+  it("notifies both the rider and the provider", async () => {
+    process.env.FCM_ENABLED = "true";
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      status: "4",
+      userId: "rider1",
+      assignedShopId: "shop1",
+      ticketType: "SOS",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(fcmTokenRepository.findByUserId).mockImplementation(
+      async (uid: string) => ({
+        userId: uid,
+        tokens: [`tok-${uid}`],
+        updatedAt: "now",
+      }) as never,
+    );
+    jest.mocked(fcmTokenRepository.findByUserIds).mockResolvedValue(new Map());
+
+    await deliverDispatchPush(
+      "t1",
+      "participants",
+      {title: "Dispute resolved", body: "Rider wins"},
+      undefined,
+      true,
+    );
+
+    const calls = jest.mocked(fcmTokenRepository.findByUserId).mock.calls;
+    expect(calls.map(([uid]) => uid).sort()).toEqual(["op1", "rider1"]);
   });
 });

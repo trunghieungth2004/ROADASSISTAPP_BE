@@ -34,7 +34,6 @@ import {
   BOOKING_SLOT_MINUTES_MIN,
 } from "../../constants/booking";
 
-
 import {
   ConflictError,
   ForbiddenError,
@@ -43,7 +42,6 @@ import {
 } from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 import * as platformConfigService from "../platformConfigService";
-
 
 export const PLATE_SHAPE = /^\d{2}[A-Z0-9]{1,3}\d{4,6}$/;
 export const SHOP_NS = "shop";
@@ -368,7 +366,6 @@ export const createTowProvider = async ({
   }
 };
 
-
 const applyBookingFields = (
   patch: Record<string, unknown>,
   fields: {
@@ -466,7 +463,6 @@ const applyBookingFields = (
   }
 };
 
-
 const assertAcceptingChange = async (
   providerId: string,
   kind: string,
@@ -496,6 +492,19 @@ const assertAcceptingChange = async (
   if (named.length > 0) {
     throw new ValidationError(
       "Decline the tow destination before closing the shop",
+    );
+  }
+};
+
+const assertProviderNotRestricted = (
+  provider: {restrictedUntil?: unknown},
+  accepting?: boolean,
+): void => {
+  if (accepting === true &&
+    typeof provider.restrictedUntil === "string" &&
+    Date.parse(provider.restrictedUntil) > Date.now()) {
+    throw new ValidationError(
+      "Your provider is restricted from accepting new jobs",
     );
   }
 };
@@ -548,6 +557,7 @@ export const updateProvider = async ({
   if (operator !== userId && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the operator updates this provider");
   }
+  assertProviderNotRestricted(provider, fields.accepting);
   await assertAcceptingChange(providerId, provider.kind, fields.accepting);
   if (fields.vehicleClasses !== undefined &&
     provider.kind !== PROVIDER_KIND.SHOP &&

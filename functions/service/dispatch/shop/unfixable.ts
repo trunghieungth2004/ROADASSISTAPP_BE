@@ -4,21 +4,17 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
 
 import {stopWaiting} from "../waiting";
 import {NS, UNFIX_GRACE_MS} from "../constants";
 
-
 import {STATUS_DISPATCH} from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
-
 
 import {continueSos} from "../sos";
 import {mobileTowAvailabilityFor} from "../summary";
 import {chatService} from "../../chatService";
-
 
 import {
   ForbiddenError,
@@ -28,7 +24,6 @@ import {
 import * as cacheManager from "../../../utils/cacheManager";
 import {validatePhotoPaths} from "../../../utils/media";
 import {DISPATCH_PHOTO_PREFIX} from "../../../constants/media";
-
 
 const returnTowOfferPatch = (
   ticket: dispatchRepository.DispatchTicket,

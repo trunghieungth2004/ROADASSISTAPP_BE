@@ -72,7 +72,7 @@ an explicit flag beats `VALHALLA_MODE`. Full mode matrix:
 
 Photos and invoice PDFs live in the Firebase Storage default bucket
 (`roadassistapp-c2e37.firebasestorage.app`); access is governed by
-`rules/storage.rules` (per-user `flags`/`diagnostics`, signed-in
+`rules/storage.rules` (per-user `flags`, signed-in
 `dispatch`/`payments`, ≤800 KB image-only writes) and deployed by the
 `storage` step of `scripts/deploy.sh` (`firebase deploy --only storage`).
 Invoice downloads use Firebase download tokens stored in the PDF object's

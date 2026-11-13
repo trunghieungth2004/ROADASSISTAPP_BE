@@ -1,17 +1,12 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
-
 
 import {LATE_GRACE_MS, NS} from "../constants";
 
-
 import {STATUS_DISPATCH} from "../../../constants/status";
 
-
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const sweepLateTows = async (): Promise<{notified: number}> => {
   const tickets = await dispatchRepository.findByStatusForTypes(

@@ -3,7 +3,6 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {db, FieldValue} from "../../../config/firebase";
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {autoFile} from "../../disputeService";
@@ -11,13 +10,10 @@ import {startWaiting} from "../waiting";
 import {NS, SHOP_DECLINE_REASON, TERMINAL_STATUSES} from "../constants";
 import {ACCUSED_KIND, DISPUTE_TYPE} from "../../../constants/disputes";
 
-
 import {ROLE_ADMIN} from "../../../constants/roles";
 import {freezeTowLeg} from "../helpers";
 
-
 import {chatService} from "../../chatService";
-
 
 import {
   ForbiddenError,
@@ -25,7 +21,6 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const declineDestination = async ({
   userId,

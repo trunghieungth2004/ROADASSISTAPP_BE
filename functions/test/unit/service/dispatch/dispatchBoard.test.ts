@@ -5,14 +5,12 @@ import * as providerRepository from "../../../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
-
 import {
   nearDispatch,
   dispatchOffers,
   selectDispatch,
   findTowOperators,
 } from "../../../../service/dispatchService";
-
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -34,7 +32,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService.selectDispatch", () => {
   const ticket = {
@@ -111,7 +108,6 @@ describe("dispatchService.selectDispatch", () => {
     );
   });
 });
-
 
 describe("dispatchService.nearDispatch", () => {
   it("filters pending tow tickets by radius and sorts", async () => {
@@ -361,7 +357,6 @@ describe("dispatchService.nearDispatch", () => {
   });
 });
 
-
 describe("dispatchService.dispatchOffers", () => {
   it("lists accepting providers nearest first", async () => {
     jest.mocked(providerRepository.findByGeohashPrefixes).mockResolvedValue(
@@ -380,7 +375,6 @@ describe("dispatchService.dispatchOffers", () => {
     expect(result.map((s) => (s as {id: string}).id)).toEqual(["near"]);
   });
 });
-
 
 describe("dispatchService.findTowOperators", () => {
   const tow = (overrides: Record<string, unknown>) => ({

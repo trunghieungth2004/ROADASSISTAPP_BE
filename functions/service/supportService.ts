@@ -9,6 +9,8 @@ import {
 } from "../constants/support";
 import {ROLE_ADMIN} from "../constants/roles";
 import {ForbiddenError, NotFoundError, ValidationError} from "../utils/errors";
+import {deliverAdminPush} from "./push/admin";
+import * as auditService from "./auditService";
 
 const createTicket = async (input: {
   userId: string;
@@ -24,12 +26,20 @@ const createTicket = async (input: {
     message.length > SUPPORT_MESSAGE_MAX) {
     throw new ValidationError("Describe the issue in 10-1000 characters");
   }
-  return supportRepository.create({
+  const ticket = await supportRepository.create({
     userId: input.userId,
     category: input.category,
     message,
     ticketId: input.ticketId ?? null,
   });
+  await deliverAdminPush({
+    event: "SUPPORT_MESSAGE",
+    title: "New support message",
+    body: `${input.category}: ${message.slice(0, 120)}`,
+    refId: String(ticket.id ?? ""),
+    route: "/admin?section=support",
+  }).catch(() => undefined);
+  return ticket;
 };
 
 const myTickets = async (input: {
@@ -68,15 +78,28 @@ const respond = async (input: {
   if (answer === "" || answer.length > SUPPORT_ANSWER_MAX) {
     throw new ValidationError("Answer is invalid");
   }
+  const status = input.close === true ?
+    SUPPORT_STATUS.CLOSED :
+    SUPPORT_STATUS.ANSWERED;
   await supportRepository.update(ticket.id, {
     answer,
     answeredAt: new Date().toISOString(),
     answeredBy: input.userId,
-    status: input.close === true ?
-      SUPPORT_STATUS.CLOSED :
-      SUPPORT_STATUS.ANSWERED,
+    status,
   });
-  return {...ticket, answer, status: SUPPORT_STATUS.ANSWERED};
+  await auditService.record({
+    adminUid: input.userId,
+    action: input.close === true ? "SUPPORT_CLOSED" : "SUPPORT_REPLIED",
+    category: "CONTENT",
+    targetType: "SUPPORT",
+    targetId: ticket.id,
+    targetLabel: String(ticket.category ?? ticket.id ?? ""),
+    before: {status: ticket.status},
+    after: {status},
+    note: answer,
+    meta: {requesterUid: ticket.userId ?? null},
+  });
+  return {...ticket, answer, status};
 };
 
 export {createTicket, myTickets, adminList, respond};

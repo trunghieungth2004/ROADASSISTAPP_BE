@@ -29,6 +29,14 @@ export default (
     disputeController.listAll,
   );
   app.post(
+    "/disputes/dismiss",
+    writeLimited,
+    requireAuth,
+    requireRole(ROLE_ADMIN),
+    validate({body: schemas.dismissDispute}),
+    disputeController.dismiss,
+  );
+  app.post(
     "/disputes/resolve",
     writeLimited,
     requireAuth,

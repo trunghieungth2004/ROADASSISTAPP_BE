@@ -117,7 +117,6 @@ export const deliverStatusPush = async (
   return {delivered, skipped: false};
 };
 
-
 export const deliverShopPush = async (
   ticket: Record<string, unknown> & {id: string},
   shopId: string,
@@ -155,7 +154,6 @@ export const deliverShopPush = async (
   return {delivered, skipped: false};
 };
 
-
 export const deliverOperatorPush = async (
   ticket: Record<string, unknown> & {id: string},
   notice?: Notice,
@@ -171,6 +169,11 @@ export const deliverOperatorPush = async (
       operatorUid = shop.operatorUid;
       break;
     }
+  }
+  if (!operatorUid &&
+    typeof ticket.assignedUid === "string" &&
+    ticket.assignedUid !== "") {
+    operatorUid = ticket.assignedUid;
   }
   if (!operatorUid) return {delivered: 0, skipped: true};
   const record = await fcmTokenRepository.findByUserId(operatorUid);
@@ -198,7 +201,6 @@ export const deliverOperatorPush = async (
   const delivered = await sendChunked(addressed);
   return {delivered, skipped: false};
 };
-
 
 export const fanOutToCandidates = async (
   ticket: Record<string, unknown> & {id: string},
@@ -294,6 +296,16 @@ const deliverDispatchPushInner = async (
   if (!fcmEnabled()) return {delivered: 0, skipped: true};
   const ticket = await dispatchRepository.findById(ticketId);
   if (!ticket) return {delivered: 0, skipped: true};
+  if (audience === "participants") {
+    const [riderResult, operatorResult] = await Promise.all([
+      deliverStatusPush(ticket, notice, urgent, action),
+      deliverOperatorPush(ticket, notice, urgent),
+    ]);
+    return {
+      delivered: riderResult.delivered + operatorResult.delivered,
+      skipped: riderResult.skipped && operatorResult.skipped,
+    };
+  }
   if (audience === "operator") {
     return deliverOperatorPush(ticket, notice, urgent);
   }

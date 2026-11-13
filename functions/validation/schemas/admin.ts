@@ -1,8 +1,8 @@
 import {strReq, strOpt, emptyBody} from "./primitives";
 import Joi from "joi";
 
-
 import {REPORT_FORMAT} from "../../constants/reports";
+import {WARRANTY_DECLINE_REASON} from "../../constants/warranty";
 
 import {
   PAYMENT_LIST_MAX,
@@ -17,7 +17,6 @@ import {
   ACCOUNT_NUMBER_PATTERN,
   HOLDER_NAME_PATTERN,
 } from "../../constants/banks";
-
 
 export const adminSchemas = {
   adminConfigGet: emptyBody(),
@@ -174,11 +173,22 @@ export const adminSchemas = {
   warrantyRespond: Joi.object({
     claimId: strReq(),
     accept: Joi.boolean().required(),
-    note: Joi.string().trim().max(280).allow("", null).optional(),
+    reasonCode: Joi.string()
+      .valid(...Object.values(WARRANTY_DECLINE_REASON))
+      .when("accept", {
+        is: false,
+        then: Joi.required(),
+        otherwise: Joi.forbidden(),
+      }),
+    note: Joi.when("accept", {
+      is: false,
+      then: Joi.string().trim().min(5).max(280).required(),
+      otherwise: Joi.string().trim().max(280).allow("", null).optional(),
+    }),
   }),
   warrantyDispute: Joi.object({
     claimId: strReq(),
-    note: Joi.string().trim().max(280).allow("", null).optional(),
+    note: Joi.string().trim().min(5).max(280).required(),
   }),
   adminWarrantyClaims: Joi.object({
     status: Joi.string().trim().max(24).optional(),
@@ -192,6 +202,16 @@ export const adminSchemas = {
   }),
   adminAudit: Joi.object({
     limit: Joi.number().integer().min(1).max(200).optional(),
+    before: Joi.string().isoDate().optional(),
+    from: Joi.string().isoDate().optional(),
+    to: Joi.string().isoDate().optional(),
+  }),
+  adminSearch: Joi.object({
+    query: Joi.string().trim().min(1).max(120).required(),
+  }),
+  adminTickets: Joi.object({
+    status: Joi.string().trim().max(4).optional(),
+    limit: Joi.number().integer().min(1).max(500).optional(),
   }),
   adminDashboard: Joi.object({
     days: Joi.number().integer().min(1).max(365).optional(),

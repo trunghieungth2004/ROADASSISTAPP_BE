@@ -7,7 +7,6 @@ import * as vehicleProfileRepository from
 import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
-
 import {
   getMyTickets,
   getDispatch,
@@ -15,7 +14,6 @@ import {
   shopRecords,
   feedTickets,
 } from "../../../../service/dispatchService";
-
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -41,7 +39,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService.getMyTickets", () => {
   it("returns the caller tickets newest-first", async () => {
@@ -176,7 +173,6 @@ describe("dispatchService.getDispatch", () => {
   });
 });
 
-
 describe("dispatchService shop read models", () => {
   it("lists inbound walk-ins for the operator", async () => {
     jest.mocked(providerRepository.findById).mockResolvedValue({
@@ -234,7 +230,6 @@ describe("dispatchService shop read models", () => {
     );
   });
 });
-
 
 describe("dispatchService feedTickets", () => {
   it("throws 404 for an unknown user", async () => {

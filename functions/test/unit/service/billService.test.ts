@@ -4,6 +4,7 @@ import * as paymentRepository from "../../../repository/paymentRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as refundRepository from "../../../repository/refundRepository";
+import * as disputeRepository from "../../../repository/disputeRepository";
 import {billableAmountFor} from "../../../service/paymentService";
 import {
   getBill,
@@ -19,6 +20,7 @@ jest.mock("../../../repository/paymentRepository");
 jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
 jest.mock("../../../repository/refundRepository");
+jest.mock("../../../repository/disputeRepository");
 
 type TicketPatch = Record<string, unknown>;
 
@@ -109,6 +111,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([]);
   jest.mocked(refundRepository.findByPaymentId).mockResolvedValue([]);
+  jest.mocked(disputeRepository.findByTicketId).mockResolvedValue([]);
   jest.mocked(providerRepository.findById).mockResolvedValue(null);
   jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
   jest.mocked(dispatchRepository.findRecentForShop).mockResolvedValue([]);

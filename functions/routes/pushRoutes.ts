@@ -15,7 +15,7 @@ const mountPushDeliver = (app: Express, {validate, schemas}: RouteDeps) => {
 
 export default (
   app: Express,
-  {requireAuth, validate, schemas}: RouteDeps,
+  {requireAuth, requireRole, validate, schemas}: RouteDeps,
 ) => {
   app.post(
     "/push/register",
@@ -37,6 +37,22 @@ export default (
     requireAuth,
     validate({body: schemas.pingPush}),
     pushController.ping,
+  );
+  app.post(
+    "/admin/push/register",
+    writeLimited,
+    requireAuth,
+    requireRole("1"),
+    validate({body: schemas.adminRegisterPush}),
+    pushController.adminRegister,
+  );
+  app.post(
+    "/admin/push/unregister",
+    writeLimited,
+    requireAuth,
+    requireRole("1"),
+    validate({body: schemas.adminUnregisterPush}),
+    pushController.adminUnregister,
   );
 };
 

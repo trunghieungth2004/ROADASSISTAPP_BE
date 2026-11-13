@@ -1,5 +1,3 @@
-
-
 import {isOpenNow, nextTransition} from "../../../../service/providerService";
 
 jest.mock("../../../../repository/dispatchRepository", () => ({
@@ -53,7 +51,6 @@ beforeEach(() => {
   reports.countOpenForProvider.mockResolvedValue(0);
 });
 
-
 describe("providerService.isOpenNow uses Vietnam local time", () => {
   const at = (y: number, m: number, d: number, h: number, min: number): Date =>
     new Date(Date.UTC(y, m, d, h, min));
@@ -93,7 +90,6 @@ describe("providerService.isOpenNow uses Vietnam local time", () => {
     expect(isOpenNow("garbage")).toBeNull();
   });
 });
-
 
 describe("providerService.nextTransition", () => {
   const monday = (h: number, m = 0): Date =>

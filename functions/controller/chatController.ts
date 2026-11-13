@@ -43,4 +43,14 @@ const sendMessage = async (req: Request, res: Response) => {
   }
 };
 
-export {openRoom, listMessages, sendMessage};
+const adminMessages = async (req: Request, res: Response) => {
+  try {
+    const {ticketId} = req.body;
+    const result = await chatService.adminMessages({ticketId});
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {openRoom, listMessages, sendMessage, adminMessages};

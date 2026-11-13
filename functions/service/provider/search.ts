@@ -3,24 +3,32 @@ import {isOpenNow, nextTransition, servesVehicleClass} from "./schedule";
 import * as providerRepository from "../../repository/providerRepository";
 import * as dispatchRepository from "../../repository/dispatchRepository";
 
-
 import * as userRepository from "../../repository/userRepository";
-
 
 import {
   boundsForRadiusMeters,
   cellsCoveringBounds,
   haversineMeters,
 } from "../../utils/geo";
-import {NEAR_SHOPS_MAX, PROVIDER_STATUS} from "../../constants/status";
+import {
+  NEAR_SHOPS_MAX,
+  PROVIDER_STATUS,
+  VEHICLE_CLASS,
+} from "../../constants/status";
+import {TOW_FARE} from "../../constants/dispatch";
 
 import {normalizeVehicleType} from "../../utils/vehicleType";
-
+import {costingForVehicle, postRoute} from "../../utils/valhalla";
+import {logWarn} from "../../utils/logger";
 
 import {NotFoundError} from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 import * as platformConfigService from "../platformConfigService";
-
+import {
+  compareShopPrice,
+  estimateShopPrice,
+  type ShopPriceEstimate,
+} from "./priceRank";
 
 const myProvidersInner = async ({userId}: {userId: string}) => {
   const user = await userRepository.findById(userId);
@@ -67,13 +75,144 @@ type SearchExtrasRow = {
   id: string;
 };
 
+type PriceFields = Partial<ShopPriceEstimate>;
+
+type PriceRow = {
+  id: string;
+  lat: number;
+  lng: number;
+  distance: number;
+  openNow?: unknown;
+  ratingAvg?: unknown;
+  services?: unknown;
+  serviceFee?: unknown;
+} & PriceFields;
+
+const PRICE_ROUTE_TOP_N = 12;
+
+const perKmForClass = async (vehicleClass?: string): Promise<number> => {
+  const rates = await platformConfigService.getTowRates()
+    .catch(() => null);
+  if (vehicleClass === VEHICLE_CLASS.CAR) {
+    return rates?.CAR.perKm ?? TOW_FARE.CAR.perKm;
+  }
+  return rates?.SOLO_BIKE.perKm ?? TOW_FARE.SOLO_BIKE.perKm;
+};
+
+const withPriceEstimate = (
+  row: PriceRow,
+  {
+    vehicleClass,
+    serviceCategory,
+    perKm,
+  }: {
+    vehicleClass?: string;
+    serviceCategory?: string;
+    perKm: number;
+  },
+): PriceRow => ({
+  ...row,
+  ...estimateShopPrice({
+    provider: row,
+    distanceMeters: row.distance,
+    vehicleClass,
+    serviceCategory,
+    perKm,
+  }),
+});
+
+const routePriceRows = async (
+  rows: PriceRow[],
+  {
+    lat,
+    lng,
+    vehicleClass,
+    serviceCategory,
+    perKm,
+  }: {
+    lat: number;
+    lng: number;
+    vehicleClass?: string;
+    serviceCategory?: string;
+    perKm: number;
+  },
+): Promise<PriceRow[]> => {
+  const top = [...rows]
+    .filter((row) => typeof row.estimatedTotal === "number")
+    .sort(compareShopPrice)
+    .slice(0, PRICE_ROUTE_TOP_N);
+  await Promise.all(top.map(async (row) => {
+    try {
+      const route = await postRoute(
+        [{lat, lng}, {lat: row.lat, lng: row.lng}],
+        [],
+        costingForVehicle(
+          vehicleClass === VEHICLE_CLASS.CAR ? "CAR" : undefined,
+        ),
+      );
+      if (typeof route.distanceMeters !== "number" ||
+        route.distanceMeters <= 0) {
+        return;
+      }
+      Object.assign(row, withPriceEstimate(
+        {...row, distance: route.distanceMeters},
+        {vehicleClass, serviceCategory, perKm},
+      ));
+    } catch (err) {
+      logWarn("providers", "price-route-fallback", {
+        providerId: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }));
+  return rows.sort(compareShopPrice);
+};
+
+const priceSortedRows = async (
+  rows: PriceRow[],
+  {
+    lat,
+    lng,
+    vehicleClass,
+    serviceCategory,
+  }: {
+    lat: number;
+    lng: number;
+    vehicleClass?: string;
+    serviceCategory?: string;
+  },
+): Promise<PriceRow[]> => {
+  const perKm = await perKmForClass(vehicleClass);
+  const priced = rows.map((row) => withPriceEstimate(row, {
+    vehicleClass,
+    serviceCategory,
+    perKm,
+  }));
+  return routePriceRows(priced, {
+    lat,
+    lng,
+    vehicleClass,
+    serviceCategory,
+    perKm,
+  });
+};
+
 const toPublicProvider = (
   provider: providerRepository.Provider & {
     distance?: unknown;
     openNow?: unknown;
     closesInMinutes?: unknown;
-  },
+  } & PriceFields,
 ): Record<string, unknown> => ({
+  ...(provider.pricingMode !== undefined ? {
+    estimatedServicePrice: provider.estimatedServicePrice ?? null,
+    estimatedTravelFee: provider.estimatedTravelFee ?? null,
+    estimatedTotal: provider.estimatedTotal ?? null,
+    pricingMode: provider.pricingMode,
+    matchedServiceCode: provider.matchedServiceCode ?? null,
+    matchedServiceName: provider.matchedServiceName ?? null,
+    estimatedDistanceKm: provider.estimatedDistanceKm ?? null,
+  } : {}),
   id: provider.id,
   kind: provider.kind,
   name: provider.name,
@@ -201,7 +340,28 @@ const nearProvidersInner = async ({
       return avg >= (minRating as number);
     });
   }
-  if (sortBy === "rating") {
+  if (sortBy === "price") {
+    let priceCategory = serviceCategory;
+    if (priceCategory === undefined && ticketId !== undefined) {
+      try {
+        const ticket = await dispatchRepository.findById(ticketId);
+        if (typeof ticket?.symptom === "string") {
+          priceCategory = ticket.symptom;
+        }
+      } catch {
+        void 0;
+      }
+    }
+    filtered = await priceSortedRows(
+      filtered as unknown as PriceRow[],
+      {
+        lat,
+        lng,
+        vehicleClass,
+        serviceCategory: priceCategory,
+      },
+    ) as unknown as typeof filtered;
+  } else if (sortBy === "rating") {
     filtered.sort((a, b) => {
       const ar = typeof a.ratingAvg === "number" ? a.ratingAvg : 0;
       const br = typeof b.ratingAvg === "number" ? b.ratingAvg : 0;
@@ -378,7 +538,28 @@ const searchProvidersInner = async ({
       return avg >= (minRating as number);
     });
   }
-  if (sortBy === "rating") {
+  if (sortBy === "price") {
+    let priceCategory = serviceCategory;
+    if (priceCategory === undefined && ticketId !== undefined) {
+      try {
+        const ticket = await dispatchRepository.findById(ticketId);
+        if (typeof ticket?.symptom === "string") {
+          priceCategory = ticket.symptom;
+        }
+      } catch {
+        void 0;
+      }
+    }
+    wanted = await priceSortedRows(
+      wanted as unknown as PriceRow[],
+      {
+        lat,
+        lng,
+        vehicleClass,
+        serviceCategory: priceCategory,
+      },
+    ) as unknown as typeof wanted;
+  } else if (sortBy === "rating") {
     wanted.sort((a, b) => {
       const ar = typeof a.ratingAvg === "number" ? a.ratingAvg : 0;
       const br = typeof b.ratingAvg === "number" ? b.ratingAvg : 0;

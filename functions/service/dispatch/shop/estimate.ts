@@ -1,18 +1,13 @@
 import {requireDestinationShopOperator} from "./helpers";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
-
 
 import {NS, TOW_ESTIMATE_TTL_MS} from "../constants";
 
-
 import {STATUS_DISPATCH} from "../../../constants/status";
 
-
 import {chatService} from "../../chatService";
-
 
 import {
   ForbiddenError,
@@ -20,7 +15,6 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const sendEstimate = async ({
   userId,

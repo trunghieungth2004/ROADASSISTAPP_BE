@@ -1,9 +1,12 @@
 import * as paymentRepository from "../repository/paymentRepository";
 import * as refundRepository from "../repository/refundRepository";
+import * as dispatchRepository from "../repository/dispatchRepository";
+import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as commissionRepository from "../repository/commissionRepository";
 import * as paymentService from "./paymentService";
 import * as platformConfigService from "./platformConfigService";
+import {deliverAdminPush} from "./push/admin";
 import * as auditService from "./auditService";
 import {
   PAYMENT_STATUS,
@@ -76,7 +79,7 @@ const requestRefund = async ({
   const bank = typeof account === "object" && account !== null ?
     account as Record<string, unknown> :
     {};
-  return refundRepository.create({
+  const refund = await refundRepository.create({
     paymentId,
     ticketId: payment.ticketId,
     riderUid: payment.riderUid,
@@ -93,6 +96,14 @@ const requestRefund = async ({
       null,
     holderName: nonEmpty(bank.holderName) ? bank.holderName : null,
   });
+  await deliverAdminPush({
+    event: "REFUND_REQUESTED",
+    title: "Refund requested",
+    body: `${refund.amount.toLocaleString()} VND · ${refund.ticketId}`,
+    refId: refund.id,
+    route: "/admin?section=refunds",
+  }).catch(() => undefined);
+  return refund;
 };
 
 const listRefunds = async ({
@@ -103,7 +114,11 @@ const listRefunds = async ({
   adminUid: string;
   status?: string;
   limit?: number;
-}): Promise<refundRepository.RefundRequest[]> => {
+}): Promise<Array<refundRepository.RefundRequest & {
+  riderName: string | null;
+  payeeName: string | null;
+  ticketStatus: string | null;
+}>> => {
   const caller = await userRepository.findById(adminUid);
   if (!caller || caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Admin only");
@@ -111,7 +126,36 @@ const listRefunds = async ({
   const capped = typeof limit === "number" ?
     Math.min(limit, REFUND_LIST_MAX) :
     REFUND_LIST_LIMIT;
-  return refundRepository.findByStatus(status, capped);
+  const rows = await refundRepository.findByStatus(status, capped);
+  const riderIds = [...new Set(rows.map((row) => row.riderUid))];
+  const payeeIds = [...new Set(rows.map((row) => row.payeeId))];
+  const ticketIds = [...new Set(rows.map((row) => row.ticketId))];
+  const [users, providers, tickets] = await Promise.all([
+    userRepository.findByIds(riderIds),
+    providerRepository.findByIds(payeeIds),
+    dispatchRepository.findByIds(ticketIds),
+  ]);
+  const ticketMap = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  return rows.map((row) => {
+    const rider = users.get(row.riderUid);
+    const provider = providers.get(row.payeeId);
+    const payeeUser = users.get(row.payeeId);
+    const ticket = ticketMap.get(row.ticketId);
+    return {
+      ...row,
+      riderName: typeof rider?.displayName === "string" &&
+        rider.displayName !== "" ?
+        rider.displayName :
+        typeof rider?.email === "string" ? rider.email : null,
+      payeeName: provider?.name ??
+        (typeof payeeUser?.displayName === "string" ?
+          payeeUser.displayName :
+          null),
+      ticketStatus: typeof ticket?.status === "string" ?
+        ticket.status :
+        null,
+    };
+  });
 };
 
 const myRefunds = async ({
@@ -153,8 +197,13 @@ const decideRefund = async ({
   await auditService.record({
     adminUid,
     action: approve ? "REFUND_APPROVED" : "REFUND_REJECTED",
+    category: "MONEY",
     targetType: "refund",
     targetId: refundId,
+    targetLabel: request.ticketId,
+    before: {status: request.status},
+    after: {status: approve ? REFUND_STATUS.APPROVED : REFUND_STATUS.REJECTED},
+    note: note ?? null,
     meta: {paymentId: request.paymentId, amount: request.amount},
   });
   return updated ?? request;
@@ -181,6 +230,21 @@ const markRefundSent = async ({
     transferRef: nonEmpty(transferRef) ? transferRef : null,
   });
   const updated = await refundRepository.findById(refundId);
+  await auditService.record({
+    adminUid,
+    action: "REFUND_SENT",
+    category: "MONEY",
+    targetType: "refund",
+    targetId: refundId,
+    targetLabel: request.ticketId,
+    before: {status: request.status},
+    after: {status: REFUND_STATUS.SENT},
+    meta: {
+      paymentId: request.paymentId,
+      amount: request.amount,
+      transferRef: nonEmpty(transferRef) ? transferRef : null,
+    },
+  });
   return updated ?? request;
 };
 
@@ -224,9 +288,17 @@ const confirmRefund = async ({
   await auditService.record({
     adminUid,
     action: "REFUND_CONFIRMED",
+    category: "MONEY",
     targetType: "refund",
     targetId: refundId,
-    meta: {paymentId: request.paymentId, amount: request.amount},
+    targetLabel: request.ticketId,
+    before: {status: request.status},
+    after: {status: REFUND_STATUS.CONFIRMED},
+    meta: {
+      paymentId: request.paymentId,
+      amount: request.amount,
+      transferRef: nonEmpty(transferRef) ? transferRef : null,
+    },
   });
   return {request: updated ?? request, payment: refunded};
 };
@@ -256,8 +328,13 @@ const failRefund = async ({
   await auditService.record({
     adminUid,
     action: "REFUND_FAILED",
+    category: "MONEY",
     targetType: "refund",
     targetId: refundId,
+    targetLabel: request.ticketId,
+    before: {status: request.status},
+    after: {status: REFUND_STATUS.FAILED},
+    note: reason ?? null,
     meta: {paymentId: request.paymentId, amount: request.amount},
   });
   return updated ?? request;

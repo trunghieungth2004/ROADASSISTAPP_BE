@@ -41,7 +41,7 @@ All amounts are integer VND. `round1k(x) = round(x / 1000) × 1000`.
 | TOW cancel partial | `deadheadPayable ? round1k(night × perKm × actualTraveledDeadheadKm) : 0`; `traveledKm` is summed from the current assignment's `jobTrack` points (`shopId` + `assignedAt`), stopping at pickup; fewer than two points bills 0 |
 | TOW breakdown partial | `deadheadPayable ? round1k(night × perKm × (actualTraveledDeadheadKm + loadedTraveledKm)) : 0`; no base; loaded km is summed from `jobTrack` after `loadedAt` |
 | SOS call-out | provider `callOutFee`, else `50,000`; `0` when the mobile shop was within 1 km on a fresh fix at accept |
-| SOS travel | `round1k(km × provider travelPerKmFee)`, else `5,000`; only on a fresh fix. Accept snapshots `mobileTravelKm` and `mobileTravelRate` so the bill shows `km × rate` |
+| SOS travel | `round1k(km × provider travelPerKmFee)`, else `5,000`, using routed shop→pickup distance. Accept snapshots `mobileTravelKm`, `mobileTravelRate`, and `mobileTravelSource` (`ROUTE`, `FALLBACK`, `PROVIDER_BASE`) so the bill shows `km × rate` |
 | WALK_IN / MECHANIC | itemized `quoteItems` total (`shopQuotedAmount`), else legacy `finalAmount` |
 | TOW waiting | `ceil(billableMs / 60s) × (waitingRatePer15Min / 15)`, capped by grace/cap |
 | SOS fix | shop-entered `finalAmount` |
@@ -128,7 +128,7 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Continuation attempt 2+ | `1`→… | each accepted attempt adds its own call-out | Prior call-outs stay payable. A visit within 1 km adds 0. An attempt that never gets a shop adds 0. The UI shows the running total and warns that a new call-out will apply. |
 | Network tow handoff accepted | `15` + new TOW | SOS call-out as above + normal TOW fare on the new ticket | The accepting network tower gets the normal TOW fare; there is no mobile-shop referral fee. The mobile shop's call-out remains on the SOS. |
 
-The call-out waiver is inclusive at 1,000 m and requires a fresh location fix. A stale or missing fix is treated as unknown distance: the provider's call-out (default 50,000) applies, travel is 0, and the waiver flag is false. When travel is stamped, the ticket keeps the straight-line `mobileTravelKm` and the applied `mobileTravelRate`; the SOS bill renders the travel line as `km × rate` and falls back to the fee alone for older tickets.
+The call-out waiver is inclusive at 1,000 m of routed shop→pickup distance. A fresh fix uses `ROUTE` and falls back to straight-line `FALLBACK`; a stale or missing fix uses the provider's registered base as `PROVIDER_BASE`. Travel is 0 only when neither origin is known. The ticket keeps `mobileTravelKm` and the applied `mobileTravelRate`; the SOS bill renders the travel line as `km × rate` and falls back to the fee alone for older tickets.
 
 Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch and carries its own call-out. There is no chain-level cap and prior call-outs are not refunded when the rider continues; a waived visit contributes 0. An attempt that never gets a shop contributes 0.
 

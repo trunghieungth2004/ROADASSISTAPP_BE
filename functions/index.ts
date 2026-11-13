@@ -2,7 +2,7 @@ import express, {NextFunction, Request, Response} from "express";
 import cors from "cors";
 import compression from "compression";
 import rateLimiter from "express-rate-limit";
-import {clientIpKey} from "./middleware/rateLimit";
+import {clientIpKey, userOrIpKey} from "./middleware/rateLimit";
 import morgan from "morgan";
 import * as functions from "firebase-functions";
 import {requireAuth, requireRole, requireService} from "./middleware/auth";
@@ -35,8 +35,11 @@ import warrantyRoutes from "./routes/warrantyRoutes";
 import disputeRoutes from "./routes/disputeRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
 import supportRoutes from "./routes/supportRoutes";
+import reportRoutes from "./routes/reportRoutes";
+import appealRoutes from "./routes/appealRoutes";
 import * as flagService from "./service/flagService";
 import {chatService} from "./service/chatService";
+import * as standing from "./service/standing";
 import * as userService from "./service/userService";
 import * as routingService from "./service/routingService";
 import * as routingCacheRepository from "./repository/routingCacheRepository";
@@ -45,7 +48,7 @@ import * as bookingService from "./service/bookingService";
 import * as paymentReminderService from "./service/paymentReminderService";
 import * as warrantyService from "./service/warrantyService";
 
-export {clientIpKey};
+export {clientIpKey, userOrIpKey};
 
 const app = express();
 
@@ -96,10 +99,10 @@ const skipPreflight = (req: Request): boolean => req.method === "OPTIONS";
 
 const limiter = rateLimiter({
   windowMs: 1 * 60 * 1000,
-  max: 100,
+  max: Number(process.env.RATE_LIMIT_PER_MIN ?? 180),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: clientIpKey,
+  keyGenerator: userOrIpKey,
   skip: skipPreflight,
   validate: {forwardedHeader: false},
   message: {
@@ -151,6 +154,8 @@ warrantyRoutes(app, routeDeps);
 disputeRoutes(app, routeDeps);
 bookingRoutes(app, routeDeps);
 supportRoutes(app, routeDeps);
+reportRoutes(app, routeDeps);
+appealRoutes(app, routeDeps);
 
 app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) return next(err);
@@ -248,6 +253,10 @@ export const sweepMaintenance = functions.scheduler.onSchedule(
     await runSweep(
       "sweepStalePresence",
       () => userService.sweepStalePresence(),
+    );
+    await runSweep(
+      "recoverStanding",
+      () => standing.recoverStanding(),
     );
   },
 );

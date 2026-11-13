@@ -54,6 +54,9 @@ const callOutTotalFor = async (
   return total;
 };
 
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+
 const hasActiveTowOffer = (
   ticket: dispatchRepository.DispatchTicket,
 ): boolean => {
@@ -191,10 +194,8 @@ export const continueSos = async ({
       ticketType: "SOS",
       lat: ticket.lat,
       lng: ticket.lng,
-      diagnosticId: typeof ticket.diagnosticId === "string" ?
-        ticket.diagnosticId :
-        undefined,
       note: typeof ticket.note === "string" ? ticket.note : undefined,
+      symptom: optionalText(ticket.symptom),
       description: typeof ticket.description === "string" ?
         ticket.description :
         undefined,
@@ -225,6 +226,23 @@ export const continueSos = async ({
     });
     await dispatchRepository.update(child.id, {
       linkedTicketIds: [ticketId],
+      paymentId: null,
+      paymentMethod: null,
+      paymentStatus: null,
+      checkoutUrl: null,
+      paymentArmed: null,
+      mobileCallOutFee: null,
+      mobileCallOutWaived: null,
+      mobileTravelFee: null,
+      mobileTravelKm: null,
+      mobileTravelRate: null,
+      mobileTravelSource: null,
+      mobileFeeHistory: [],
+      finalAmount: null,
+      shopQuotedAmount: null,
+      quoteItems: null,
+      invoiceItems: null,
+      invoiceApproval: null,
     });
     await chatService.addSystemEvent(
       ticketId,

@@ -64,6 +64,23 @@ const listAll = async (req: Request, res: Response) => {
   }
 };
 
+const dismiss = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const {disputeId, resolution} = req.body;
+    const result = await disputeService.dismiss({
+      disputeId,
+      by: uid,
+      ...(typeof resolution === "string" && resolution !== "" ?
+        {resolution} :
+        {}),
+    });
+    sendSuccess(res, result, {message: "Dispute dismissed"});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const resolve = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
@@ -90,4 +107,4 @@ const resolve = async (req: Request, res: Response) => {
   }
 };
 
-export {file, one, listAll, resolve};
+export {file, one, listAll, resolve, dismiss};

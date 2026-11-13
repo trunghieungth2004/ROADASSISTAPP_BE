@@ -16,7 +16,13 @@ import {
   ValidationError,
 } from "../utils/errors";
 import {TERMINAL_STATUSES} from "../constants/dispatch";
+import {
+  WARRANTY_DECLINE_LABEL,
+  WARRANTY_DECLINE_REASON,
+} from "../constants/warranty";
 import {validatePhotoPathsStructure} from "../utils/media";
+import {deliverAdminPush} from "./push/admin";
+import * as auditService from "./auditService";
 
 const str = (value: unknown): string =>
   typeof value === "string" ? value.trim() : "";
@@ -35,6 +41,88 @@ const lineOf = (
     if (str(row.lineId) === lineId) return row;
   }
   return null;
+};
+
+const providerSnapshot = (
+  provider: providerRepository.Provider,
+): Record<string, unknown> => ({
+  id: provider.id,
+  kind: provider.kind,
+  name: provider.name,
+  lat: provider.lat,
+  lng: provider.lng,
+  label: provider.label ?? null,
+  status: provider.status,
+  accepting: provider.accepting !== false,
+  openHours: provider.openHours ?? null,
+  vehicleClasses: provider.vehicleClasses ?? null,
+  ratingAvg: provider.ratingAvg ?? 0,
+  ratingCount: provider.ratingCount ?? 0,
+  services: provider.services ?? null,
+  serviceFee: provider.serviceFee ?? null,
+  towBaseFee: provider.towBaseFee ?? null,
+  towPerKmFee: provider.towPerKmFee ?? null,
+  callOutFee: provider.callOutFee ?? null,
+  travelPerKmFee: provider.travelPerKmFee ?? null,
+});
+
+const enrichClaims = async (
+  claims: warrantyRepository.WarrantyClaim[],
+): Promise<
+  Array<warrantyRepository.WarrantyClaim & Record<string, unknown>>
+> => {
+  const providerCache = new Map<string, Record<string, unknown> | null>();
+  const ticketCache =
+    new Map<string, dispatchRepository.DispatchTicket | null>();
+  const providerFor = async (
+    id: string,
+  ): Promise<Record<string, unknown> | null> => {
+    if (providerCache.has(id)) return providerCache.get(id) ?? null;
+    const provider = await providerRepository.findById(id)
+      .catch(() => null);
+    const snapshot = provider === null ? null : providerSnapshot(provider);
+    providerCache.set(id, snapshot);
+    return snapshot;
+  };
+  const ticketFor = async (
+    id: string,
+  ): Promise<dispatchRepository.DispatchTicket | null> => {
+    if (ticketCache.has(id)) return ticketCache.get(id) ?? null;
+    const ticket = await dispatchRepository.findById(id).catch(() => null);
+    ticketCache.set(id, ticket);
+    return ticket;
+  };
+  return Promise.all(claims.map(async (claim) => {
+    const provider = await providerFor(claim.providerId);
+    const ticket = await ticketFor(claim.ticketId);
+    const line = ticket === null ? null : lineOf(ticket, claim.lineId);
+    return {
+      ...claim,
+      ...(provider !== null ? {
+        provider,
+        providerName: provider.name,
+      } : {}),
+      ...(ticket !== null ? {
+        ticketType: ticket.ticketType,
+        ticketStatus: ticket.status,
+        serviceDate: typeof ticket.deliveredAt === "string" ?
+          ticket.deliveredAt :
+          typeof ticket.createdAt === "string" ? ticket.createdAt : null,
+      } : {}),
+      ...(line !== null ? {
+        qty: typeof line.qty === "number" ? line.qty : null,
+        unitPrice: typeof line.unitPrice === "number" ? line.unitPrice : null,
+        warrantyDays: typeof line.warrantyDays === "number" ?
+          line.warrantyDays :
+          null,
+        warrantyParts: typeof line.warrantyParts === "string" ?
+          line.warrantyParts :
+          null,
+        category: claim.category ??
+          (typeof line.category === "string" ? line.category : null),
+      } : {}),
+    };
+  }));
 };
 
 const fileClaim = async ({
@@ -111,6 +199,13 @@ const fileClaim = async ({
     title: "Warranty claim",
     body: `${claim.serviceName}: ${reasonText}`,
   }).catch(() => undefined);
+  await deliverAdminPush({
+    event: "WARRANTY_CLAIM",
+    title: "New warranty claim",
+    body: `${claim.serviceName}: ${reasonText}`,
+    refId: claim.id,
+    route: "/admin?section=warranty",
+  }).catch(() => undefined);
   return claim;
 };
 
@@ -120,17 +215,25 @@ const myClaims = async ({
 }: {
   userId: string;
   limit?: number;
-}) => warrantyRepository.findByRider(userId, Math.min(limit ?? 50, 100));
+}) => {
+  const claims = await warrantyRepository.findByRider(
+    userId,
+    Math.min(limit ?? 50, 100),
+  );
+  return enrichClaims(claims);
+};
 
 const respond = async ({
   userId,
   claimId,
   accept,
+  reasonCode,
   note,
 }: {
   userId: string;
   claimId: string;
   accept: boolean;
+  reasonCode?: string;
   note?: string;
 }): Promise<warrantyRepository.WarrantyClaim> => {
   const claim = await warrantyRepository.findById(claimId);
@@ -147,16 +250,25 @@ const respond = async ({
   const response = str(note);
   const now = new Date().toISOString();
   if (!accept) {
+    const code = str(reasonCode);
+    if (!(Object.values(WARRANTY_DECLINE_REASON) as string[]).includes(code)) {
+      throw new ValidationError("Warranty decline reason is required");
+    }
+    if (response.length < 5) {
+      throw new ValidationError("Warranty decline note is required");
+    }
+    const label = WARRANTY_DECLINE_LABEL[code] ?? code;
     await warrantyRepository.update(claimId, {
       status: warrantyRepository.WARRANTY_STATUS.DECLINED,
-      shopResponse: response || null,
+      shopResponse: response,
+      declineReasonCode: code,
       respondedAt: now,
     });
     await chatService.addSystemEvent(
       claim.ticketId,
-      "The shop declined the warranty claim.",
+      `The shop declined the warranty claim: ${label} · ${response}`,
       "WARRANTY_DECLINED",
-      {claimId},
+      {claimId, reasonCode: code, note: response},
     ).catch(() => undefined);
     await enqueueDispatchPush(
       claim.ticketId,
@@ -164,7 +276,7 @@ const respond = async ({
       {
         audience: "rider",
         title: "Warranty declined",
-        body: `${claim.serviceName}: ${response || "The shop declined"}`,
+        body: `${claim.serviceName}: ${label} · ${response}`,
       },
     ).catch(() => undefined);
     const updated = await warrantyRepository.findById(claimId);
@@ -189,6 +301,7 @@ const respond = async ({
   await warrantyRepository.update(claimId, {
     status: warrantyRepository.WARRANTY_STATUS.REBOOKED,
     shopResponse: response || null,
+    declineReasonCode: null,
     respondedAt: now,
     linkedTicketId: rework.id,
   });
@@ -228,10 +341,22 @@ const dispute = async ({
   if (claim.status !== warrantyRepository.WARRANTY_STATUS.DECLINED) {
     throw new ValidationError("Only a declined claim can be disputed");
   }
+  const disputeNote = str(note);
+  if (disputeNote.length < 5) {
+    throw new ValidationError("Warranty dispute note is required");
+  }
   await warrantyRepository.update(claimId, {
     status: warrantyRepository.WARRANTY_STATUS.DISPUTED,
-    shopResponse: str(note) || claim.shopResponse,
+    disputeNote,
+    disputedAt: new Date().toISOString(),
   });
+  await deliverAdminPush({
+    event: "WARRANTY_DISPUTED",
+    title: "Warranty disputed",
+    body: `${claim.serviceName}: ${disputeNote}`,
+    refId: claimId,
+    route: "/admin?section=warranty",
+  }).catch(() => undefined);
   const updated = await warrantyRepository.findById(claimId);
   return updated ?? claim;
 };
@@ -257,7 +382,7 @@ const shopClaims = async ({
     rows.push(...await warrantyRepository.findByProvider(id, capped));
   }
   rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return rows.slice(0, capped);
+  return enrichClaims(rows.slice(0, capped));
 };
 
 const listClaims = async ({
@@ -352,7 +477,7 @@ const resolve = async ({
     refundRequestId,
     resolvedBy: adminUid,
     resolvedAt: new Date().toISOString(),
-    shopResponse: str(note) || claim.shopResponse,
+    resolutionNote: str(note) || null,
   });
   await chatService.addSystemEvent(
     claim.ticketId,
@@ -370,6 +495,22 @@ const resolve = async ({
     },
   ).catch(() => undefined);
   const updated = await warrantyRepository.findById(claimId);
+  await auditService.record({
+    adminUid,
+    action: "WARRANTY_DECIDED",
+    category: "CONTENT",
+    targetType: "WARRANTY",
+    targetId: claimId,
+    targetLabel: claim.serviceName,
+    before: {status: claim.status},
+    after: {
+      status: warrantyRepository.WARRANTY_STATUS.RESOLVED,
+      outcome,
+      ...(refunded > 0 ? {refundAmount: refunded} : {}),
+    },
+    note: note ?? null,
+    meta: {ticketId: claim.ticketId, refundRequestId},
+  });
   return updated ?? claim;
 };
 

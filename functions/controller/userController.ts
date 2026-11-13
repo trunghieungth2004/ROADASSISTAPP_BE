@@ -40,11 +40,12 @@ const getAllUser = async (_req: Request, res: Response) => {
 const updateRole = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {targetUserId, role} = req.body;
+    const {targetUserId, role, note} = req.body;
     const result = await userService.updateRole({
       actorId: userId,
       targetUserId,
       role,
+      note,
     });
     sendSuccess(res, result, {message: "User role updated successfully"});
   } catch (error) {
@@ -54,8 +55,10 @@ const updateRole = async (req: Request, res: Response) => {
 
 const updateTrustScore = async (req: Request, res: Response) => {
   try {
+    const {uid} = req as AuthedRequest;
     const {targetUserId, trustScore} = req.body;
     const result = await userService.updateTrustScore({
+      actorId: uid,
       targetUserId,
       trustScore,
     });
@@ -68,11 +71,12 @@ const updateTrustScore = async (req: Request, res: Response) => {
 const updateStatus = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
-    const {targetUserId, status} = req.body;
+    const {targetUserId, status, note} = req.body;
     const result = await userService.updateStatus({
       actorId: userId,
       targetUserId,
       status,
+      note,
     });
     sendSuccess(res, result, {message: "User status updated successfully"});
   } catch (error) {

@@ -141,7 +141,6 @@ const verifyIpnAuth = (headers: Record<string, unknown>): boolean => {
   return authorizationValue(headers) === `${SEPAY_AUTH_PREFIX} ${secret}`;
 };
 
-
 type SepayCancelResult = {
   ok: boolean;
   missing: boolean;

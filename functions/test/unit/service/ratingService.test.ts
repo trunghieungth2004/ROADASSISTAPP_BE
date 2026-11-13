@@ -2,8 +2,12 @@ import * as ratingRepository from
   "../../../repository/ratingRepository";
 import * as dispatchRepository from
   "../../../repository/dispatchRepository";
+import * as disputeRepository from
+  "../../../repository/disputeRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as userRepository from "../../../repository/userRepository";
+import * as appealRepository from
+  "../../../repository/appealRepository";
 import * as cacheManager from "../../../utils/cacheManager";
 import {
   submitRating,
@@ -15,12 +19,16 @@ import {
 
 jest.mock("../../../repository/ratingRepository");
 jest.mock("../../../repository/dispatchRepository");
+jest.mock("../../../repository/disputeRepository");
 jest.mock("../../../repository/providerRepository");
 jest.mock("../../../repository/userRepository");
+jest.mock("../../../repository/appealRepository");
 
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(cacheManager, "del").mockImplementation(() => undefined);
+  jest.mocked(appealRepository.findBySubjectIds).mockResolvedValue([]);
+  jest.mocked(disputeRepository.findByTicketId).mockResolvedValue([]);
 });
 
 const resolvedTicket = {
@@ -372,7 +380,7 @@ describe("ratingService.providerRatings", () => {
     jest.mocked(providerRepository.findById).mockResolvedValue({
       id: "shop9",
     } as never);
-    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([
+    jest.mocked(ratingRepository.listRecentByTarget).mockResolvedValue([
       {id: "r1", score: 5, createdAt: "2026-01-01"},
       {id: "r2", score: 3, reply: "Sorry", repliedAt: "2026-01-02",
         createdAt: "2026-01-02"},
@@ -392,6 +400,7 @@ describe("ratingService.providerRatings", () => {
       ],
       avg: 4,
       count: 2,
+      window: 100,
       completedJobs: 7,
     });
   });
@@ -422,7 +431,8 @@ describe("ratingService.ratingsByTicket", () => {
     ).resolves.toEqual([
       {id: "r1", targetId: "shop1", targetKind: "SHOP", score: 5,
         text: null, byUserName: null, repliedByName: null, reply: null,
-        repliedAt: null, createdAt: "2026-01-01"},
+        repliedAt: null, createdAt: "2026-01-01", excluded: false,
+        appealStatus: null},
     ]);
   });
 
@@ -463,6 +473,8 @@ describe("ratingService.ratingsByTicket", () => {
         repliedByName: null,
         repliedAt: null,
         createdAt: "2026-01-01",
+        excluded: false,
+        appealStatus: null,
       },
     ]);
   });
@@ -509,7 +521,7 @@ describe("ratingService.userRatings", () => {
       id: "shop1",
       operatorUid: "op1",
     } as never);
-    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([
+    jest.mocked(ratingRepository.listRecentByTarget).mockResolvedValue([
       {id: "r1", score: 5, ticketId: "t1", createdAt: "2026-01-01"},
     ] as never);
     jest.mocked(ratingRepository.aggregate).mockResolvedValue({
@@ -531,6 +543,7 @@ describe("ratingService.userRatings", () => {
       ],
       avg: 5,
       count: 1,
+      window: 100,
     });
   });
   it("rejects readers with no shared ticket", async () => {
@@ -569,7 +582,7 @@ describe("ratingService.userRatings", () => {
       id: "admin",
       role: "1",
     } as never);
-    jest.mocked(ratingRepository.listByTarget).mockResolvedValue([]);
+    jest.mocked(ratingRepository.listRecentByTarget).mockResolvedValue([]);
     jest.mocked(ratingRepository.aggregate).mockResolvedValue({
       avg: 0,
       count: 0,
@@ -581,7 +594,7 @@ describe("ratingService.userRatings", () => {
         userId: "rider1",
         targetKind: "RIDER",
       }),
-    ).resolves.toEqual({ratings: [], avg: 0, count: 0});
+    ).resolves.toEqual({ratings: [], avg: 0, count: 0, window: 100});
     expect(dispatchRepository.findById).not.toHaveBeenCalled();
   });
 });

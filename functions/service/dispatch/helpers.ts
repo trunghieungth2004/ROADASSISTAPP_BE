@@ -75,7 +75,6 @@ export const resolveDestination = async (
   return undefined;
 };
 
-
 export const providerKindForTicket = (ticketType: unknown): string | null => {
   if (ticketType === "TOW") return PROVIDER_KIND.TOW;
   if (ticketType === "SOS") return PROVIDER_KIND.MOBILE_SHOP;
@@ -84,7 +83,6 @@ export const providerKindForTicket = (ticketType: unknown): string | null => {
   }
   return null;
 };
-
 
 export const requireProviderForTicket = (
   shop: {status?: unknown; kind?: unknown; suspended?: unknown},
@@ -101,7 +99,6 @@ export const requireProviderForTicket = (
     throw new ValidationError(`Ticket needs a ${expected} provider`);
   }
 };
-
 
 export const towEstimateFor = ({
   shop,

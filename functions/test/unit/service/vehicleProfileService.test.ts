@@ -149,9 +149,12 @@ describe("vehicleProfileService.vehicleHistory", () => {
           lineId: "l1",
           serviceCode: "BRAKE",
           name: "Brake pads",
+          category: "BRAKES",
           qty: 1,
           unitPrice: 150000,
           amount: 150000,
+          warrantyDays: 60,
+          warrantyParts: "PARTS_AND_LABOR",
           warrantyUntil: "2027-01-01T00:00:00.000Z",
         }],
       }] as never);
@@ -186,6 +189,11 @@ describe("vehicleProfileService.vehicleHistory", () => {
     expect(first.lines[0]).toMatchObject({
       lineId: "l1",
       name: "Brake pads",
+      category: "BRAKES",
+      qty: 1,
+      unitPrice: 150000,
+      warrantyDays: 60,
+      warrantyParts: "PARTS_AND_LABOR",
       claim: {id: "wc1", status: "OPEN"},
     });
   });

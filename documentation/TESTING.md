@@ -62,7 +62,6 @@ functions/
     │       ├── closureService.test.ts
     │       ├── providerService.test.ts
     │       ├── docs.test.ts
-    │       ├── diagnosticService.test.ts
     │       ├── dispatch/            ← create/read/transition/destination/tow/accept/board/shop/push suites
     │       ├── ratingService.test.ts
     │       └── taskQueueService.test.ts
@@ -92,7 +91,6 @@ functions/
     │   ├── routingAlternatives.test.ts
     │   ├── routingDetour.test.ts
     │   ├── provider.test.ts
-    │   ├── diagnostic.test.ts
     │   ├── dispatch.test.ts
     │   ├── ratings.test.ts
     │   └── validation.test.ts
@@ -114,7 +112,7 @@ functions/
 |------|---------|
 | `stubs.ts` | Four auth stubs: `stubRequireAuth`/`stubRequireRole` (unit — ignore request, set admin defaults) and `integrationRequireAuth`/`integrationRequireRole` (read `Authorization: Bearer <uid>`, load that uid's `users` doc for `userRole`, 401/404/403 otherwise — mirroring production; stub bearers are raw uids, while `integration/auth.test.ts` uses real emulator-minted JWTs against the real middleware). |
 | `app.ts` | `buildUnitApp()` — Express app with all 14 route files wired with unit stubs + `validate` middleware + error handler. `buildIntegrationApp()` — same but with integration stubs. |
-| `seed.ts` | Firestore seed helpers: `cleanAll()` (top-level collections plus `vehicle_profiles`/`ride_configs` subcollections), `cleanCollection(name)`, `seedUser()`, `seedRole()`, `seedProfile()`, `seedRideConfig()`, `seedSegment()`, `seedFlag()`, `seedLandmark()`, `seedShop()`, `seedDiagnostic()`, `seedTicket()`, `seedRoute()`. |
+| `seed.ts` | Firestore seed helpers: `cleanAll()` (top-level collections plus `vehicle_profiles`/`ride_configs` subcollections), `cleanCollection(name)`, `seedUser()`, `seedRole()`, `seedProfile()`, `seedRideConfig()`, `seedSegment()`, `seedFlag()`, `seedLandmark()`, `seedShop()`, `seedTicket()`, `seedRoute()`. |
 
 ### test/unit/
 
@@ -146,7 +144,6 @@ Each file mocks its own repositories with `jest.mock()` and asserts service-laye
 | `service/taskQueueService.test.ts` | Idle when disabled / non-blocking type / missing config (no client constructed), dedup task name + OIDC body when enabled, `ALREADY_EXISTS` → enqueued, other errors fail open, dispatch queue targeting + body. |
 | `service/ratingService.test.ts` | Target/score validation, unknown ticket 404, unresolved-ticket 400, rider→assigned SHOP + ticket `helperRating`, rider→destination shop, operator→rider + ticket `riderRating`, stranger 403, resubmit updates instead of duplicating, by-ticket read (rider/operator pass, stranger 403). |
 | `service/pushService.test.ts` | Skipped when FCM off / unknown / non-blocking flag (no send), live geometry re-match notifies only crossing routes, dead-token prune, own-push ping (disabled/missing/send+prune). |
-| `service/diagnosticService.test.ts` | Create passthrough, unknown id 404. |
 | `service/dispatchEta.test.ts` | Estimator secure-plus-drive math (minute rounding, five-blocks, loaded leg, routing failure), ETA refresh endpoint (restamp, stranger 403, disengaged 400). |
 | `middleware/auth.test.ts` | Missing/malformed token 401, unknown uid 404, role gating 401/403/pass. |
 
@@ -173,7 +170,6 @@ Run against the Firestore + Auth emulators. Requests carry `Authorization: Beare
 | `routingDetour.test.ts` | Fresh blockage detoured, long route detoured around mid-line hazards, reporter's own suggested flag detours while other riders get a warning |
 | `push.test.ts` | POST register 201 + 5-token cap + dedupe, cross-owner steal, missing token 400, POST unregister true/false, POST deliver 403 without queue header, deliver skipped with FCM off, POST /push/ping disabled report, POST /routes writes the `active_routes` doc |
 | `provider.test.ts` | POST create 201 (SHOP and TOW both pending review), duplicate-kind 409, plate normalization, near + kind filter + pending hidden, pending list + review approve/deny + lost-race no-op, availability toggle + accepting-only exclusion, report file 201 + dedupe 409 + bad reason 400, suspend hides from offers/search + restore, live-location ping (on-duty only) + off-duty 403, kind-conditionals 400, non-admin 403, unauthenticated 401 |
-| `diagnostic.test.ts` | POST create 201, POST one, unknown 404 |
 | `ratings.test.ts` | TOW→accept→resolve flow, unknown ticket 404, rider→SHOP + operator→rider ratings, out-of-range 400 |
 | `validation.test.ts` | Bad lat/lng, bad enum, missing userId, unknown-field stripping |
 

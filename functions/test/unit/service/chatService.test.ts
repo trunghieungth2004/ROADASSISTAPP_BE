@@ -178,3 +178,40 @@ describe("chatService ticket rooms", () => {
     })).rejects.toMatchObject({statusCode: 400});
   });
 });
+
+describe("chatService admin transcript", () => {
+  test("returns ticket room messages without participant checks", async () => {
+    jest.mocked(chatRepository.findById).mockResolvedValue({
+      id: "ticket_t1",
+      scope: "TICKET",
+      refId: "t1",
+      version: 0,
+      participantUids: ["rider1", "op1"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+      closedAt: null,
+    });
+    jest.mocked(chatRepository.listMessages).mockResolvedValue([{
+      id: "m1",
+      senderUid: "rider1",
+      senderName: "Rider",
+      text: "Hello",
+      photoUrls: [],
+      kind: "USER",
+      createdAt: "2026-01-01T00:01:00.000Z",
+    }]);
+
+    const result = await chatService.adminMessages({ticketId: "t1"});
+
+    expect(chatRepository.listMessages).toHaveBeenCalledWith("ticket_t1", 200);
+    expect(result.messages).toHaveLength(1);
+  });
+
+  test("throws when the ticket is missing", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(null);
+    await expect(
+      chatService.adminMessages({ticketId: "missing"}),
+    ).rejects.toThrow("Dispatch ticket not found");
+  });
+});

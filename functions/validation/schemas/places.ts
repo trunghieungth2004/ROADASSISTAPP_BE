@@ -1,7 +1,6 @@
 import {strReq, langAttr, latAttr, emptyBody} from "./primitives";
 import Joi from "joi";
 
-
 export const placesSchemas = {
   searchPlaces: Joi.object({
     q: Joi.string().trim().min(2).max(80).required(),

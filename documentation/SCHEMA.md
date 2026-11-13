@@ -237,8 +237,11 @@ Provider records in the top-level `providers` collection. Kinds: `SHOP` (fixed p
 doc id is the normalized plate (uppercased, non-alphanumerics stripped); plates are
 immutable. Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
 Live tow positions live in `provider_locations` (doc id = provider id; 15-minute freshness).
-Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`,
-`UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`; statuses `OPEN`/`RESOLVED`/`DISMISSED`).
+Legacy provider reports live in `provider_reports` (reasons: `FAKE_BUSINESS`,
+`WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`;
+statuses `OPEN`/`RESOLVED`/`DISMISSED`). Generalized behavior reports live in
+`reports` and additionally support ticket-scoped provider/rider reasons and
+admin actions.
 
 ### `POST /providers` — `createProvider`
 | Field | Type | |
@@ -278,7 +281,7 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `vehicleClass` | enum: `SOLO_BIKE`, `CAR` | opt (undeclared shops match all) |
 | `limit` | number | opt (1–20) |
 | `minRating` | number (0–5) | opt (drops shops below the average) |
-| `sortBy` | enum: `distance`, `rating` | opt (default `distance`) |
+| `sortBy` | enum: `distance`, `rating`, `price` | opt (default `distance`) |
 | `ticketId` | string | opt (marks rows with `declined: true` for shops that already declined the ticket) |
 
 ### `POST /providers/search` — `searchProviders`
@@ -291,8 +294,15 @@ Abuse reports live in `provider_reports` (reasons: `FAKE_BUSINESS`, `WRONG_LOCAT
 | `radiusMeters` | number | opt (≥200, default 10000) |
 | `limit` | number | opt (1–20) |
 | `minRating` | number (0–5) | opt (drops shops below the average) |
-| `sortBy` | enum: `distance`, `rating` | opt (default `distance`) |
+| `sortBy` | enum: `distance`, `rating`, `price` | opt (default `distance`) |
 | `ticketId` | string | opt (marks rows with `declined: true` for shops that already declined the ticket) |
+
+`sortBy=price` rows add `estimatedServicePrice`, `estimatedTravelFee`,
+`estimatedTotal`, `pricingMode` (`FIXED`/`SERVICE_FEE`/`QUOTE`),
+`matchedServiceCode`, `matchedServiceName`, and `estimatedDistanceKm`. The
+estimate matches the rider's `serviceCategory`/vehicle class, adds travel
+beyond 1 km at the platform TOW per-km rate, and uses routed pickup→shop
+distance for top candidates with straight-line fallback.
 
 Provider `services` (catalog rows `{code, name, displayPrice, quoteRequired}`)
 ship on `near`/`search` rows, together with the provider's `towBaseFee`/
@@ -367,22 +377,7 @@ rows spread the stored doc):
 
 ---
 
-## Diagnostics (XeAssist stub)
-
-### `POST /diagnostics` — `createDiagnostic`
-| Field | Type | |
-|-------|------|---|
-| `category` | enum: FLAT_TIRE, FLUID_LEAK, CHAIN_SLACK, SPARK_CAP | req |
-| `imagePath` | string | req |
-
-### `POST /diagnostics/one` — `getDiagnostic`
-| Field | Type | |
-|-------|------|---|
-| `diagnosticId` | string | req |
-
----
-
-## Dispatch (XeAssist stub)
+## Dispatch
 
 ### `POST /dispatch` — `createDispatch`
 | Field | Type | |
@@ -390,7 +385,6 @@ rows spread the stored doc):
 | `ticketType` | enum: MECHANIC, TOW, SOS, WALK_IN | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
-| `diagnosticId` | string (allows `""`/`null`) | opt |
 | `providerId` | string | req for `WALK_IN` |
 | `destinationShopId` | string (allows `""`/`null`) | opt (TOW drop-off) |
 | `destinationPoint` | `{lat, lng, label?}` | opt (free-form drop-off) |
@@ -692,6 +686,17 @@ settled charge with `payoutRef`, `payoutAt`, `payoutBy`, `payoutBatchId`.
 | `payeeId` | string | opt |
 | `limit` | number (1–100) | opt (default 50) |
 
+### `POST /admin/audit` — `adminAudit` (admin)
+| Field | Type | |
+|-------|------|---|
+| `limit` | number (1–200) | opt (default 100) |
+| `before` | ISO date | opt (`createdAt` cursor) |
+| `from` | ISO date | opt (inclusive) |
+| `to` | ISO date | opt (inclusive) |
+
+Returns newest-first `admin_audit` rows with actor snapshot, category,
+target label, before/after values, note, request ID, and metadata.
+
 ### `POST /admin/payments/audit` — `auditLedger` (admin)
 | Field | Type | |
 |-------|------|---|
@@ -859,7 +864,7 @@ Visible to the filer, the accused party, and admins.
 
 | Field | Shape |
 |-------|-------|
-| `ticketId` / `filedBy` | origin ticket + filer |
+| `ticketId` / `filedBy` / `filedByRole` | origin ticket + filer/beneficiary + `RIDER`/`PROVIDER`/`ADMIN`/`SYSTEM` |
 | `accusedKind` / `accusedId` / `type` / `reasonCode` / `note` / `photoUrls` | canonical accusation + evidence (Storage paths) |
 | `status` | `OPEN` → `RESOLVED` / `DISMISSED` |
 | `resolution` / `outcome` / `adjustedAmount` / `resolvedBy` / `resolvedAt` | admin decision |
@@ -919,6 +924,41 @@ Rating a `destinationShopId` requires `fulfilledByShopId` (stamped on `READY` or
 | `ratingId` | string | req |
 | `reply` | string (1–280) | req |
 
+### `POST /ratings/received` — `receivedRatings` (auth)
+Empty body. Returns the caller’s rider rating group and each operated
+provider’s rating group, with the last-100 aggregate and per-rating
+appeal status.
+
+### `POST /appeals` — `fileAppeal` (auth)
+| Field | Type | |
+|-------|------|---|
+| `subjectKind` | enum: `RATING`, `REPORT`, `DISPUTE` | req |
+| `subjectId` | string | req |
+| `reason` | subject-specific enum | req |
+| `note` | string (1–500) | req |
+| `photoUrls` | string array (≤5) | opt |
+
+Rating: rated party, 30 days, max two lifetime. Report: sanctioned target
+of a resolved action, 14 days, one appeal. Dispute: either party to a
+decided dispute, 7 days, one appeal per side. The original subject is
+snapshotted into the appeal record.
+
+### `POST /appeals/eligible` — `eligibleAppeals` (auth)
+Empty body. Returns `{ ratings, reports, disputes }` with `canAppeal`,
+`appealStatus` and the subject snapshot.
+
+### `POST /admin/appeals` — `listAppeals` (admin)
+Optional `subjectKind` and `status` filters. Returns appellant names and
+the subject snapshot.
+
+### `POST /admin/appeals/decide` — `decideAppeal` (admin)
+| Field | Type | |
+|-------|------|---|
+| `appealId` | string | req |
+| `resolution` | enum: `UPHOLD`, `OVERTURN`, `ADJUST`, `REMOVE`, `KEEP` | req |
+| `note` | string (1–500) | req |
+| `adjustedAmount` | integer ≥ 0 | req for `ADJUST` |
+
 ## Payout accounts & dashboards
 
 ### `POST /payouts/banks` — `banks` (auth)
@@ -955,10 +995,16 @@ Requires a saved account and no other pending request; the amount cannot exceed
 | `POST /warranty/claims` | `ticketId`, `lineId` req; `reason` 5–280 req; `photoUrls` 0–5 opt |
 | `POST /warranty/mine` | `limit` 1–100 opt |
 | `POST /warranty/shop` | `providerId` opt; `limit` 1–200 opt |
-| `POST /warranty/respond` | `claimId` req; `accept` bool req; `note` ≤280 opt |
-| `POST /warranty/dispute` | `claimId` req; `note` ≤280 opt |
+| `POST /warranty/respond` | `claimId` req; `accept` bool req; decline requires `reasonCode` and `note` 5–280; accept note ≤280 opt |
+| `POST /warranty/dispute` | `claimId` req; `note` 5–280 req |
 | `POST /admin/warranty/claims` | `status` opt; `limit` 1–200 opt |
 | `POST /admin/warranty/resolve` | `claimId`, `outcome` (`SHOP`/`RIDER`/`PARTIAL`) req; `refundAmount` opt; `note` opt |
+
+`/warranty/mine` and `/warranty/shop` rows also carry the provider snapshot and
+name, original ticket type/status/service date, and matched line
+`qty`/`unitPrice`/`warrantyDays`/`warrantyParts`/`category` when available.
+Warranty claim rows keep `shopResponse`, `declineReasonCode`, `disputeNote`,
+`disputedAt`, and `resolutionNote` as separate fields.
 
 ### Work items (quote/invoice lines)
 

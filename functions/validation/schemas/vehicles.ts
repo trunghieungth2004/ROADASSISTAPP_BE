@@ -2,7 +2,6 @@ import {strReq, numReq, emptyBody, rideConfigFields} from "./primitives";
 import Joi from "joi";
 import {VEHICLE_TYPE} from "../../constants/status";
 
-
 export const vehiclesSchemas = {
   createVehicleProfile: Joi.object({
     type: Joi.string()

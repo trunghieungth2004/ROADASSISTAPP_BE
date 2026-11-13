@@ -162,7 +162,6 @@ export const getNearbyDispatch = async ({
 }) =>
   nearDispatchCached({userId, lat, lng, radiusMeters, ticketType, limit});
 
-
 export const getDispatchOffers = async ({
   lat,
   lng,
@@ -219,7 +218,6 @@ export const getDispatchOffers = async ({
   withLive.sort((a, b) => (a.distance as number) - (b.distance as number));
   return withLive.slice(0, limit);
 };
-
 
 export const selectDispatch = async ({
   userId,

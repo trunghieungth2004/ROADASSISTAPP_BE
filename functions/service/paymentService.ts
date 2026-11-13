@@ -8,6 +8,7 @@ import * as paymentPush from "./push/payment";
 import * as providerRepository from "../repository/providerRepository";
 import {isWarrantyRework} from "./warrantyRework";
 import * as userRepository from "../repository/userRepository";
+import {listPayments} from "./payment/adminPayments";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
 import * as subscriptionService from "./subscriptionService";
@@ -25,7 +26,6 @@ import {
   PAYMENT_ACTIVE_STATUSES,
   PAYMENT_CASH_CONFIRMABLE_STATUSES,
   DEPOSIT_PURPOSE,
-  PAYMENT_LIST_LIMIT,
   PAYMENT_LIST_MAX,
   PAYMENT_METHOD,
   PAYMENT_STATUS,
@@ -78,10 +78,8 @@ type PaymentWithCheckout = paymentRepository.Payment & {
   checkout?: sepayService.SepayCheckoutFields;
   reused?: boolean;
 };
-
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value !== "";
-
 const notify = async (task: Promise<unknown>): Promise<void> => {
   try {
     await task;
@@ -89,7 +87,6 @@ const notify = async (task: Promise<unknown>): Promise<void> => {
     return;
   }
 };
-
 const billableAmountFor = (ticket: TicketLike):
   {amount: number; waitingFee: number} | null => {
   if (isWarrantyRework(ticket)) return null;
@@ -174,7 +171,6 @@ const billableAmountFor = (ticket: TicketLike):
   }
   return null;
 };
-
 export const assertCashConfirmedForResolve = async ({
   ticketId,
   ticketType,
@@ -722,29 +718,6 @@ const cancelPendingPayments = async (ticketId: string): Promise<void> => {
       return;
     }
   }
-};
-
-const listPayments = async ({
-  adminUid,
-  status,
-  limit,
-}: {
-  adminUid: string;
-  status?: string;
-  limit?: number;
-}): Promise<paymentRepository.Payment[]> => {
-  const caller = await userRepository.findById(adminUid);
-  if (!caller) throw new NotFoundError("User not found");
-  if (caller.role !== ROLE_ADMIN) {
-    throw new ForbiddenError("Admin role required");
-  }
-  const capped = typeof limit === "number" ?
-    Math.min(limit, PAYMENT_LIST_MAX) :
-    PAYMENT_LIST_LIMIT;
-  if (typeof status === "string" && status !== "") {
-    return paymentRepository.findByStatus(status, capped);
-  }
-  return paymentRepository.findAll(capped);
 };
 
 const auditLedger = async ({

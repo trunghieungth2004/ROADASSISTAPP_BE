@@ -1,13 +1,18 @@
 import {strReq, strOpt, langAttr, latAttr, emptyBody} from "./primitives";
 import Joi from "joi";
 
-
 export const pushSchemas = {
   registerPush: Joi.object({
     token: Joi.string().min(1).max(4096).required(),
     platform: Joi.string().valid("android", "ios", "web").optional(),
   }),
   unregisterPush: Joi.object({
+    token: Joi.string().min(1).max(4096).required(),
+  }),
+  adminRegisterPush: Joi.object({
+    token: Joi.string().min(1).max(4096).required(),
+  }),
+  adminUnregisterPush: Joi.object({
     token: Joi.string().min(1).max(4096).required(),
   }),
   pingPush: emptyBody(),
@@ -25,8 +30,11 @@ export const pushSchemas = {
     audience: Joi.string().valid(
       "operator",
       "rider",
+      "participants",
       "tower-candidates",
       "destination-shop",
+      "shop",
+      "status-blind",
     ).optional(),
     shopId: Joi.string().trim().max(120).optional(),
     title: Joi.string().trim().max(120).optional(),

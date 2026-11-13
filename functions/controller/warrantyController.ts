@@ -47,11 +47,12 @@ const shop = async (req: Request, res: Response) => {
 const respond = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {claimId, accept, note} = req.body;
+    const {claimId, accept, reasonCode, note} = req.body;
     sendSuccess(res, await warrantyService.respond({
       userId: uid,
       claimId,
       accept,
+      reasonCode,
       note,
     }));
   } catch (error) {

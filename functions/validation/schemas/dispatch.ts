@@ -17,7 +17,6 @@ import {
 } from "../../constants/status";
 import {SHOP_DECLINE_REASON} from "../../constants/dispatch";
 
-
 const workItemList = (): Joi.ArraySchema =>
   Joi.array().items(Joi.object({
     name: Joi.string().trim().min(1).max(120).required(),
@@ -49,7 +48,6 @@ export const dispatchSchemas = {
       .required(),
     lat: latAttr(),
     lng: langAttr(),
-    diagnosticId: strOpt(),
     symptom: Joi.string()
       .valid(...Object.values(SERVICE_CATEGORY))
       .optional(),

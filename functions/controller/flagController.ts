@@ -107,8 +107,13 @@ const getAllFlags = async (_req: Request, res: Response) => {
 
 const moderateFlag = async (req: Request, res: Response) => {
   try {
+    const {uid} = req as AuthedRequest;
     const {flagId, status} = req.body;
-    const result = await flagService.moderateFlag({flagId, status});
+    const result = await flagService.moderateFlag({
+      adminUid: uid,
+      flagId,
+      status,
+    });
     sendSuccess(res, result, {message: "Flag moderated"});
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -130,9 +135,10 @@ const unflagFlag = async (req: Request, res: Response) => {
   }
 };
 
-const expireFlags = async (_req: Request, res: Response) => {
+const expireFlags = async (req: Request, res: Response) => {
   try {
-    const count = await flagService.expireFlags();
+    const {uid} = req as AuthedRequest;
+    const count = await flagService.expireFlags(uid);
     sendSuccess(
       res,
       {expired: count},

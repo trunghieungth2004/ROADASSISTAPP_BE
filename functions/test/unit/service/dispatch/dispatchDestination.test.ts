@@ -7,7 +7,6 @@ import * as vehicleProfileRepository from
 import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
-
 import {
   acceptDispatch,
   declineDestination,
@@ -40,7 +39,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService.updateDispatchDestination", () => {
   const ticket = {
@@ -571,7 +569,6 @@ describe("dispatchService.updateDispatchDestination", () => {
   });
 });
 
-
 describe("dispatchService.declineDestination", () => {
   it("clears the destination and freezes the traveled leg", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
@@ -733,7 +730,6 @@ describe("dispatchService.declineDestination", () => {
     ).rejects.toMatchObject({statusCode: 400});
   });
 });
-
 
 describe("dispatchService tow ETA and late sweep", () => {
   it("stamps ETAs on tow accept with a fresh fix", async () => {

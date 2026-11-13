@@ -11,7 +11,6 @@ import {vehicleClassOf} from "../../providerService";
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {chatService} from "../../chatService";
 
-
 import {autoFile, bumpCancelCounters} from "../../disputeService";
 import * as platformConfigService from "../../platformConfigService";
 import {accrue, stopWaiting} from "../waiting";
@@ -51,7 +50,6 @@ import {
 } from "../../../utils/errors";
 
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const cancelTowerSearch = async ({
   userId,
@@ -374,7 +372,6 @@ export const confirmTowReceived = async ({
   return {received: true};
 };
 
-
 const linkBookingArrival = async (
   bookingId: string | null,
   parentId: string,
@@ -566,7 +563,6 @@ export const spawnShopTicket = async (
   }
   cacheManager.del(NS);
 };
-
 
 export const getTowFareEstimate = async ({
   userId,

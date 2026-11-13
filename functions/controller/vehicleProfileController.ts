@@ -98,7 +98,6 @@ const addRideConfig = async (req: Request, res: Response) => {
   }
 };
 
-
 export {
   getAllProfiles,
   createProfile,

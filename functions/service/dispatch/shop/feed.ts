@@ -6,7 +6,6 @@ import * as providerRepository from "../../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
 
-
 import {
   PAYMENT_LIST_MAX,
   PAYMENT_METHOD,
@@ -19,7 +18,6 @@ import {
   STATUS_DISPATCH,
 } from "../../../constants/status";
 
-
 import {
   linkedSummaryFor,
   mobileTowAvailabilityFor,
@@ -29,7 +27,6 @@ import {
 import {isOpenNow} from "../../providerService";
 import {NotFoundError} from "../../../utils/errors";
 import {riderParty} from "../riderParty";
-
 
 export const feedTickets = async ({
   userId,

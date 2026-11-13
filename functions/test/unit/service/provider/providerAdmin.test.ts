@@ -65,7 +65,6 @@ beforeEach(() => {
   reports.countOpenForProvider.mockResolvedValue(0);
 });
 
-
 describe("providerService review", () => {
   it("joins applicant identity onto pending providers", async () => {
     jest.mocked(providerRepository.findPending).mockResolvedValue(

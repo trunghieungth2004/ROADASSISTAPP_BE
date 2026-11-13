@@ -47,4 +47,19 @@ const ratingsByTicket = async (req: Request, res: Response) => {
   }
 };
 
-export {submitRating, replyRating, ratingsByTicket};
+const receivedRatings = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const result = await ratingService.receivedRatings(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+export {
+  submitRating,
+  replyRating,
+  ratingsByTicket,
+  receivedRatings,
+};

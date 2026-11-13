@@ -6,7 +6,6 @@ import * as vehicleProfileRepository from
 import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
-
 import {
   createDispatch,
   acceptDispatch,
@@ -37,7 +36,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService.acceptDispatch", () => {
   it("rejects accepts on non-pending tickets", async () => {
@@ -217,6 +215,223 @@ describe("dispatchService.acceptDispatch", () => {
         title: "Mobile shop accepted",
         body: expect.stringContaining("Mobile shop accepted."),
       }),
+    );
+  });
+
+  it("charges SOS travel by routed shop-to-pickup distance", async () => {
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute.mockResolvedValue({distanceMeters: 5000});
+    const sos = {
+      id: "s1",
+      status: "1",
+      ticketType: "SOS",
+      userId: "rider1",
+      lat: 10.7,
+      lng: 106.6,
+    };
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(sos as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      callOutFee: 50000,
+      travelPerKmFee: 10000,
+      lat: 10.8,
+      lng: 106.7,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map([["mobile1", {
+        lat: 10.75,
+        lng: 106.65,
+        lastSeen: new Date().toISOString(),
+      }]]) as never,
+    );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(true);
+    await acceptDispatch({
+      userId: "op1",
+      ticketId: "s1",
+      shopId: "mobile1",
+    });
+    expect(postRoute).toHaveBeenCalledWith(
+      [{lat: 10.75, lng: 106.65}, {lat: 10.7, lng: 106.6}],
+      [],
+      "motor_scooter",
+    );
+    expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({
+        mobileCallOutFee: 50000,
+        mobileCallOutWaived: false,
+        mobileTravelKm: 5,
+        mobileTravelRate: 10000,
+        mobileTravelFee: 50000,
+        mobileTravelSource: "ROUTE",
+      }),
+      "op1",
+    );
+  });
+
+  it("falls back to straight-line SOS travel when routing fails", async () => {
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute.mockRejectedValue(new Error("route down"));
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "s1",
+      status: "1",
+      ticketType: "SOS",
+      userId: "rider1",
+      lat: 10.7,
+      lng: 106.6,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      callOutFee: 50000,
+      travelPerKmFee: 10000,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map([["mobile1", {
+        lat: 10.75,
+        lng: 106.65,
+        lastSeen: new Date().toISOString(),
+      }]]) as never,
+    );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(true);
+    await acceptDispatch({
+      userId: "op1",
+      ticketId: "s1",
+      shopId: "mobile1",
+    });
+    const claim = jest.mocked(dispatchRepository.claimForAssignment)
+      .mock.calls[0];
+    expect(claim?.[1]).toMatchObject({
+      mobileTravelSource: "FALLBACK",
+      mobileTravelRate: 10000,
+    });
+    expect(
+      (claim?.[1] as {mobileTravelKm?: number}).mobileTravelKm,
+    ).toBeGreaterThan(1);
+  });
+
+  it("routes SOS travel from the provider base without a fix", async () => {
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute.mockResolvedValue({distanceMeters: 3000});
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "s1",
+      status: "1",
+      ticketType: "SOS",
+      userId: "rider1",
+      lat: 10.7,
+      lng: 106.6,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      callOutFee: 50000,
+      travelPerKmFee: 10000,
+      lat: 10.8,
+      lng: 106.7,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map() as never,
+    );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(true);
+    await acceptDispatch({
+      userId: "op1",
+      ticketId: "s1",
+      shopId: "mobile1",
+    });
+    expect(postRoute).toHaveBeenCalledWith(
+      [{lat: 10.8, lng: 106.7}, {lat: 10.7, lng: 106.6}],
+      [],
+      "motor_scooter",
+    );
+    expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({
+        mobileTravelKm: 3,
+        mobileTravelSource: "PROVIDER_BASE",
+        mobileTravelFee: 30000,
+      }),
+      "op1",
+    );
+  });
+
+  it("waives the SOS call-out inside the routed waiver radius", async () => {
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute.mockResolvedValue({distanceMeters: 800});
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "s1",
+      status: "1",
+      ticketType: "SOS",
+      userId: "rider1",
+      lat: 10.7,
+      lng: 106.6,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      callOutFee: 50000,
+      travelPerKmFee: 10000,
+      lat: 10.8,
+      lng: 106.7,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map() as never,
+    );
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(true);
+    await acceptDispatch({
+      userId: "op1",
+      ticketId: "s1",
+      shopId: "mobile1",
+    });
+    expect(dispatchRepository.claimForAssignment).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({
+        mobileCallOutFee: 0,
+        mobileCallOutWaived: true,
+        mobileTravelKm: 0.8,
+        mobileTravelFee: 8000,
+      }),
+      "op1",
     );
   });
 
@@ -479,7 +694,6 @@ describe("dispatchService.acceptDispatch", () => {
     expect(dispatchRepository.claimForAssignment).not.toHaveBeenCalled();
   });
 });
-
 
 describe("dispatchService vehicle and capability", () => {
   it("stores the rider vehicle and a free-form destination", async () => {

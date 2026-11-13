@@ -7,7 +7,9 @@ import * as warrantyRepository from "../../../repository/warrantyRepository";
 import * as refundService from "../../../service/refundService";
 import {enqueueDispatchPush} from "../../../service/taskQueueService";
 import {
+  dispute,
   fileClaim,
+  myClaims,
   resolve,
   respond,
   sweepWarrantyRebooks,
@@ -105,6 +107,53 @@ beforeEach(() => {
   } as never);
 });
 
+test("enriches rider claims with provider and warranty terms", async () => {
+  jest.mocked(warrantyRepository.findByRider).mockResolvedValue([claim()]);
+  jest.mocked(providerRepository.findById).mockResolvedValue({
+    id: "shop1",
+    kind: "SHOP",
+    name: "Fix Shop",
+    lat: 10.7,
+    lng: 106.6,
+    status: "ACTIVE",
+    accepting: true,
+    ratingAvg: 4.5,
+    ratingCount: 12,
+  } as never);
+  jest.mocked(dispatchRepository.findById).mockResolvedValue(ticket({
+    id: "t1",
+    assignedShopId: "shop1",
+    invoiceItems: [{
+      lineId: "line1",
+      kind: "SERVICE",
+      serviceCode: "TIRE",
+      name: "Flat tire",
+      category: "FLAT_TIRE",
+      qty: 1,
+      unitPrice: 50000,
+      amount: 50000,
+      warrantyDays: 30,
+      warrantyParts: "PARTS_AND_LABOR",
+      warrantyUntil: FUTURE,
+    }],
+  }));
+  const rows = await myClaims({userId: "rider1"});
+  expect(rows[0]).toMatchObject({
+    providerName: "Fix Shop",
+    provider: expect.objectContaining({
+      id: "shop1",
+      name: "Fix Shop",
+    }),
+    ticketType: "WALK_IN",
+    ticketStatus: STATUS_DISPATCH.RESOLVED,
+    qty: 1,
+    unitPrice: 50000,
+    warrantyDays: 30,
+    warrantyParts: "PARTS_AND_LABOR",
+    category: "FLAT_TIRE",
+  });
+});
+
 test("rejects a second claim on the same service line", async () => {
   jest.mocked(dispatchRepository.findById).mockResolvedValue(resolvedTicket());
   jest.mocked(warrantyRepository.findByLine).mockResolvedValue([claim()]);
@@ -132,16 +181,68 @@ test("declining a claim notifies the rider", async () => {
     userId: "op1",
     claimId: "wc1",
     accept: false,
+    reasonCode: "WEAR_AND_TEAR",
     note: "Wear and tear",
   });
   expect(result.status).toBe("DECLINED");
   expect(warrantyRepository.update).toHaveBeenCalledWith("wc1",
-    expect.objectContaining({status: "DECLINED"}));
+    expect.objectContaining({
+      status: "DECLINED",
+      declineReasonCode: "WEAR_AND_TEAR",
+      shopResponse: "Wear and tear",
+    }));
   expect(enqueueDispatchPush).toHaveBeenCalledWith(
     "t1",
     "-warranty-declined-wc1",
     expect.objectContaining({audience: "rider"}),
   );
+});
+
+test("requires a structured reason and note to decline", async () => {
+  jest.mocked(warrantyRepository.findById).mockResolvedValue(claim());
+  jest.mocked(userRepository.findById).mockResolvedValue({
+    id: "op1",
+    role: "2",
+  } as never);
+  jest.mocked(providerRepository.findById).mockResolvedValue({
+    id: "shop1",
+    operatorUid: "op1",
+  } as never);
+  await expect(respond({
+    userId: "op1",
+    claimId: "wc1",
+    accept: false,
+    note: "Wear and tear",
+  })).rejects.toMatchObject({statusCode: 400});
+  await expect(respond({
+    userId: "op1",
+    claimId: "wc1",
+    accept: false,
+    reasonCode: "WEAR_AND_TEAR",
+    note: "no",
+  })).rejects.toMatchObject({statusCode: 400});
+});
+
+test("rider dispute keeps the provider response separate", async () => {
+  jest.mocked(warrantyRepository.findById)
+    .mockResolvedValueOnce(claim({
+      status: "DECLINED",
+      shopResponse: "Wear and tear",
+      declineReasonCode: "WEAR_AND_TEAR",
+    }))
+    .mockResolvedValueOnce(claim({status: "DISPUTED"}));
+  const result = await dispute({
+    userId: "rider1",
+    claimId: "wc1",
+    note: "The same failure came back",
+  });
+  expect(result.status).toBe("DISPUTED");
+  const patch = jest.mocked(warrantyRepository.update).mock.calls[0][1];
+  expect(patch).toMatchObject({
+    status: "DISPUTED",
+    disputeNote: "The same failure came back",
+  });
+  expect(patch).not.toHaveProperty("shopResponse");
 });
 
 test("accepting a claim creates a linked rework ticket", async () => {

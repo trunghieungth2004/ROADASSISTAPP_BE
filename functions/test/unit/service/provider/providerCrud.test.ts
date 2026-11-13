@@ -59,7 +59,6 @@ beforeEach(() => {
   reports.countOpenForProvider.mockResolvedValue(0);
 });
 
-
 describe("providerService.updateProvider vehicle linking", () => {
   it("links mobile to the existing TOW profile on plate change", async () => {
     jest.mocked(providerRepository.findById).mockResolvedValue({
@@ -308,7 +307,6 @@ describe("providerService.updateProvider", () => {
     });
   });
 });
-
 
 describe("providerService vehicleClasses", () => {
   it("stores vehicle classes on shop creation", async () => {

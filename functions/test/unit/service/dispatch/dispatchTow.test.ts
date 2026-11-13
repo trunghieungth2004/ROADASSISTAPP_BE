@@ -5,7 +5,6 @@ import * as paymentRepository from "../../../../repository/paymentRepository";
 import * as vehicleProfileRepository from
   "../../../../repository/vehicleProfileRepository";
 
-
 import {
   createDispatch,
   updateDispatchStatus,
@@ -44,7 +43,6 @@ beforeEach(() => {
   delete process.env.FCM_ENABLED;
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
-
 
 describe("dispatchService tow drop-off policy", () => {
   it("rejects a new tow drop-off at an off-duty shop", async () => {
@@ -335,7 +333,6 @@ describe("dispatchService tow drop-off policy", () => {
     );
   });
 });
-
 
 describe("dispatchService.towEstimates", () => {
   const destShop = {

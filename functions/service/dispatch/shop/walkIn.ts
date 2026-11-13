@@ -3,13 +3,10 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
-
 
 import {NS} from "../constants";
 import {WALK_IN_TTL_MS} from "../../../constants/dispatch";
-
 
 import {
   DECLINE_REASON,
@@ -18,9 +15,7 @@ import {
 } from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
 
-
 import {chatService} from "../../chatService";
-
 
 import {
   ForbiddenError,
@@ -29,7 +24,6 @@ import {
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
 import {deleteObjects} from "../../../utils/media";
-
 
 export const declineDispatch = async ({
   userId,
@@ -87,7 +81,6 @@ export const declineDispatch = async ({
   await enqueueDispatchPush(ticketId, `-status-${STATUS_DISPATCH.DECLINED}`);
   return {declined: true};
 };
-
 
 const REMINDER_AFTER_MS = 15 * 60 * 1000;
 

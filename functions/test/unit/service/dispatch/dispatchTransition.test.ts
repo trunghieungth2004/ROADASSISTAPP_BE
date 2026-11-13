@@ -47,7 +47,6 @@ beforeEach(() => {
   jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([]);
 });
 
-
 describe("dispatchService.updateDispatchStatus", () => {
   it("rejects illegal statuses with 400", async () => {
     await expect(
@@ -735,7 +734,6 @@ describe("dispatchService.updateDispatchStatus", () => {
   });
 });
 
-
 describe("dispatchService repair ladder", () => {
   it("moves arrived to in-progress for the operator", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
@@ -833,7 +831,6 @@ describe("dispatchService repair ladder", () => {
     );
   });
 });
-
 
 describe("dispatchService hardening", () => {
   it("queries each ticket type separately on the board", async () => {

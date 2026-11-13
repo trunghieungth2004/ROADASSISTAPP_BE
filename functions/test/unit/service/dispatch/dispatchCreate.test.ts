@@ -6,7 +6,6 @@ import * as vehicleProfileRepository from
 import * as providerLocationRepository from
   "../../../../repository/providerLocationRepository";
 
-
 import {createDispatch} from "../../../../service/dispatchService";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
 
@@ -34,7 +33,6 @@ beforeEach(() => {
     id: "v1",
   } as never);
 });
-
 
 describe("dispatchService.createDispatch", () => {
   it("throws 404 for an unknown user", async () => {
@@ -372,7 +370,6 @@ describe("dispatchService.createDispatch", () => {
     );
   });
 });
-
 
 describe("dispatchService.createDispatch extras", () => {
   it("attaches a destination shop snapshot", async () => {

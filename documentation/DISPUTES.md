@@ -30,23 +30,20 @@ The backend resolves the accused party from the ticket context:
 | `reasonCode` | `constants/disputes.ts` (`DISPUTE_REASON`) |
 | `photoUrls` | Storage paths (0–5, structure-validated — no `http` URLs) |
 
-Mobile clients send a simplified `reason` alias instead of
-`type`/`reasonCode`/`accusedKind` (and a single `photoUrl`). Aliases are
-context-aware:
+Mobile clients send a simplified money-only `reason` alias instead of
+`type`/`reasonCode`/`accusedKind` (and a single `photoUrl`):
 
 | Alias | Resolves to |
 |---|---|
-| `LATE` | provider late |
-| `NO_SHOW` | provider no-show |
 | `OVERCHARGE` | fare dispute against the provider |
-| `WRONG_ROUTE` / `UNSAFE` | safety/conduct against the tower |
-| `RUDE` | conduct against the provider |
 | `FIX_NOT_DONE` / `POOR_QUALITY` | service quality against the shop |
 | `UNFIXABLE_DISAGREE` | unfixable disagreement against the shop |
-| `RIDER_NO_SHOW` / `RIDER_UNREACHABLE` | rider no-show |
 | `RIDER_REFUSED_PAYMENT` | rider payment dispute |
-| `RIDER_ABUSIVE` | rider conduct |
 | `OTHER` | other against the opposite party |
+
+Behavior aliases (`LATE`, `NO_SHOW`, `WRONG_ROUTE`, `UNSAFE`, `RUDE`,
+`RIDER_NO_SHOW`, `RIDER_UNREACHABLE`, `RIDER_ABUSIVE`) are rejected with
+`400 Behavior issues are handled as reports`; use `POST /reports`.
 
 ## Auto-file
 
@@ -61,8 +58,13 @@ the ticket flow):
   `SHOP_DECLINE_DROPOFF` against the shop, plus its `declineCount`
   increment.
 
-Late and no-show disputes are manual. Auto-filing does not put the ticket
-on hold because the journey must continue (re-match / new drop-off).
+Both auto-filed records are created by the system, not by the rider:
+`filedBy` is the rider beneficiary, `filedByRole` is `SYSTEM`. Structured
+cancel/decline reasons are preserved (`TOWER_CANCEL_UNREACHABLE`,
+`SHOP_FULL`, `SHOP_PART_DELAY`, …). Breakdown cancels do not auto-file.
+Auto-filing does not put the ticket on hold because the journey must
+continue (re-match / new drop-off). `CANCEL_MID` and `DECLINE_DROPOFF`
+are not manual report reasons.
 
 ## Hold
 

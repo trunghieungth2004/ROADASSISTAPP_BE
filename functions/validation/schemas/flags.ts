@@ -10,7 +10,6 @@ import {
 import Joi from "joi";
 import {STATUS_FLAGS} from "../../constants/status";
 
-
 export const flagsSchemas = {
   createFlag: Joi.object({
     type: Joi.string().valid("ACCIDENT", "FLOOD", "OBSTRUCTION").required(),

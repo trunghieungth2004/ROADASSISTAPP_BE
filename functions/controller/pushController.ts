@@ -1,5 +1,6 @@
 import {Request, Response} from "express";
 import * as pushService from "../service/push/service";
+import * as adminPushService from "../service/push/admin";
 import {QUEUE_NAME} from "../service/taskQueueService";
 import {sendError, sendSuccess, handleServiceError} from "../utils/response";
 import {AuthedRequest} from "../middleware/auth";
@@ -30,6 +31,31 @@ const ping = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const result = await pushService.pingOwnPush(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const adminRegister = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {token} = req.body as {token: string};
+    const record = await adminPushService.registerAdminPushToken(userId, token);
+    sendSuccess(res, record, {statusCode: 201});
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const adminUnregister = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {token} = req.body as {token: string};
+    const result = await adminPushService.unregisterAdminPushToken(
+      userId,
+      token,
+    );
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -69,4 +95,4 @@ const deliver = async (req: Request, res: Response) => {
   }
 };
 
-export {register, unregister, ping, deliver};
+export {register, unregister, ping, deliver, adminRegister, adminUnregister};

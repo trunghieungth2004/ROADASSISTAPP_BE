@@ -84,7 +84,6 @@ export const DEAD_TOKEN_CODES = new Set([
   "messaging/invalid-registration-token",
 ]);
 
-
 export const TERMINAL_STATUSES: Set<string> = new Set([
   STATUS_DISPATCH.RESOLVED,
   STATUS_DISPATCH.CANCELLED,
@@ -92,7 +91,6 @@ export const TERMINAL_STATUSES: Set<string> = new Set([
   STATUS_DISPATCH.RESOLVED_UNFIXABLE,
   STATUS_DISPATCH.UNFIXABLE,
 ]);
-
 
 export const STATUS_PUSH_BODY: Record<string, string> = {
   [STATUS_DISPATCH.MATCHED]: "A helper accepted your request — tap to view",

@@ -1,6 +1,7 @@
 import {db, FieldValue} from "../config/firebase";
 import {encodeGeohash} from "../utils/geo";
 import {PROVIDER_STATUS} from "../constants/status";
+import {PROVIDER_COLLECTION} from "../constants/payments";
 
 interface ProviderService {
   code: string;
@@ -28,6 +29,7 @@ interface Provider {
   serviceUsage?: Record<string, number> | null;
   taxCode?: string | null;
   serviceFee?: number | null;
+  acceptingBeforeRestriction?: boolean | null;
   bookingEnabled?: boolean;
   bookingSlotMinutes?: number | null;
   bookingCapacity?: number | null;
@@ -54,6 +56,12 @@ interface Provider {
   suspendedAt?: string | null;
   suspendedReason?: string | null;
   suspendedBy?: string | null;
+  restrictedUntil?: string | null;
+  restrictedAt?: string | null;
+  restrictedBy?: string | null;
+  restrictionReason?: string | null;
+  restrictionSourceKind?: string | null;
+  restrictionSourceId?: string | null;
   geoHash: string;
   geoCell?: string;
   ratingAvg?: number;
@@ -363,6 +371,25 @@ const findByGeohashPrefixes = async (
   return results;
 };
 
+const findByIds = async (ids: string[]): Promise<Map<string, Provider>> => {
+  const out = new Map<string, Provider>();
+  const unique = [...new Set(ids.filter((id) => id !== ""))];
+  if (unique.length === 0) return out;
+  const CHUNK = 30;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const docs = await db.getAll(
+      ...chunk.map((id) => db.collection(PROVIDER_COLLECTION).doc(id)),
+    );
+    docs.forEach((doc) => {
+      if (doc.exists) {
+        out.set(doc.id, {id: doc.id, ...doc.data()} as Provider);
+      }
+    });
+  }
+  return out;
+};
+
 const findAll = async (): Promise<Provider[]> => {
   const snapshot = await db.collection("providers").get();
   const results: Provider[] = [];
@@ -398,6 +425,7 @@ export {
   createMobileShop,
   createTow,
   findById,
+  findByIds,
   findByOperator,
   findPending,
   findByVehicleProfileId,

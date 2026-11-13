@@ -1,5 +1,3 @@
-
-
 import {
   PROVIDER_PRICING_BOUNDS,
 } from "../../constants/dispatch";
@@ -13,11 +11,9 @@ import {
   VEHICLE_CLASS,
 } from "../../constants/status";
 
-
 import {isCarVehicle} from "../../utils/valhalla";
 
 import {ValidationError} from "../../utils/errors";
-
 
 const DOW_KEYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
@@ -223,7 +219,6 @@ export const normalizeMobileShopPricing = ({
     ...(travelPerKmFee !== undefined ? {travelPerKmFee} : {}),
   };
 };
-
 
 const normalizeServiceVehicleClasses = (
   raw: unknown,

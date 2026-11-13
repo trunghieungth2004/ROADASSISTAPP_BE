@@ -118,7 +118,7 @@ flowchart TD
 
 ASCII fallback: `1 -> 2 -> 3 -> 9 -> 7 -> 4`; `9 -> 1` on decline; `3 -> 15 -> (TOW | new SOS | 2-min grace)`; `1/2 -> 5`.
 
-- A call-out is charged when the mobile shop accepts; an unfixable close keeps call-out only, waived when the shop was within 1 km at accept on a fresh fix. Each continuation attempt has its own call-out; prior call-outs remain payable.
+- A call-out is charged when the mobile shop accepts; an unfixable close keeps call-out only, waived when the routed shop→pickup distance is within 1 km at accept. Each continuation attempt has its own call-out; prior call-outs remain payable, while the new continuation ticket starts with no payment method, checkout, call-out, travel, fee history, quote, invoice, or final amount.
 - After `15`, a direct same-vehicle TOW or a network TOW may be offered. If neither is available, the continuation is created automatically. If either is available, the shop has a 2-minute grace to offer or release it. A network offer creates a pending broadcast TOW only after the rider confirms a drop-off; no tower is auto-assigned.
 - The previous SOS attempt is shown on the linked TOW/continuation as `linkedSummary` (unfixable reason + shop evidence).
 

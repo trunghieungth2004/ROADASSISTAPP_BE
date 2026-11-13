@@ -1,6 +1,6 @@
 # RoadAssist Backend
 
-Firebase Cloud Functions backend powering the RoadAssist app (HẻmNav alley navigation for riders + XeAssist roadside-assistance stubs). Express.js + TypeScript on Node 22, Firestore database, self-hosted Valhalla routing.
+Firebase Cloud Functions backend powering RoadAssist — alley-safe navigation, live hazard reports, and roadside assistance. Express.js + TypeScript on Node 22, Firestore database, self-hosted Valhalla routing.
 
 ## Quick Start
 
@@ -133,5 +133,6 @@ GCLOUD_PROJECT=roadassistapp-c2e37 npm run push:check   # verify only; exit 1 if
 - [Status Codes](./documentation/STATUS.md) — Numeric status codes, the statuses collection, POST /statuses
 - [Caching](./documentation/CACHE.md) — In-process LRU namespaces + Firestore route cache
 - [Pipeline](./documentation/PIPELINE.md) — Hazard push pipeline (Cloud Tasks + FCM)
-- [Points](./documentation/POINTS.md) — Display-only reputation, reconciliation, reporter scope
+- [Trust, standing, ratings and points](./documentation/TRUST.md) — Reputation signals, rating window, points reconciliation, reporter scope
+- [Cases and appeals](./documentation/APPEALS.md) — Unified Cases queue, report/dispute/rating decisions, appeal intake
 - [Testing](./documentation/TESTING.md) — Jest unit/integration harness

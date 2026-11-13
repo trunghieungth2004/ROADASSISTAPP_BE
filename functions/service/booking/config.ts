@@ -20,5 +20,4 @@ const bookingConfigDefaults = {
   depositMax: BOOKING_DEPOSIT_MAX,
 };
 
-
 export {bookingConfigDefaults};

@@ -14,6 +14,7 @@ import {deleteObjects, validatePhotoPaths} from "../utils/media";
 import {FLAG_PHOTO_PREFIX} from "../constants/media";
 import {effectiveRadiusMeters} from "./closureService";
 import {enqueueHazardPush} from "./taskQueueService";
+import * as auditService from "./auditService";
 
 import {ConflictError, ForbiddenError, NotFoundError, ValidationError}
   from "../utils/errors";
@@ -408,9 +409,11 @@ const getAllFlags = async (): Promise<FlagRecord[]> => {
 };
 
 const moderateFlag = async ({
+  adminUid,
   flagId,
   status,
 }: {
+  adminUid?: string;
   flagId: string;
   status: string;
 }) => {
@@ -422,6 +425,18 @@ const moderateFlag = async ({
   cacheManager.del(NS);
   if (status === STATUS_FLAGS.CONFIRMED || status === STATUS_FLAGS.LOCKED) {
     await enqueueHazardPush(flagId, flag.type, status);
+  }
+  if (adminUid !== undefined) {
+    await auditService.record({
+      adminUid,
+      action: "FLAG_MODERATED",
+      category: "CONTENT",
+      targetType: "FLAG",
+      targetId: flagId,
+      targetLabel: String(flag.type ?? flagId),
+      before: {status: flag.status},
+      after: {status},
+    });
   }
   return {updated: 1};
 };
@@ -466,13 +481,25 @@ const unflagFlag = async ({
   return {unflagged: 1};
 };
 
-const expireFlags = async (): Promise<number> => {
+const expireFlags = async (adminUid?: string): Promise<number> => {
   const expired = await flagRepository.findExpired();
   for (const flag of expired) {
     await flagRepository.updateStatus(flag.id, STATUS_FLAGS.EXPIRED);
     await deleteObjects(flag.photoUrls ?? []);
     await flagRepository.reconcileReporterAward(flag.id);
     cacheManager.del(NS, flag.id);
+    if (adminUid !== undefined) {
+      await auditService.record({
+        adminUid,
+        action: "FLAG_EXPIRED",
+        category: "CONTENT",
+        targetType: "FLAG",
+        targetId: flag.id,
+        targetLabel: String(flag.type ?? flag.id),
+        before: {status: flag.status},
+        after: {status: STATUS_FLAGS.EXPIRED},
+      });
+    }
   }
   return expired.length;
 };

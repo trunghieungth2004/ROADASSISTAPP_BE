@@ -56,7 +56,6 @@ beforeEach(() => {
   reports.countOpenForProvider.mockResolvedValue(0);
 });
 
-
 describe("providerService.nearProviders", () => {
   it("hides non-active providers from riders", async () => {
     jest.mocked(providerRepository.findByGeohashPrefixes).mockResolvedValue(
@@ -71,7 +70,6 @@ describe("providerService.nearProviders", () => {
     expect(result.map((p) => (p as {id: string}).id)).toEqual(["open"]);
   });
 });
-
 
 describe("providerService.nearProviders openOnly", () => {
   it("excludes closed shops at a fixed local time", async () => {
@@ -176,7 +174,6 @@ describe("providerService.nearProviders time-aware cache", () => {
     ).toBeNull();
   });
 });
-
 
 describe("providerService.nearProviders vehicleClass", () => {
   const shops = (classes: Array<string[] | null>) => classes.map(

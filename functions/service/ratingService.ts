@@ -1,5 +1,7 @@
 import * as ratingRepository from "../repository/ratingRepository";
+import * as appealRepository from "../repository/appealRepository";
 import * as dispatchRepository from "../repository/dispatchRepository";
+import * as disputeRepository from "../repository/disputeRepository";
 import * as providerRepository from "../repository/providerRepository";
 import * as userRepository from "../repository/userRepository";
 import * as cacheManager from "../utils/cacheManager";
@@ -10,6 +12,18 @@ import {
   STATUS_DISPATCH,
 } from "../constants/status";
 import {ROLE_ADMIN} from "../constants/roles";
+
+import {DISPUTE_TYPE} from "../constants/disputes";
+import {
+  RATING_AUTO_EXCLUDE_MAX,
+  RATING_WINDOW,
+} from "../constants/ratings";
+import {
+  APPEAL_MAX,
+  APPEAL_STATUS,
+  APPEAL_WINDOW_DAYS,
+} from "../constants/appeals";
+
 
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../utils/errors";
@@ -141,6 +155,23 @@ const submitRating = async ({
   } else {
     await dispatchRepository.update(ticketId, {helperRating: score});
   }
+  const disputes = await disputeRepository.findByTicketId(ticketId)
+    .catch(() => []);
+  let excluded = 0;
+  for (const dispute of disputes) {
+    if (dispute.status !== "RESOLVED") continue;
+    excluded += await autoExcludeForDispute({
+      ticketId,
+      disputeId: dispute.id,
+      type: dispute.type,
+      outcome: dispute.outcome ?? "",
+      filedBy: dispute.filedBy,
+    }).catch(() => 0);
+  }
+  if (excluded > 0) {
+    const next = await ratingRepository.aggregate(targetId, targetKind);
+    return {avg: next.avg, count: next.count, updated: 1};
+  }
   return {avg, count, updated: 1};
 };
 
@@ -211,7 +242,7 @@ const userRatings = async ({
       throw new ForbiddenError("No shared ticket with this user");
     }
   }
-  const ratings = await ratingRepository.listByTarget(userId, targetKind);
+  const ratings = await ratingRepository.listRecentByTarget(userId, targetKind);
   const {avg, count} = await ratingRepository.aggregate(userId, targetKind);
   const authorIds = ratings
     .map((r) => r.byUserId)
@@ -239,13 +270,14 @@ const userRatings = async ({
     }),
     avg,
     count,
+    window: RATING_WINDOW,
   };
 };
 
 const providerRatings = async (providerId: string) => {
   const provider = await providerRepository.findById(providerId);
   if (!provider) throw new NotFoundError("Provider not found");
-  const ratings = await ratingRepository.listByTarget(
+  const ratings = await ratingRepository.listRecentByTarget(
     providerId,
     RATING_TARGET.SHOP,
   );
@@ -279,6 +311,7 @@ const providerRatings = async (providerId: string) => {
     }),
     avg,
     count,
+    window: RATING_WINDOW,
     completedJobs,
   };
 };
@@ -311,6 +344,18 @@ const ratingsByTicket = async ({
     }
   }
   const ratings = await ratingRepository.listByTicket(ticketId);
+  const appeals = await appealRepository.findBySubjectIds(
+    "RATING",
+    ratings.map((r) => r.id),
+    userId,
+  );
+  const appealByRating = new Map<string, string>();
+  for (const appeal of appeals) {
+    if (!appealByRating.has(appeal.subjectId) ||
+      appeal.status === APPEAL_STATUS.OPEN) {
+      appealByRating.set(appeal.subjectId, appeal.status);
+    }
+  }
   const nameIds = new Set<string>();
   for (const r of ratings) {
     if (typeof r.byUserId === "string" && r.byUserId !== "") {
@@ -339,7 +384,194 @@ const ratingsByTicket = async ({
     repliedByName: nameOf(r.repliedBy),
     repliedAt: (r.repliedAt as string | undefined) ?? null,
     createdAt: r.createdAt,
+    excluded: r.excluded === true,
+    appealStatus: appealByRating.get(r.id) ?? null,
   }));
+};
+
+
+const recomputeTargetRating = async (
+  targetId: string,
+  targetKind: string,
+): Promise<{avg: number; count: number}> => {
+  const result = await ratingRepository.aggregate(targetId, targetKind);
+  if (targetKind === RATING_TARGET.SHOP) {
+    await providerRepository.updateRating(
+      targetId,
+      result.avg,
+      result.count,
+    );
+    cacheManager.del("shop");
+    cacheManager.del("provider");
+  } else {
+    await userRepository.updateRating(
+      targetId,
+      result.avg,
+      result.count,
+    );
+    cacheManager.del("user", targetId);
+  }
+  return result;
+};
+
+const appealView = (
+  rating: ratingRepository.Rating,
+  appeals: appealRepository.Appeal[],
+) => {
+  const sorted = appeals
+    .filter((appeal) =>
+      appeal.subjectKind === "RATING" && appeal.subjectId === rating.id)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const open = sorted.find(
+    (appeal) => appeal.status === APPEAL_STATUS.OPEN,
+  );
+  const created = Date.parse(rating.createdAt);
+  const inWindow = !Number.isFinite(created) ||
+    Date.now() - created <= APPEAL_WINDOW_DAYS.RATING * 24 * 60 * 60 * 1000;
+  return {
+    appealStatus: open ? APPEAL_STATUS.OPEN : sorted[0]?.status ?? null,
+    appealResolution: sorted[0]?.resolution ?? null,
+    appealReason: sorted[0]?.reason ?? null,
+    appealNote: sorted[0]?.note ?? null,
+    appealCreatedAt: sorted[0]?.createdAt ?? null,
+    appealDecidedAt: sorted[0]?.decidedAt ?? null,
+    canAppeal: rating.excluded !== true &&
+      inWindow &&
+      open === undefined &&
+      sorted.length < APPEAL_MAX.RATING,
+  };
+};
+
+const receivedRatings = async (userId: string) => {
+  const caller = await userRepository.findById(userId);
+  if (!caller) throw new NotFoundError("User not found");
+  const providers = await providerRepository.findByOperator(userId);
+  const riderRows = await ratingRepository.listByTarget(
+    userId,
+    RATING_TARGET.RIDER,
+  );
+  const providerRows = await Promise.all(providers.map(async (provider) => ({
+    provider,
+    rows: await ratingRepository.listByTarget(
+      provider.id,
+      RATING_TARGET.SHOP,
+    ),
+  })));
+  const allRows = [
+    ...riderRows,
+    ...providerRows.flatMap((group) => group.rows),
+  ];
+  const authorIds = [...new Set(allRows.map((row) => row.byUserId))];
+  const names = await userRepository.findByIds(authorIds);
+  const appeals = await appealRepository.findBySubjectIds(
+    "RATING",
+    allRows.map((row) => row.id),
+    userId,
+  );
+  const authorName = (id: string): string | null => {
+    const name = names.get(id)?.displayName;
+    return typeof name === "string" && name !== "" ? name : null;
+  };
+  const view = (row: ratingRepository.Rating) => ({
+    id: row.id,
+    score: row.score,
+    text: (row.text as string | undefined) ?? null,
+    ticketId: row.ticketId,
+    createdAt: row.createdAt,
+    byUserId: row.byUserId,
+    byUserName: authorName(row.byUserId),
+    excluded: row.excluded === true,
+    ...appealView(row, appeals),
+  });
+  const riderAggregate = await ratingRepository.aggregate(
+    userId,
+    RATING_TARGET.RIDER,
+  );
+  const providerGroups = await Promise.all(providerRows.map(async (group) => ({
+    id: group.provider.id,
+    name: group.provider.name,
+    ...(await ratingRepository.aggregate(
+      group.provider.id,
+      RATING_TARGET.SHOP,
+    )),
+    window: RATING_WINDOW,
+    ratings: group.rows
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .map(view),
+  })));
+  return {
+    rider: {
+      id: userId,
+      name: typeof caller.displayName === "string" &&
+        caller.displayName !== "" ?
+        caller.displayName :
+        "Rider",
+      ...riderAggregate,
+      window: RATING_WINDOW,
+      ratings: riderRows
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+        .map(view),
+    },
+    providers: providerGroups,
+  };
+};
+
+const autoExcludeForDispute = async (input: {
+  ticketId: string;
+  disputeId: string;
+  type: string;
+  outcome: string;
+  filedBy: string;
+}): Promise<number> => {
+  if (input.outcome !== "SHOP" && input.outcome !== "RIDER") return 0;
+  const ratings = await ratingRepository.listByTicket(input.ticketId);
+  const candidates = ratings.filter((rating) => {
+    if (rating.excluded === true || rating.score > RATING_AUTO_EXCLUDE_MAX) {
+      return false;
+    }
+    if (rating.byUserId !== input.filedBy) return false;
+    if (input.type === DISPUTE_TYPE.SERVICE_QUALITY &&
+      input.outcome === "SHOP") {
+      return rating.targetKind === RATING_TARGET.SHOP;
+    }
+    if (input.type === DISPUTE_TYPE.RIDER_CONDUCT &&
+      input.outcome === "RIDER") {
+      return rating.targetKind === RATING_TARGET.RIDER;
+    }
+    return false;
+  });
+  const targets = new Map<string, string>();
+  for (const rating of candidates) {
+    await ratingRepository.exclude(rating.id, {
+      excludedBy: "system",
+      exclusionReason:
+        `Dispute ${input.disputeId} resolved in favour of the rated party`,
+      exclusionSource: "DISPUTE",
+      exclusionRef: input.disputeId,
+    });
+    targets.set(`${rating.targetKind}:${rating.targetId}`,
+      `${rating.targetKind}|${rating.targetId}`);
+  }
+  for (const value of targets.values()) {
+    const [targetKind, targetId] = value.split("|");
+    await recomputeTargetRating(targetId, targetKind);
+  }
+  return candidates.length;
+};
+
+const recomputeAllRatings = async (): Promise<{targets: number}> => {
+  const rows = await ratingRepository.listAll();
+  const targets = new Map<string, {targetId: string; targetKind: string}>();
+  for (const row of rows) {
+    targets.set(`${row.targetKind}:${row.targetId}`, {
+      targetId: row.targetId,
+      targetKind: row.targetKind,
+    });
+  }
+  for (const target of targets.values()) {
+    await recomputeTargetRating(target.targetId, target.targetKind);
+  }
+  return {targets: targets.size};
 };
 
 export {
@@ -348,6 +580,10 @@ export {
   providerRatings,
   ratingsByTicket,
   userRatings,
+  receivedRatings,
+  autoExcludeForDispute,
+  recomputeAllRatings,
+  recomputeTargetRating,
   ValidationError,
   NotFoundError,
   ForbiddenError,

@@ -5,6 +5,7 @@ import * as providerRepository from "../repository/providerRepository";
 import * as commissionRepository from "../repository/commissionRepository";
 import * as paymentPush from "./push/payment";
 import * as auditService from "./auditService";
+import {deliverAdminPush} from "./push/admin";
 import {
   PAYMENT_PAYOUT_PREFIX,
   PAYMENT_RECEIVED_STATUSES,
@@ -293,8 +294,15 @@ const settleBatch = async ({
   await auditService.record({
     adminUid,
     action: "PAYOUT_SETTLED",
+    category: "MONEY",
     targetType: "payout",
     targetId: batch.id,
+    targetLabel: payeeId,
+    after: {
+      net: batch.net,
+      commissionDeducted,
+      paymentCount: payments.length,
+    },
     meta: {
       payeeId,
       net: batch.net,
@@ -446,7 +454,7 @@ const requestPayout = async ({
   if (amount > available) {
     throw new ValidationError("Requested amount exceeds the available balance");
   }
-  return payoutRepository.createRequest({
+  const request = await payoutRepository.createRequest({
     payeeId: userId,
     payeeName: nameOf(user.displayName),
     amount,
@@ -456,6 +464,15 @@ const requestPayout = async ({
     holderName: account.holderName,
     note: nonEmpty(note) ? note : null,
   });
+  await deliverAdminPush({
+    event: "PAYOUT_REQUESTED",
+    title: "Payout requested",
+    body: `${amount.toLocaleString()} VND · ` +
+      `${request.payeeName ?? request.payeeId}`,
+    refId: request.id,
+    route: "/admin?section=payouts",
+  }).catch(() => undefined);
+  return request;
 };
 
 const listRequests = async ({
@@ -500,6 +517,18 @@ const decideRequest = async ({
       decisionNote: nonEmpty(note) ? note : null,
     });
     const updated = await payoutRepository.findRequestById(requestId);
+    await auditService.record({
+      adminUid,
+      action: "PAYOUT_REQUEST_REJECTED",
+      category: "MONEY",
+      targetType: "payout_request",
+      targetId: requestId,
+      targetLabel: request.payeeId,
+      before: {status: request.status},
+      after: {status: payoutRepository.PAYOUT_REQUEST_STATUS.REJECTED},
+      note: note ?? null,
+      meta: {amount: request.amount},
+    });
     return {request: updated ?? request, batch: null, commissionDeducted: 0};
   }
   const settled = await settleBatch({
@@ -515,6 +544,24 @@ const decideRequest = async ({
     payoutBatchId: settled.batch.id,
   });
   const updated = await payoutRepository.findRequestById(requestId);
+  await auditService.record({
+    adminUid,
+    action: "PAYOUT_REQUEST_APPROVED",
+    category: "MONEY",
+    targetType: "payout_request",
+    targetId: requestId,
+    targetLabel: request.payeeId,
+    before: {status: request.status},
+    after: {
+      status: payoutRepository.PAYOUT_REQUEST_STATUS.PAID,
+      payoutBatchId: settled.batch.id,
+    },
+    note: note ?? null,
+    meta: {
+      amount: request.amount,
+      commissionDeducted: settled.commissionDeducted,
+    },
+  });
   return {
     request: updated ?? request,
     batch: settled.batch,
@@ -628,6 +675,19 @@ const settleCommission = async ({
   const user = await userRepository.findById(payeeId);
   if (!user) throw new NotFoundError("Payee not found");
   const settled = await commissionRepository.settleDirect(payeeId, adminUid);
+  await auditService.record({
+    adminUid,
+    action: "COMMISSION_SETTLED",
+    category: "MONEY",
+    targetType: "payout",
+    targetId: payeeId,
+    targetLabel: typeof user.displayName === "string" ?
+      user.displayName :
+      typeof user.email === "string" ?
+        user.email :
+        payeeId,
+    after: {settled},
+  });
   return {settled};
 };
 

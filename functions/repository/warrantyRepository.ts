@@ -32,7 +32,11 @@ interface WarrantyClaim {
   photoUrls: string[];
   status: string;
   shopResponse: string | null;
+  declineReasonCode?: string | null;
   respondedAt: string | null;
+  disputeNote?: string | null;
+  disputedAt?: string | null;
+  resolutionNote?: string | null;
   outcome: string | null;
   refundAmount: number | null;
   refundRequestId: string | null;

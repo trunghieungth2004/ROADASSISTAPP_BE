@@ -2,6 +2,7 @@ import {beforeEach, describe, expect, jest, test} from "@jest/globals";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import {continueSos} from "../../../service/dispatch/sos";
+import {createDispatch} from "../../../service/dispatch/tickets";
 
 jest.mock("../../../repository/dispatchRepository");
 jest.mock("../../../repository/providerRepository");
@@ -74,6 +75,93 @@ describe("continueSos soft cap", () => {
       nextAttempt: 3,
       callOutTotal: 100000,
     });
+  });
+
+  test("starts the continuation ticket with clean payment state", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "sos1",
+      userId: "rider1",
+      ticketType: "SOS",
+      status: "15",
+      lat: 10.7,
+      lng: 106.6,
+      sosAttempt: 1,
+      symptom: "ENGINE",
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 12000,
+      mobileTravelKm: 1.2,
+      mobileTravelRate: 10000,
+      paymentMethod: "CASH",
+      paymentStatus: "HELD",
+      paymentId: "pay1",
+      checkoutUrl: "https://pay.example/1",
+      mobileFeeHistory: [{
+        shopId: "old-shop",
+        callOutFee: 50000,
+        travelFee: 12000,
+        waived: false,
+        declinedAt: "2026-01-01T00:00:00.000Z",
+      }],
+      finalAmount: 62000,
+      excludedShopIds: [],
+      excludedOperatorUids: [],
+    } as never);
+    jest.mocked(createDispatch).mockResolvedValue({
+      id: "sos-child",
+    } as never);
+    const childRef = {id: "sos-child"};
+    const parentRef = {id: "sos1"};
+    const firebase = jest.requireMock("../../../config/firebase") as {
+      db: {
+        collection: jest.Mock;
+        runTransaction: jest.Mock;
+      };
+    };
+    firebase.db.collection.mockReturnValue({
+      doc: jest.fn((id?: string) => id === undefined ? childRef : parentRef),
+    } as never);
+    firebase.db.runTransaction.mockImplementation(
+      ((fn: (tx: unknown) => unknown) => fn({
+        get: jest.fn(async () => ({data: () => ({})})),
+        update: jest.fn(),
+      })) as never,
+    );
+
+    await expect(continueSos({
+      userId: "rider1",
+      ticketId: "sos1",
+      auto: false,
+    })).resolves.toMatchObject({
+      ticketId: "sos-child",
+      attempt: 2,
+      callOutTotal: 100000,
+    });
+    expect(createDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({symptom: "ENGINE"}),
+    );
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "sos-child",
+      expect.objectContaining({
+        linkedTicketIds: ["sos1"],
+        paymentId: null,
+        paymentMethod: null,
+        paymentStatus: null,
+        checkoutUrl: null,
+        paymentArmed: null,
+        mobileCallOutFee: null,
+        mobileCallOutWaived: null,
+        mobileTravelFee: null,
+        mobileTravelKm: null,
+        mobileTravelRate: null,
+        mobileTravelSource: null,
+        mobileFeeHistory: [],
+        finalAmount: null,
+        shopQuotedAmount: null,
+        quoteItems: null,
+        invoiceItems: null,
+        invoiceApproval: null,
+      }),
+    );
   });
 
   test("refuses while a tow offer is pending", async () => {

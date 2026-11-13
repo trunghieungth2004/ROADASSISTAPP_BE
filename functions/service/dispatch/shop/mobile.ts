@@ -3,7 +3,6 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {normalizeWorkItems, workItemsTotal} from "./items";
 import {findCandidates} from "../candidates";
@@ -12,9 +11,7 @@ import * as paymentService from "../../paymentService";
 import * as refundService from "../../refundService";
 import {FieldValue} from "../../../config/firebase";
 
-
 import {MOBILE_TOW_OFFER_TTL_MS, NS} from "../constants";
-
 
 import {
   PROVIDER_KIND,
@@ -31,14 +28,12 @@ import {mobileTowAvailabilityFor} from "../summary";
 
 import {chatService} from "../../chatService";
 
-
 import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
-
 
 export const setMobileShopFix = async ({
   userId,
@@ -534,9 +529,6 @@ export const respondMobileShopTow = async ({
     ticketType: "TOW",
     lat: ticket.lat,
     lng: ticket.lng,
-    diagnosticId: typeof ticket.diagnosticId === "string" ?
-      ticket.diagnosticId :
-      undefined,
     note: typeof ticket.note === "string" ? ticket.note : undefined,
     description: typeof ticket.description === "string" ?
       ticket.description :

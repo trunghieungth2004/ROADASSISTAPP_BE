@@ -3,13 +3,10 @@ import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 
-
 import {NS} from "../constants";
-
 
 import {PROVIDER_KIND, STATUS_DISPATCH} from "../../../constants/status";
 import {ROLE_ADMIN} from "../../../constants/roles";
-
 
 import {
   ForbiddenError,
@@ -26,7 +23,6 @@ import {
   workItemsTotal,
 } from "./items";
 import {isWarrantyRework} from "../../warrantyRework";
-
 
 const resolveWorkShop = async (
   shopIds: string[],
