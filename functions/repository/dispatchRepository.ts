@@ -104,6 +104,8 @@ interface DispatchTicket {
     }>;
     at: string;
     by: string;
+    status?: string;
+    reason?: string;
   }>;
   priceEstimate?: number | null;
   priceCurrency?: string | null;

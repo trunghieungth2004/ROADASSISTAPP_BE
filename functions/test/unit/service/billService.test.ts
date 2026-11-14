@@ -218,6 +218,35 @@ describe("billableAmountFor", () => {
     ).toEqual({amount: 120000, waitingFee: 0});
   });
 
+  it("bills an SOS fix while the shop is working", () => {
+    expect(
+      billableAmountFor(ticket("sos6", {
+        ticketType: "SOS",
+        status: STATUS_DISPATCH.IN_PROGRESS,
+        assignedShopId: "mobile1",
+        mobileCallOutFee: 50000,
+        finalAmount: 23000,
+      }) as never),
+    ).toEqual({amount: 73000, waitingFee: 0});
+  });
+
+  it("bills prior tower travel after a tower cancels the tow", () => {
+    expect(billableAmountFor(towTicket({
+      status: STATUS_DISPATCH.CANCELLED,
+      cancelledBy: "towerop1",
+      towFare: {final: null, estimate: 200000, waitingFee: 0},
+      towFeeHistory: [{shopId: "old", amount: 50000, deadheadKm: 2, loadedKm: 3}],
+    }) as never)).toEqual({amount: 50000, waitingFee: 0});
+  });
+
+  it("does not bill a tower cancel without prior travel", () => {
+    expect(billableAmountFor(towTicket({
+      status: STATUS_DISPATCH.CANCELLED,
+      cancelledBy: "towerop1",
+      towFare: {final: null, estimate: 200000, waitingFee: 0},
+    }) as never)).toBeNull();
+  });
+
   it("never bills an SOS ticket or a tow shop quote", () => {
     expect(
       billableAmountFor(ticket("sos1", {ticketType: "SOS"}) as never),
@@ -264,6 +293,79 @@ describe("billService.getBill", () => {
       amount: 150000,
       payeeName: "Fix Shop",
     });
+  });
+
+  it("keeps the SOS bill available while work is in progress", async () => {
+    const sos = ticket("sos6", {
+      ticketType: "SOS",
+      status: STATUS_DISPATCH.IN_PROGRESS,
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 50000,
+      finalAmount: 23000,
+    });
+    routeTickets(sos);
+    routeProviders({id: "mobile1", name: "Mobile Shop", operatorUid: "mop"});
+    const bill = await getBill({userId: "rider1", ticketId: "sos6"});
+    expect(bill.items).toHaveLength(1);
+    expect(bill).toMatchObject({
+      ticketType: "SOS",
+      total: 73000,
+      due: 73000,
+    });
+    expect(bill.items[0]).toMatchObject({
+      kind: "REPAIR",
+      ticketId: "sos6",
+      amount: 73000,
+    });
+  });
+
+  it("shows the prior tower distance on a cancelled tow", async () => {
+    const tow = towTicket({
+      status: STATUS_DISPATCH.CANCELLED,
+      cancelledBy: "towerop1",
+      towFare: {final: null, estimate: 200000, waitingFee: 0},
+      towFeeHistory: [
+        {
+          shopId: "old1",
+          shopName: "Old Tow",
+          amount: 50000,
+          deadheadKm: 2.5,
+          loadedKm: 5,
+          at: "2026-10-01T00:00:00.000Z",
+          reasonCode: "TOWER_CANCEL_BREAKDOWN",
+        },
+        {
+          shopId: "old2",
+          shopName: "Older Tow",
+          amount: 30000,
+          deadheadKm: 1.2,
+          loadedKm: 0,
+          at: "2026-10-01T00:10:00.000Z",
+          reasonCode: "TOWER_CANCEL_BREAKDOWN",
+        },
+      ],
+    });
+    routeTickets(tow);
+    routeProviders({id: "tower1", name: "Tow Co", operatorUid: "towerop1"});
+    const bill = await getBill({userId: "rider1", ticketId: "tow1"});
+    expect(bill.items).toHaveLength(1);
+    expect(bill.items[0]).toMatchObject({amount: 80000, status: "UNPAID"});
+    expect(bill.items[0].breakdown.filter((row) =>
+      row.code === "PRIOR_TOW")).toEqual([
+      {
+        code: "PRIOR_TOW",
+        label: "Prior tower travel",
+        amount: 50000,
+        detail: "7.50 km · Old Tow",
+      },
+      {
+        code: "PRIOR_TOW",
+        label: "Prior tower travel",
+        amount: 30000,
+        detail: "1.20 km · Older Tow",
+      },
+    ]);
+    expect(bill.total).toBe(80000);
   });
 
   it("exposes the TOW formula, pickup and drop-off", async () => {
@@ -620,6 +722,47 @@ describe("billService.listBills", () => {
     expect(bills[0]?.items[0]?.breakdown).toEqual([
       {code: "CALLOUT", label: "Call-out", amount: 50000, detail: null},
     ]);
+  });
+
+  it("lists an SOS fix while the shop is working", async () => {
+    const sos = ticket("sos6", {
+      ticketType: "SOS",
+      status: STATUS_DISPATCH.IN_PROGRESS,
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 0,
+      finalAmount: 70000,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    });
+    routeTickets(sos);
+    routeProviders({id: "mobile1", name: "Mobile Shop", operatorUid: "op1"});
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([sos]);
+    const bills = await listBills({userId: "rider1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      billId: "sos6",
+      ticketType: "SOS",
+      total: 70000,
+    });
+  });
+
+  it("lists a cancelled tow with prior tower travel", async () => {
+    const tow = towTicket({
+      status: STATUS_DISPATCH.CANCELLED,
+      cancelledBy: "towerop1",
+      towFare: {final: null, estimate: 200000, waitingFee: 0},
+      towFeeHistory: [{shopId: "old", amount: 50000, deadheadKm: 2, loadedKm: 3}],
+      createdAt: "2026-10-01T00:00:00.000Z",
+    });
+    routeTickets(tow);
+    routeProviders({id: "tower1", name: "Tow Co", operatorUid: "towerop1"});
+    jest.mocked(dispatchRepository.findByUserId).mockResolvedValue([tow]);
+    const bills = await listBills({userId: "rider1"});
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      billId: "tow1",
+      ticketType: "TOW",
+      total: 50000,
+    });
   });
 
   it("shows fixed SOS travel as kilometers and rate", async () => {

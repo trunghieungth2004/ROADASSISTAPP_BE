@@ -500,9 +500,14 @@ const buildItem = async (
   const amountDue = Math.max(0, billable.amount - deposit.credit);
   const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
     ticket.cancelledBy === ticket.userId;
+  const priorTowCharge = ticket.ticketType === "TOW" &&
+    ticket.status === STATUS_DISPATCH.CANCELLED &&
+    Array.isArray(ticket.towFeeHistory) &&
+    ticket.towFeeHistory.some((entry) =>
+      typeof entry.amount === "number" && entry.amount > 0);
   const voided = UNPAYABLE_STATUSES.has(String(ticket.status ?? "")) &&
     ticket.ticketType !== "SOS" &&
-    !(ticket.ticketType === "TOW" && riderCancelled);
+    !(ticket.ticketType === "TOW" && (riderCancelled || priorTowCharge));
   const status = billStatusFor({
     paymentStatus,
     paymentMissing: payment === null,

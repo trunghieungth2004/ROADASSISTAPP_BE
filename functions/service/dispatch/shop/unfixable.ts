@@ -1,5 +1,6 @@
 import {tryRefundPayment, tryVoidPendingPayments} from "./helpers";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
+import * as paymentService from "../../paymentService";
 
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
@@ -125,10 +126,14 @@ export const markUnfixable = async ({
   } catch {
     void 0;
   }
-  if (ticket.ticketType !== "SOS") {
-    await tryVoidPendingPayments(ticketId);
-    await tryRefundPayment(ticketId, userId);
-  }
+  await tryVoidPendingPayments(ticketId);
+  const keepAmount = ticket.ticketType === "SOS" ?
+    paymentService.billableAmountFor({
+      ...ticket,
+      status: STATUS_DISPATCH.UNFIXABLE,
+    })?.amount ?? 0 :
+    0;
+  await tryRefundPayment(ticketId, userId, keepAmount);
   cacheManager.del(NS);
   await chatService.addSystemEvent(
     ticketId,

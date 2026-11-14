@@ -76,7 +76,7 @@ export const assertTransition = ({
   }
   if (status === STATUS_DISPATCH.READY) {
     if (ticket.ticketType === "SOS") {
-      if (from === STATUS_DISPATCH.ARRIVED && shopFlow) return;
+      if (from === STATUS_DISPATCH.IN_PROGRESS && shopFlow) return;
       throw new ForbiddenError("Only the mobile shop marks the fix complete");
     }
     if (ticket.ticketType === "TOW") {

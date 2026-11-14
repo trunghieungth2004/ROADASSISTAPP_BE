@@ -15,6 +15,7 @@ import {
   TOW_DISPATCH_RADIUS,
 } from "../../constants/status";
 import {servesVehicleClass, vehicleClassOf} from "../providerService";
+import {providerBlocked} from "./providerEligibility";
 
 const operatorBusy = async (
   operatorUid: string,
@@ -74,6 +75,7 @@ export const findMobileShopOperators = async ({
   for (const provider of providers) {
     if (!provider) continue;
     if (provider.kind !== PROVIDER_KIND.MOBILE_SHOP) continue;
+    if (providerBlocked(provider)) continue;
     if (provider.status !== PROVIDER_STATUS.ACTIVE) continue;
     if (provider.accepting === false) continue;
     if (typeof provider.operatorUid !== "string" ||
@@ -122,11 +124,15 @@ export const findTowOperators = async ({
   lng,
   radiusMeters = TOW_DISPATCH_RADIUS,
   vehicleType,
+  excludeOperatorUids = [],
+  excludeShopIds = [],
 }: {
   lat: number;
   lng: number;
   radiusMeters?: number;
   vehicleType?: string;
+  excludeOperatorUids?: string[];
+  excludeShopIds?: string[];
 }): Promise<string[]> => {
   const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
   const cells = cellsCoveringBounds(bounds, 6);
@@ -145,12 +151,15 @@ export const findTowOperators = async ({
   for (const shop of providers) {
     if (!shop) continue;
     if (shop.kind !== PROVIDER_KIND.TOW) continue;
+    if (providerBlocked(shop)) continue;
     if (shop.status !== PROVIDER_STATUS.ACTIVE) continue;
     if (shop.accepting === false) continue;
     if (typeof shop.plate !== "string" || shop.plate === "") continue;
     if (typeof shop.operatorUid !== "string" || shop.operatorUid === "") {
       continue;
     }
+    if (excludeOperatorUids.includes(shop.operatorUid)) continue;
+    if (excludeShopIds.includes(shop.id)) continue;
     if (!servesVehicleClass(shop, vehicleClassOf(vehicleType))) continue;
     if (!operators.includes(shop.operatorUid)) {
       operators.push(shop.operatorUid);

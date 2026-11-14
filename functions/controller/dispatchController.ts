@@ -414,6 +414,21 @@ const declineMobileFix = async (req: Request, res: Response) => {
   }
 };
 
+const changeMobileShop = async (req: Request, res: Response) => {
+  try {
+    const {uid: userId} = req as AuthedRequest;
+    const {ticketId, reason} = req.body;
+    const result = await dispatchService.changeMobileShop({
+      userId,
+      ticketId,
+      reason,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
 const offerMobileShopTow = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
@@ -739,6 +754,7 @@ export {createDispatch, getMyTickets, getDispatch, updateDispatchStatus,
   setMobileShopFix,
   approveMobileFix,
   declineMobileFix,
+  changeMobileShop,
   offerMobileShopTow,
   respondMobileShopTow,
   respondReturnTow,

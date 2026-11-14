@@ -114,6 +114,39 @@ describe("requestRefund", () => {
     expect(refundRepository.create).not.toHaveBeenCalled();
   });
 
+  it("allows an automatic close-out from the shop operator", async () => {
+    jest.mocked(paymentRepository.findById)
+      .mockResolvedValue(payment() as never);
+    jest.mocked(userRepository.findById).mockImplementation((async (id: string) =>
+      id === "rider1" ?
+        {
+          id: "rider1",
+          role: "2",
+          payoutAccount: {
+            bankCode: "VCB",
+            bankName: "Vietcombank",
+            accountNumber: "0123456789",
+            holderName: "NGUYEN VAN A",
+          },
+        } :
+        {id: "op1", role: "2"}) as never);
+    jest.mocked(refundRepository.create).mockResolvedValue(
+      refund({automatic: true, requestedBy: "op1"}) as never);
+    await expect(requestRefund({
+      paymentId: "pay1",
+      requestedBy: "op1",
+      automatic: true,
+      reason: "Ticket closed",
+    })).resolves.toMatchObject({id: "rf1"});
+    expect(refundRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedBy: "op1",
+        automatic: true,
+        bankName: "Vietcombank",
+      }),
+    );
+  });
+
   it("rejects a non-rider requester", async () => {
     jest.mocked(paymentRepository.findById)
       .mockResolvedValue(payment() as never);

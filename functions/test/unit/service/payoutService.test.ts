@@ -23,7 +23,7 @@ const payment = (patch: Record<string, unknown> = {}) => ({
   payeeId: "shop1",
   amount: 100000,
   currency: "VND",
-  method: "CASH",
+  method: "SEPAY",
   status: "CONFIRMED",
   qrRef: null,
   ipnRef: null,
@@ -91,7 +91,17 @@ describe("pendingSettlements", () => {
       payment({id: "p4", payoutAt: "2026-10-01T01:00:00.000Z"}),
     ] as never);
     jest.mocked(userRepository.findByIds).mockResolvedValue(
-      new Map([["shop1", {id: "shop1", displayName: "Fix Shop"} as never]]));
+      new Map([["shop1", {
+        id: "shop1",
+        displayName: "Fix Shop",
+        payoutAccount: {
+          bankCode: "VCB",
+          bankName: "Vietcombank",
+          accountNumber: "0123456789",
+          holderName: "FIX SHOP",
+          updatedAt: "2026-10-01T00:00:00.000Z",
+        },
+      } as never]]));
     const groups = await pendingSettlements({});
     expect(paymentRepository.findByReceived).toHaveBeenCalled();
     expect(groups).toHaveLength(1);
@@ -104,6 +114,63 @@ describe("pendingSettlements", () => {
       net: 160000,
       itemCount: 2,
       paymentIds: ["p2", "p1"],
+      account: expect.objectContaining({
+        bankName: "Vietcombank",
+        accountNumber: "0123456789",
+      }),
+    });
+  });
+
+  it("keeps cash out of online payouts and lists commission-only payees", async () => {
+    jest.mocked(paymentRepository.findByReceived).mockResolvedValue([
+      payment({id: "cash1", method: "CASH", payeeId: "cashshop"}),
+      payment({id: "sepay1", method: "SEPAY", payeeId: "shop1"}),
+    ] as never);
+    (commissionRepository.findAllOwed as jest.Mock).mockResolvedValue([
+      {
+        id: "ledger1",
+        payeeId: "cashshop",
+        amount: 30000,
+        settledAmount: 0,
+        reversedAmount: 0,
+      },
+    ]);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(new Map([
+      ["shop1", {id: "shop1", displayName: "Fix Shop"}],
+      ["cashshop", {id: "cashshop", displayName: "Cash Shop"}],
+    ] as never));
+    const groups = await pendingSettlements({});
+    expect(groups).toHaveLength(2);
+    const online = groups.find((group) => group.payeeId === "shop1");
+    expect(online).toMatchObject({
+      itemCount: 1,
+      paymentIds: ["sepay1"],
+      net: 90000,
+    });
+    const cash = groups.find((group) => group.payeeId === "cashshop");
+    expect(cash).toMatchObject({
+      itemCount: 0,
+      gross: 0,
+      net: 0,
+      commissionOwed: 30000,
+      available: 0,
+    });
+  });
+
+  it("returns a commission-only payee with no online items", async () => {
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue(
+      [] as never);
+    (commissionRepository.owedTotalByPayee as jest.Mock)
+      .mockResolvedValue(25000);
+    jest.mocked(userRepository.findByIds).mockResolvedValue(
+      new Map([["shop1", {id: "shop1", displayName: "Fix Shop"} as never]]));
+    const groups = await pendingSettlements({payeeId: "shop1"});
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      payeeId: "shop1",
+      itemCount: 0,
+      commissionOwed: 25000,
+      available: 0,
     });
   });
 
@@ -157,6 +224,40 @@ describe("settleBatch", () => {
     expect(String(stamps[0].fields.payoutRef)).toMatch(/^PO/);
   });
 
+  it("stores the payee account and payment proof", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "shop1",
+      displayName: "Fix Shop",
+      payoutAccount: {
+        bankCode: "VCB",
+        bankName: "Vietcombank",
+        accountNumber: "0123456789",
+        holderName: "FIX SHOP",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      },
+    } as never);
+    jest.mocked(paymentRepository.findByPayeeStatuses).mockResolvedValue([
+      payment({id: "p1"}),
+    ] as never);
+    await settleBatch({
+      adminUid: "admin1",
+      payeeId: "shop1",
+      proofUrl: "payouts/proof/p1.jpg",
+    });
+    expect(payoutRepository.applySettlement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batch: expect.objectContaining({
+          proofUrl: "payouts/proof/p1.jpg",
+          payeeAccount: expect.objectContaining({
+            bankName: "Vietcombank",
+            accountNumber: "0123456789",
+            holderName: "FIX SHOP",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("deducts outstanding cash commission from the batch", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "shop1",
@@ -196,6 +297,20 @@ describe("settleBatch", () => {
       payeeId: "shop1",
       paymentIds: ["pay1"],
     })).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects cash payments as online payouts", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "shop1",
+    } as never);
+    jest.mocked(paymentRepository.findById).mockResolvedValue(
+      payment({method: "CASH"}) as never);
+    await expect(settleBatch({
+      adminUid: "admin1",
+      payeeId: "shop1",
+      paymentIds: ["pay1"],
+    })).rejects.toThrow("Cash payments are not paid out");
+    expect(payoutRepository.applySettlement).not.toHaveBeenCalled();
   });
 
   it("rejects payments that already settled", async () => {

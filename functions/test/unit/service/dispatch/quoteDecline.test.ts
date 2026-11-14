@@ -6,9 +6,11 @@ import {
   approveQuote,
   declineQuote,
   sendQuote,
+  sweepExpiredQuotes,
 } from "../../../../service/dispatch/shop";
 import {chatService} from "../../../../service/chatService";
 import * as paymentService from "../../../../service/paymentService";
+import * as refundService from "../../../../service/refundService";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
 
 jest.mock("../../../../repository/dispatchRepository");
@@ -21,6 +23,9 @@ jest.mock("../../../../service/chatService", () => ({
 jest.mock("../../../../service/paymentService", () => ({
   cancelPendingPayments: jest.fn(async () => undefined),
   createPaymentForTicket: jest.fn(async () => ({id: "pay2"})),
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
+}));
+jest.mock("../../../../service/refundService", () => ({
   requestRefund: jest.fn(async () => ({id: "refund1"})),
 }));
 jest.mock("../../../../service/taskQueueService", () => ({
@@ -235,5 +240,33 @@ describe("walk-in quote decline", () => {
     })).rejects.toMatchObject({statusCode: 400});
 
     expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("shop quote expiry", () => {
+  it("refunds funded payments before returning the quote", async () => {
+    jest.mocked(dispatchRepository.findByStatus).mockResolvedValue([
+      quotedTicket({
+        ticketType: "MECHANIC",
+        quoteExpiresAt: "2020-01-01T00:00:00.000Z",
+      }),
+    ] as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "pay1", method: "CASH", status: "CONFIRMED"},
+    ] as never);
+
+    await expect(sweepExpiredQuotes()).resolves.toBe(1);
+
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay1",
+        reason: "Quote expired",
+      }),
+    );
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "t1",
+      "3",
+      "sweep",
+    );
   });
 });

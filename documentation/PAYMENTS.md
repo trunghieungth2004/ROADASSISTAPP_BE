@@ -46,7 +46,7 @@ All amounts are integer VND. `round1k(x) = round(x / 1000) × 1000`.
 | TOW waiting | `ceil(billableMs / 60s) × (waitingRatePer15Min / 15)`, capped by grace/cap |
 | SOS fix | shop-entered `finalAmount` |
 
-Feature gates live in `platform_config/global.features` (`quickFix`, `towCashAtDelivery` default true; `phoneMasking` default false). Providers may store `taxCode`, printed on monthly statements and on the on-demand PDF invoice. Warranty rework tickets carry no bill; their work lines are forced to zero and payment endpoints reject them.
+Feature gates live in `platform_config/global.features` (`quickFix` default true; `phoneMasking` default false). A delivered TOW bill starts `UNPAID`; the rider chooses cash or SePay in payment details. Providers may store `taxCode`, printed on monthly statements and on the on-demand PDF invoice. Warranty rework tickets carry no bill; their work lines are forced to zero and payment endpoints reject them.
 
 Rate-card defaults (`platform_config/global`, admin-editable through
 `PUT /admin/config`):
@@ -428,7 +428,8 @@ the refunded remainder.
   the bank transfer; money states stay honest until an admin confirms. No
   commission is collected on confirmed refunds (the ledger share is reversed).
 - `UNFIXABLE` on an SOS keeps the call-out payable (or 0 when waived); travel
-  and repair are not charged.
+  and repair are not charged. Any received amount above the call-out is
+  refunded.
 - A rider cancel cancels pending charges and refunds held/confirmed charges in
   full. For an engaged TOW the deadhead partial is still recorded on the
   ticket, but a charge can only exist after resolution, so the normal path has
@@ -459,16 +460,19 @@ payment stamp and every commission-ledger row are written in one Firestore
 transaction (`payoutRepository.applySettlement`), so a failure cannot leave a
 paid batch with unsettled charges:
 
-1. `POST /admin/payouts/pending` groups settleable charges (received status,
-   no `payoutAt`, no `payoutBatchId`) by payee, highest net first. Net is the
-   charge's `payoutAmount` (or gross minus commission) minus cumulative
-   refunds.
+1. `POST /admin/payouts/pending` groups settleable online charges (received
+   status, never `CASH`, no `payoutAt`, no `payoutBatchId`) by payee, highest
+   net first. Net is the charge's `payoutAmount` (or gross minus commission)
+   minus cumulative refunds. Payees with only cash commission owed appear with
+   `itemCount: 0`, `net: 0`, and a positive `commissionOwed`.
 2. `POST /admin/payouts/batch` settles one payee. `paymentIds` is optional;
-   omitted means every settleable charge for that payee. Every listed charge
-   must belong to the payee and still be settleable. The server writes one
-   terminal `payouts` doc (`status: "PAID"`, `payoutMethod: "MANUAL"`,
-   generated `PO…` ref unless supplied) and stamps each charge with
-   `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`.
+   omitted means every settleable online charge for that payee. Every listed
+   charge must belong to the payee, must not be `CASH`, and must still be
+   settleable. Cash charges are never paid out — the provider already collected
+   the gross, so only the commission is owed. The server writes one terminal
+   `payouts` doc (`status: "PAID"`, `payoutMethod: "MANUAL"`, generated `PO…`
+   ref unless supplied) and stamps each charge with `payoutRef`, `payoutAt`,
+   `payoutBy`, and `payoutBatchId`.
 3. `POST /admin/payouts/batches` lists batches; `POST /payouts/mine` returns
    the caller's batches plus pending, commission-owed, available, account,
    and withdrawal-request state.
@@ -501,10 +505,11 @@ request `PAID` with its `payoutBatchId`. Rejection records a decision note.
 
 CASH charges start `PENDING`; when the payee confirms receipt, the platform's
 commission is written to `commission_ledger` as `OWED`. The provider keeps the
-cash — the platform never asks for roadside commission collection. At the next
-batch settlement the outstanding balance is deducted from the payout
-(`commissionDeducted`, `netPayout = net - commissionDeducted`) and ledger rows
-are marked `SETTLED`. If the balance exceeds the payout it carries forward. Refund confirmations
+cash — the platform never asks for roadside commission collection, and cash
+charges never enter a payout batch. At the next online payout settlement the
+outstanding balance is deducted from the payout (`commissionDeducted`,
+`netPayout = net - commissionDeducted`) and ledger rows are marked `SETTLED`.
+If the balance exceeds the payout it carries forward. Refund confirmations
 reduce the ledger through `reversedAmount`, so clawed-back commission is never
 collected. An off-platform transfer is closed with
 `POST /admin/payouts/commission`

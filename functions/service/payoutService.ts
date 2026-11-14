@@ -7,6 +7,7 @@ import * as paymentPush from "./push/payment";
 import * as auditService from "./auditService";
 import {deliverAdminPush} from "./push/admin";
 import {
+  PAYMENT_METHOD,
   PAYMENT_PAYOUT_PREFIX,
   PAYMENT_RECEIVED_STATUSES,
   PAYMENT_SETTLE_SCAN,
@@ -43,6 +44,7 @@ type PayeeGroup = {
   payeeName: string | null;
   commissionOwed: number;
   available: number;
+  account: PayoutAccount | null;
 } & CandidateSummary;
 
 type PayoutAccount = {
@@ -64,6 +66,7 @@ const byCreatedDesc = (a: Payment, b: Payment): number => {
 
 const isSettleable = (payment: Payment): boolean =>
   payment.purpose !== SUBSCRIPTION_PURPOSE &&
+  payment.method !== PAYMENT_METHOD.CASH &&
   PAYMENT_RECEIVED_STATUSES.includes(payment.status) &&
   !nonEmpty(payment.payoutAt) &&
   !nonEmpty(payment.payoutBatchId);
@@ -154,6 +157,7 @@ const groupFor = async (
   return {
     payeeId,
     payeeName: nameOf(names.get(payeeId)?.displayName),
+    account: accountOf(names.get(payeeId)),
     commissionOwed,
     available: Math.max(0, summary.net - commissionOwed),
     ...summary,
@@ -172,7 +176,10 @@ const pendingSettlements = async ({
     PAYOUT_LIST_MAX;
   if (nonEmpty(payeeId)) {
     const payments = await settleableFor(payeeId);
-    return payments.length > 0 ? [await groupFor(payeeId, payments)] : [];
+    const owed = await commissionRepository.owedTotalByPayee(payeeId);
+    return payments.length > 0 || owed > 0 ?
+      [await groupFor(payeeId, payments, owed)] :
+      [];
   }
   const received = await paymentRepository.findByReceived(PAYMENT_SETTLE_SCAN);
   const settleable = received.filter(isSettleable).sort(byCreatedDesc);
@@ -195,8 +202,13 @@ const pendingSettlements = async ({
       (owedByPayee.get(entry.payeeId) ?? 0) + open,
     );
   }
-  const groups = [...byPayee.entries()]
-    .map(([payee, payments]) => {
+  const payeeIds = new Set([
+    ...byPayee.keys(),
+    ...owedByPayee.keys(),
+  ]);
+  const groups = [...payeeIds]
+    .map((payee) => {
+      const payments = byPayee.get(payee) ?? [];
       const summary = summaryFor(payments);
       const owed = owedByPayee.get(payee) ?? 0;
       return {
@@ -206,6 +218,7 @@ const pendingSettlements = async ({
         ...summary,
       };
     })
+    .filter((group) => group.itemCount > 0 || group.commissionOwed > 0)
     .sort((a, b) =>
       (b.available ?? 0) - (a.available ?? 0) ||
       a.payeeId.localeCompare(b.payeeId));
@@ -217,6 +230,7 @@ const pendingSettlements = async ({
   return picked.map((group) => ({
     ...group,
     payeeName: nameOf(names.get(group.payeeId)?.displayName),
+    account: accountOf(names.get(group.payeeId)),
   }));
 };
 
@@ -226,12 +240,14 @@ const settleBatch = async ({
   paymentIds,
   payoutRef,
   note,
+  proofUrl,
 }: {
   adminUid: string;
   payeeId: string;
   paymentIds?: string[];
   payoutRef?: string;
   note?: string;
+  proofUrl?: string;
 }): Promise<{batch: Batch; settled: number; commissionDeducted: number}> => {
   const payee = await userRepository.findById(payeeId);
   if (!payee) throw new NotFoundError("Payee not found");
@@ -243,6 +259,11 @@ const settleBatch = async ({
       if (!payment) throw new NotFoundError("Payment not found");
       if (payment.payeeId !== payeeId) {
         throw new ValidationError("Payment belongs to another payee");
+      }
+      if (payment.method === PAYMENT_METHOD.CASH) {
+        throw new ValidationError(
+          "Cash payments are not paid out; only the commission is owed",
+        );
       }
       if (!isSettleable(payment)) {
         throw new ValidationError("Payment is not settleable");
@@ -277,6 +298,8 @@ const settleBatch = async ({
       commissionDeducted,
       payoutRef: ref,
       note: nonEmpty(note) ? note : null,
+      proofUrl: nonEmpty(proofUrl) ? proofUrl : null,
+      payeeAccount: accountOf(payee),
       batchedUid: adminUid,
     },
     paymentStamps: payments.map((payment) => ({
@@ -494,12 +517,14 @@ const decideRequest = async ({
   approve,
   note,
   payoutRef,
+  proofUrl,
 }: {
   adminUid: string;
   requestId: string;
   approve: boolean;
   note?: string;
   payoutRef?: string;
+  proofUrl?: string;
 }): Promise<{
   request: payoutRepository.PayoutRequest;
   batch: Batch | null;
@@ -536,12 +561,14 @@ const decideRequest = async ({
     payeeId: request.payeeId,
     payoutRef,
     note: nonEmpty(note) ? note : undefined,
+    proofUrl,
   });
   await payoutRepository.decideRequest(requestId, {
     status: payoutRepository.PAYOUT_REQUEST_STATUS.PAID,
     decidedBy: adminUid,
     decisionNote: nonEmpty(note) ? note : null,
     payoutBatchId: settled.batch.id,
+    proofUrl: nonEmpty(proofUrl) ? proofUrl : null,
   });
   const updated = await payoutRepository.findRequestById(requestId);
   await auditService.record({

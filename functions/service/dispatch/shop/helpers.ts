@@ -77,19 +77,37 @@ export const requireDestinationShopOperator = async (
 export const tryRefundPayment = async (
   ticketId: string,
   byUserId: string,
+  keepAmount = 0,
 ): Promise<void> => {
   try {
-    const payments = await paymentRepository.findByTicket(ticketId);
+    const payments = await paymentRepository.findByTicket(ticketId) ?? [];
     const refundable = payments.filter((p) =>
-      p.method === "SEPAY" && p.status === "HELD");
+      p.status === "HELD" ||
+      p.status === "CONFIRMED" ||
+      p.status === "PARTIAL");
+    let remainingKeep = Math.max(0, Math.round(keepAmount));
     for (const payment of refundable) {
+      const original = typeof payment.amount === "number" ?
+        payment.amount :
+        0;
+      const already = typeof payment.refundAmount === "number" ?
+        payment.refundAmount :
+        0;
+      const remaining = Math.max(0, original - already);
+      if (remaining <= 0) continue;
+      const kept = Math.min(remainingKeep, remaining);
+      remainingKeep -= kept;
+      const refundAmount = remaining - kept;
+      if (refundAmount <= 0) continue;
       try {
         await refundService.requestRefund({
           paymentId: payment.id,
           requestedBy: byUserId,
-          amount: payment.amount,
+          amount: refundAmount,
           automatic: true,
-          reason: "Shop ticket closed",
+          reason: kept > 0 ?
+            "Ticket closed — call-out retained" :
+            "Ticket closed",
         });
       } catch {
         continue;

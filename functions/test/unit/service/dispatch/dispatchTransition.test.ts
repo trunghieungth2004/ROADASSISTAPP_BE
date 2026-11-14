@@ -21,6 +21,8 @@ import {
   deliverDispatchPush,
 } from "../../../../service/dispatchService";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
+import * as paymentService from "../../../../service/paymentService";
+import * as refundService from "../../../../service/refundService";
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -37,6 +39,9 @@ jest.mock("../../../../utils/valhalla", () => ({
   postRoute: jest.fn(),
 }));
 jest.mock("../../../../service/taskQueueService");
+jest.mock("../../../../service/refundService", () => ({
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
+}));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -345,6 +350,8 @@ describe("dispatchService.updateDispatchStatus", () => {
   });
 
   it("keeps the assigned tower card when a tow resolves", async () => {
+    const create = jest.spyOn(paymentService, "createPaymentForTicket")
+      .mockResolvedValue({} as never);
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",
       userId: "rider1",
@@ -392,6 +399,8 @@ describe("dispatchService.updateDispatchStatus", () => {
         }),
       }),
     );
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
   });
 
   it("falls back to the routed distance for a sparse GPS track", async () => {
@@ -651,6 +660,151 @@ describe("dispatchService.updateDispatchStatus", () => {
       }),
     );
   });
+
+  it("charges call-out and travel when the rider cancels a quoted SOS",
+    async () => {
+      const ticket = {
+        id: "t1",
+        userId: "rider1",
+        status: "9",
+        ticketType: "SOS",
+        assignedShopId: "mobile1",
+        mobileCallOutFee: 50000,
+        mobileTravelFee: 15000,
+        finalAmount: 120000,
+      };
+      const cancelled = {
+        ...ticket,
+        status: "5",
+        cancelledBy: "rider1",
+      };
+      jest.mocked(dispatchRepository.findById)
+        .mockResolvedValueOnce(ticket as never)
+        .mockResolvedValue(cancelled as never);
+      jest.mocked(userRepository.findById).mockResolvedValue({
+        id: "rider1",
+        role: "2",
+      } as never);
+      jest.mocked(providerRepository.findById).mockResolvedValue({
+        id: "mobile1",
+        kind: "MOBILE_SHOP",
+        operatorUid: "op1",
+      } as never);
+      jest.mocked(paymentRepository.findByTicketId)
+        .mockResolvedValueOnce([
+          {id: "p1", method: "SEPAY", status: "HELD"},
+        ] as never)
+        .mockResolvedValue([
+          {id: "p1", method: "SEPAY", status: "REFUNDED"},
+        ] as never);
+      const create = jest.spyOn(paymentService, "createPaymentForTicket")
+        .mockResolvedValue({} as never);
+
+      await expect(
+        updateDispatchStatus({id: "t1", status: "5", userId: "rider1"}),
+      ).resolves.toEqual({updated: 1});
+
+      expect(refundService.requestRefund).toHaveBeenCalledWith(
+        expect.objectContaining({paymentId: "p1"}),
+      );
+      expect(create).toHaveBeenCalledWith({
+        userId: "rider1",
+        ticketId: "t1",
+        method: "CASH",
+      });
+      expect(dispatchRepository.update).toHaveBeenCalledWith(
+        "t1",
+        {cancelledBy: "rider1"},
+      );
+      create.mockRestore();
+    });
+
+  it("refunds the rider without charging when the shop cancels", async () => {
+    const ticket = {
+      id: "t1",
+      userId: "rider1",
+      status: "2",
+      ticketType: "SOS",
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 15000,
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce(ticket as never)
+      .mockResolvedValue({
+        ...ticket,
+        status: "5",
+        cancelledBy: "op1",
+      } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "p1", method: "CASH", status: "CONFIRMED"},
+    ] as never);
+    const create = jest.spyOn(paymentService, "createPaymentForTicket")
+      .mockResolvedValue({} as never);
+
+    await expect(
+      updateDispatchStatus({id: "t1", status: "5", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({paymentId: "p1"}),
+    );
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
+  });
+
+  it("refunds on admin cancellation without creating a rider charge",
+    async () => {
+      const ticket = {
+        id: "t1",
+        userId: "rider1",
+        status: "6",
+        ticketType: "SOS",
+        assignedShopId: "mobile1",
+        mobileCallOutFee: 50000,
+        mobileTravelFee: 15000,
+      };
+      jest.mocked(dispatchRepository.findById)
+        .mockResolvedValueOnce(ticket as never)
+        .mockResolvedValue({
+          ...ticket,
+          status: "5",
+          cancelledBy: "admin1",
+        } as never);
+      jest.mocked(userRepository.findById).mockResolvedValue({
+        id: "admin1",
+        role: "1",
+      } as never);
+      jest.mocked(providerRepository.findById).mockResolvedValue({
+        id: "mobile1",
+        kind: "MOBILE_SHOP",
+        operatorUid: "op1",
+      } as never);
+      jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+        {id: "p1", method: "SEPAY", status: "HELD"},
+      ] as never);
+      const create = jest.spyOn(paymentService, "createPaymentForTicket")
+        .mockResolvedValue({} as never);
+
+      await expect(
+        updateDispatchStatus({id: "t1", status: "5", userId: "admin1"}),
+      ).resolves.toEqual({updated: 1});
+
+      expect(refundService.requestRefund).toHaveBeenCalledWith(
+        expect.objectContaining({paymentId: "p1"}),
+      );
+      expect(create).not.toHaveBeenCalled();
+      create.mockRestore();
+    });
 
   it("refuses mobile shop cancel after arrival", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({

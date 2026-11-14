@@ -34,6 +34,41 @@ describe("CORS preflight", () => {
     expect(res.headers["access-control-allow-origin"]).toBe(WEB_ORIGIN);
   });
 
+  it("allows project preview channels", async () => {
+    const origin = "https://roadassistapp-c2e37--preview-abc123.web.app";
+    const res = await request(app)
+      .options("/users/me")
+      .set("Origin", origin)
+      .set("Access-Control-Request-Method", "GET");
+
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe(origin);
+  });
+
+  it("allows local web development origins", async () => {
+    const origin = "http://localhost:5173";
+    const res = await request(app)
+      .options("/users/me")
+      .set("Origin", origin)
+      .set("Access-Control-Request-Method", "GET");
+
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe(origin);
+  });
+
+  it("reflects requested headers for allowed origins", async () => {
+    const res = await request(app)
+      .options("/users/me")
+      .set("Origin", WEB_ORIGIN)
+      .set("Access-Control-Request-Method", "GET")
+      .set("Access-Control-Request-Headers", "authorization,x-custom-header");
+
+    expect(res.status).toBe(204);
+    expect(
+      res.headers["access-control-allow-headers"],
+    ).toContain("x-custom-header");
+  });
+
   it("does not return 500 for an unknown origin", async () => {
     const res = await request(app)
       .options("/users/me")

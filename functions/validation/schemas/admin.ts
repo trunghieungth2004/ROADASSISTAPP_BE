@@ -68,7 +68,6 @@ export const adminSchemas = {
       .optional(),
     features: Joi.object({
       quickFix: Joi.boolean().optional(),
-      towCashAtDelivery: Joi.boolean().optional(),
       phoneMasking: Joi.boolean().optional(),
     }).optional(),
   }),
@@ -88,6 +87,7 @@ export const adminSchemas = {
       .optional(),
     payoutRef: Joi.string().trim().max(80).optional(),
     note: Joi.string().trim().max(280).allow("", null).optional(),
+    proofUrl: Joi.string().trim().max(500).optional(),
   }),
   payoutsBatches: Joi.object({
     payeeId: strOpt(),
@@ -124,6 +124,7 @@ export const adminSchemas = {
     approve: Joi.boolean().required(),
     note: Joi.string().trim().max(280).allow("", null).optional(),
     payoutRef: Joi.string().trim().max(80).optional(),
+    proofUrl: Joi.string().trim().max(500).optional(),
   }),
   adminCommissionSettle: Joi.object({
     payeeId: strReq(),

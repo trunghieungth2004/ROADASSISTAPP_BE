@@ -281,6 +281,8 @@ const nearProvidersInner = async ({
   minRating,
   sortBy,
   ticketId,
+  excludeShopIds = [],
+  excludeOperatorUids = [],
   now,
 }: {
   lat: number;
@@ -295,6 +297,8 @@ const nearProvidersInner = async ({
   minRating?: number;
   sortBy?: string;
   ticketId?: string;
+  excludeShopIds?: string[];
+  excludeOperatorUids?: string[];
   now?: Date;
 }) => {
   const bounds = boundsForRadiusMeters(lat, lng, radiusMeters);
@@ -320,6 +324,14 @@ const nearProvidersInner = async ({
     })
     .filter((s) => (s.distance as number) <= radiusMeters);
   if (kind) filtered = filtered.filter((s) => s.kind === kind);
+  if (excludeShopIds.length > 0) {
+    filtered = filtered.filter((s) => !excludeShopIds.includes(s.id));
+  }
+  if (excludeOperatorUids.length > 0) {
+    filtered = filtered.filter((s) =>
+      typeof s.operatorUid !== "string" ||
+      !excludeOperatorUids.includes(s.operatorUid));
+  }
   if (acceptingOnly) {
     filtered = filtered.filter((s) => s.accepting !== false);
   }
@@ -400,6 +412,8 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     minRating,
     sortBy,
     ticketId,
+    excludeShopIds = [],
+    excludeOperatorUids = [],
     now,
   }: {
     lat: number;
@@ -414,6 +428,8 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
     minRating?: number;
     sortBy?: string;
     ticketId?: string;
+    excludeShopIds?: string[];
+    excludeOperatorUids?: string[];
     now?: Date;
   }) => {
     const at = now ?? new Date();
@@ -423,7 +439,8 @@ const nearProvidersCached = cacheManager.wrap(nearProvidersInner, {
       `${openOnly ? "1" : "0"},${vehicleClass ?? "-"},` +
       `${serviceCategory ?? "-"},` +
       `${limit},${minute},${minRating ?? "-"},${sortBy ?? "-"},` +
-      `${ticketId ?? "-"}`;
+      `${ticketId ?? "-"},${excludeShopIds.join(",")},` +
+      `${excludeOperatorUids.join(",")}`;
   },
 });
 
@@ -440,6 +457,8 @@ export const getNearbyProviders = async ({
   minRating,
   sortBy,
   ticketId,
+  excludeShopIds,
+  excludeOperatorUids,
   now,
 }: {
   lat: number;
@@ -454,6 +473,8 @@ export const getNearbyProviders = async ({
   minRating?: number;
   sortBy?: string;
   ticketId?: string;
+  excludeShopIds?: string[];
+  excludeOperatorUids?: string[];
   now?: Date;
 }) =>
   nearProvidersCached({
@@ -469,6 +490,8 @@ export const getNearbyProviders = async ({
     minRating,
     sortBy,
     ticketId,
+    excludeShopIds,
+    excludeOperatorUids,
     now,
   });
 

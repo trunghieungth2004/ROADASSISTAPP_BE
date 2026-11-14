@@ -1543,7 +1543,7 @@ Rider declines the **tow** estimate: the estimate block clears without touching 
 
 ### `POST /dispatch/mobile-shop/fix` **(Auth, mobile shop)**
 
-Submit the repair quote on an assigned SOS mobile-shop visit. Only the mobile shop's operator or an admin, from `"3"` (Arrived) only. `fixAmount` is a non-negative integer stored as `finalAmount`; optional `items` (`{name, qty, unitPrice}`) are normalized to `invoiceItems` and their total must match `fixAmount`. The ticket moves to `"9"` (Quoted) for the rider's decision. The fee is immutable after submission — the shop cannot edit it from `"9"`; a declined quote returns to `"1"` and the shop is excluded.
+Submit the repair quote on an assigned SOS mobile-shop visit. Only the mobile shop's operator or an admin, from `"3"` (Arrived) only. `fixAmount` is a non-negative integer stored as `finalAmount`; optional `items` (`{name, qty, unitPrice}`) are normalized to `invoiceItems` and their total must match `fixAmount`. The ticket moves to `"9"` (Quoted) for the rider's decision. The fee is immutable after submission — the shop cannot edit it from `"9"`; a declined quote returns to `"3"` so the same shop can send a revised quote. The quote version and `quoteHistory` are recorded.
 
 **Request:**
 ```json
@@ -1559,7 +1559,7 @@ Submit the repair quote on an assigned SOS mobile-shop visit. Only the mobile sh
 
 ### `POST /dispatch/mobile-shop/fix/approve` **(Auth, rider)**
 
-Approve the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. A `CASH` charge is created `PENDING` automatically when no charge exists; a `SEPAY` charge must already be `HELD`/`CONFIRMED` (`400` "Payment required before approving the fix"). Stamps `mobileFixApprovedAt` and moves the ticket to `"7"` (Ready). The rider resolves at `"4"` after confirming cash.
+Approve the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. A `CASH` charge is created `PENDING` automatically when no charge exists; a `SEPAY` charge must already be `HELD`/`CONFIRMED` (`400` "Payment required before approving the fix"). Stamps `mobileFixApprovedAt` and moves the ticket to `"6"` (In progress). The shop marks the fix ready at `"7"`; the rider resolves at `"4"` after confirming cash.
 
 **Request:**
 ```json
@@ -1575,7 +1575,7 @@ Approve the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`.
 
 ### `POST /dispatch/mobile-shop/fix/decline` **(Auth, rider)**
 
-Decline the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. The current call-out/travel and declined fix lines are appended to `mobileFeeHistory`; the shop and its operator are added to `excludedShopIds`/`excludedOperatorUids`; the current chat is archived and the version increments; the assignment and quote fields clear; candidates are recomputed for the other mobile shops; and the ticket returns to `"1"` (Pending). Prior call-out/travel stays payable through `mobileFeeHistory`, while the declined fix amount/items are audit-only. Pending charges are cancelled and held/confirmed/partial charges are refunded.
+Decline the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`. The declined quote is appended to `quoteHistory`, `mobileFixDeclinedAt`/`mobileFixDeclineReason` are stamped, the fix amount/items clear, and the ticket returns to `"3"` (Arrived) so the same shop can send a revised quote. Pending charges are cancelled and held/confirmed/partial charges are refunded. Use `POST /dispatch/mobile-shop/change` to drop the shop instead.
 
 **Request:**
 ```json
@@ -1589,9 +1589,25 @@ Decline the mobile shop's pending fix quote. Rider only, while the SOS is `"9"`.
 
 ---
 
+### `POST /dispatch/mobile-shop/change` **(Auth, rider)**
+
+Drop the current mobile shop from an SOS at `"3"` (Arrived) or `"9"` (Quoted) and keep searching. Rider only, not while a dispute is under review. The current visit's call-out/travel and fix amount/items are appended to `mobileFeeHistory`; the quote is appended to `quoteHistory`; the shop and operator are added to the ticket exclusions and former assignments; the chat is archived; the assignment and current quote fields clear; pending charges are cancelled and held/confirmed/partial charges are refunded. The ticket returns to `"1"` (Pending), recomputes candidates excluding the dropped shop/operator, and pushes the rider plus nearby mobile shops. Returns `noCandidates: true` when nobody else is nearby. If the rider later cancels, the recorded visit remains payable.
+
+**Request:**
+```json
+{ "ticketId": "tick1", "reason": "Price too high" }
+```
+
+**Response `200`:**
+```json
+{ "statusCode": 200, "status": "SUCCESS", "data": { "changed": true, "requeued": true, "noCandidates": false } }
+```
+
+---
+
 ### `POST /dispatch/unfixable` **(Auth, shop)**
 
-Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), or `"10"` (In shop); SOS is allowed only from `"3"`. The action disappears once a quote is sent. Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path under `dispatch/{ticketId}/` (no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, and pushes the rider urgently. WALK_IN/MECHANIC tickets also create a pending return-tow offer so the rider can send the vehicle home. Shop tickets cancel pending charges and refund held SePay in full. SOS tickets retain a call-out-only charge (travel and repair are not charged), unless the assigned mobile shop was within 1 km of the pickup at accept (`mobileCallOutWaived: true`, call-out `0`). If a direct same-vehicle TOW or a network TOW is available, a 2-minute grace task waits for the shop to offer or release; otherwise a continuation SOS is created immediately. No `final` is recorded and the shop's `completedJobs` does not increment.
+Close the job terminal as unfixable (status `"15"` Unfixable): the shop cannot repair the vehicle on site. Only the shop's operator or an admin, from `"2"` (Matched), `"3"` (Arrived), `"6"` (In progress), or `"10"` (In shop); SOS is allowed only from `"3"`. The action disappears once a quote is sent. Requires a free-text `reason` plus at least one evidence `photoUrls` Storage path under `dispatch/{ticketId}/` (no `http` URLs; `400` otherwise). Stores `unfixable {reason, photoUrls, by, at}`, stops any running waiting clock, and pushes the rider urgently. WALK_IN/MECHANIC tickets also create a pending return-tow offer so the rider can send the vehicle home. Shop tickets cancel pending charges and refund held SePay in full. SOS tickets retain a call-out-only charge (travel and repair are not charged), unless the assigned mobile shop was within 1 km of the pickup at accept (`mobileCallOutWaived: true`, call-out `0`); any received amount above the call-out is refunded. If a direct same-vehicle TOW or a network TOW is available, a 2-minute grace task waits for the shop to offer or release; otherwise a continuation SOS is created immediately. No `final` is recorded and the shop's `completedJobs` does not increment.
 
 **Request:**
 ```json
@@ -2055,7 +2071,7 @@ The caller's refund requests, newest first (`REQUESTED`, `APPROVED`, `SENT`,
 
 ### `POST /payouts/mine` **(Auth)**
 
-The caller's payout history and running totals. `batches` are settled payout batches newest first (default 50, max 100), each carrying `id`, `payeeId`, `payeeName`, `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`, `status: "PAID"`, `payoutRef`, `payoutMethod: "MANUAL"`, `note`, `batchedUid`, `batchedAt`, and `createdAt`. `pending` sums the caller's received-but-unstamped charges (`gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`) plus `commissionOwed` and `available` (`net - commissionOwed`, floored at 0); `settled` sums `gross`, `commission`, `net`, and `itemCount` across the returned batches. `account` is the stored payout account (`bankCode`, `bankName`, `accountNumber`, `holderName`, `updatedAt`) or `null`, `requests` lists the caller's withdrawal requests newest first, and `pendingRequestCount` appears when a request is awaiting review. Any authenticated user may call it; a non-payee gets empty lists and zero totals.
+The caller's payout history and running totals. `batches` are settled payout batches newest first (default 50, max 100), each carrying `id`, `payeeId`, `payeeName`, `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`, `status: "PAID"`, `payoutRef`, `payoutMethod: "MANUAL"`, `note`, `batchedUid`, `batchedAt`, and `createdAt`. `pending` sums the caller's received-but-unstamped online charges (`gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, `ticketIds`; cash is excluded) plus `commissionOwed` and `available` (`net - commissionOwed`, floored at 0); `settled` sums `gross`, `commission`, `net`, and `itemCount` across the returned batches. `account` is the stored payout account (`bankCode`, `bankName`, `accountNumber`, `holderName`, `updatedAt`) or `null`, `requests` lists the caller's withdrawal requests newest first, and `pendingRequestCount` appears when a request is awaiting review. Any authenticated user may call it; a non-payee gets empty lists and zero totals.
 
 **Request:**
 ```json
@@ -2225,7 +2241,7 @@ Mark one `HELD` / `CONFIRMED` / `PARTIAL` charge as paid out, stamping `payoutRe
 
 ### `POST /admin/payouts/pending` **(Admin, BE-only)**
 
-Settleable charges grouped by payee (`HELD`/`CONFIRMED`/`PARTIAL`, no `payoutAt` and no `payoutBatchId`). Each group has `payeeId`, `payeeName`, `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, and `ticketIds`, highest net first. Pass `payeeId` to narrow to one payee; `limit` defaults/caps at 100.
+Settleable online charges grouped by payee (`HELD`/`CONFIRMED`/`PARTIAL`, never `CASH`, no `payoutAt` and no `payoutBatchId`). Each group has `payeeId`, `payeeName`, `account` (bank snapshot or `null`), `gross`, `commission`, `refunded`, `net`, `itemCount`, `paymentIds`, and `ticketIds`, highest net first. Payees with only cash commission owed are included with `itemCount: 0`, `net: 0`, and a positive `commissionOwed`. Pass `payeeId` to narrow to one payee; `limit` defaults/caps at 100.
 
 **Request:**
 ```json
@@ -2234,11 +2250,11 @@ Settleable charges grouped by payee (`HELD`/`CONFIRMED`/`PARTIAL`, no `payoutAt`
 
 ### `POST /admin/payouts/batch` **(Admin, BE-only)**
 
-Settle one payee's charges in a single batch. `paymentIds` is optional; when omitted every settleable charge for the payee is included. Every listed charge must belong to `payeeId` and still be settleable (`400` "Payment belongs to another payee" / "Payment is not settleable"). `payoutRef` is optional (server generates `PO…`); `note` is optional. The batch is terminal `status: "PAID"`; each charge is stamped with `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`. Response: `{ "batch": {...}, "settled": 3 }`.
+Settle one payee's online charges in a single batch. `paymentIds` is optional; when omitted every settleable online charge for the payee is included. Every listed charge must belong to `payeeId`, must not be `CASH`, and must still be settleable (`400` "Payment belongs to another payee" / "Cash payments are not paid out; only the commission is owed" / "Payment is not settleable"). `payoutRef` is optional (server generates `PO…`); `note` and `proofUrl` (uploaded transfer-confirmation image path) are optional. The batch is terminal `status: "PAID"`, snapshots `payeeAccount`, and stores `proofUrl`; each charge is stamped with `payoutRef`, `payoutAt`, `payoutBy`, and `payoutBatchId`. Response: `{ "batch": {...}, "settled": 3 }`.
 
 **Request:**
 ```json
-{ "payeeId": "payee1", "paymentIds": ["pay1", "pay2"], "payoutRef": "PO-2026-001", "note": "Week 42" }
+{ "payeeId": "payee1", "paymentIds": ["pay1", "pay2"], "payoutRef": "PO-2026-001", "note": "Week 42", "proofUrl": "payouts/proof/1730000000000-0.jpg" }
 ```
 
 ### `POST /admin/payouts/batches` **(Admin, BE-only)**
@@ -2252,7 +2268,7 @@ Settled batches newest first, all payees or filtered by `payeeId`; `limit` defau
 
 ### `POST /admin/payouts/requests` **(Admin)**
 
-Provider withdrawal requests, newest first. `status` filters `PENDING`/`PAID`/`REJECTED`/`CANCELLED`; `limit` defaults/caps at 100. Each row carries the bank snapshot and decision fields.
+Provider withdrawal requests, newest first. `status` filters `PENDING`/`PAID`/`REJECTED`/`CANCELLED`; `limit` defaults/caps at 100. Each row carries the bank snapshot, decision fields, and the transfer `proofUrl` when approved.
 
 **Request:**
 ```json
@@ -2261,11 +2277,11 @@ Provider withdrawal requests, newest first. `status` filters `PENDING`/`PAID`/`R
 
 ### `POST /admin/payouts/requests/decide` **(Admin)**
 
-Approve or reject a pending withdrawal request. Approval settles every settleable charge for that payee in one batch (deducting outstanding cash commission), stamps the request `PAID` with `payoutBatchId`, and returns `{ request, batch, commissionDeducted }`. Rejection records `decisionNote` and returns `{ request, batch: null, commissionDeducted: 0 }`.
+Approve or reject a pending withdrawal request. Approval settles every settleable charge for that payee in one batch (deducting outstanding cash commission), stores the upload path from `proofUrl` on the request and batch, stamps the request `PAID` with `payoutBatchId`, and returns `{ request, batch, commissionDeducted }`. Rejection records `decisionNote` and returns `{ request, batch: null, commissionDeducted: 0 }`.
 
 **Request:**
 ```json
-{ "requestId": "req1", "approve": true, "note": "Paid via bank transfer" }
+{ "requestId": "req1", "approve": true, "note": "Paid via bank transfer", "proofUrl": "payouts/proof/1730000000000-0.jpg" }
 ```
 
 ### `POST /admin/payouts/commission` **(Admin)**

@@ -28,6 +28,7 @@ import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 import {riderParty} from "./riderParty";
+import {providerBlocked} from "./providerEligibility";
 
 export const nearDispatchInner = async ({
   userId,
@@ -47,6 +48,7 @@ export const nearDispatchInner = async ({
   let activeTow = false;
   let activeMobileShop = false;
   let mobile: {vehicleClasses?: unknown} | undefined;
+  let towProviders: providerRepository.Provider[] = [];
   const ownedShopIds: string[] = [];
   if (userId) {
     const me = await userRepository.findById(userId);
@@ -54,14 +56,17 @@ export const nearDispatchInner = async ({
     const operated =
       (await providerRepository.findByOperator(me.id)) ?? [];
     ownedShopIds.push(...operated.map((p) => p.id));
-    activeTow = operated.some(
-      (p) => p.kind === PROVIDER_KIND.TOW &&
-        p.status === PROVIDER_STATUS.ACTIVE,
-    );
+    towProviders = operated.filter((p) =>
+      p.kind === PROVIDER_KIND.TOW &&
+      p.status === PROVIDER_STATUS.ACTIVE &&
+      p.accepting !== false &&
+      !providerBlocked(p));
+    activeTow = towProviders.length > 0;
     mobile = operated.find(
       (p) => p.kind === PROVIDER_KIND.MOBILE_SHOP &&
         p.status === PROVIDER_STATUS.ACTIVE &&
-        p.accepting !== false,
+        p.accepting !== false &&
+        !providerBlocked(p),
     );
     activeMobileShop = mobile !== undefined;
     if (!activeTow && !activeMobileShop) return [];
@@ -73,8 +78,7 @@ export const nearDispatchInner = async ({
   );
   const nearby = tickets
     .filter((t) => {
-      if (t.ticketType !== "SOS") return true;
-      if (!activeMobileShop || !mobile) return false;
+      if (!userId) return true;
       if (Array.isArray(t.excludedOperatorUids) &&
         t.excludedOperatorUids.includes(userId ?? "")) {
         return false;
@@ -83,10 +87,22 @@ export const nearDispatchInner = async ({
         t.excludedShopIds.some((id) => ownedShopIds.includes(id))) {
         return false;
       }
-      return servesVehicleClass(
-        mobile,
-        vehicleClassOf(t.vehicleType as string | undefined),
-      );
+      if (t.ticketType === "SOS") {
+        if (!activeMobileShop || !mobile) return false;
+        return servesVehicleClass(
+          mobile,
+          vehicleClassOf(t.vehicleType as string | undefined),
+        );
+      }
+      if (t.ticketType === "TOW") {
+        if (towProviders.length === 0) return true;
+        return towProviders.some((provider) =>
+          servesVehicleClass(
+            provider,
+            vehicleClassOf(t.vehicleType as string | undefined),
+          ));
+      }
+      return true;
     })
     .map((t) => ({
       ...t,
@@ -181,6 +197,18 @@ export const getDispatchOffers = async ({
   minRating?: number;
   sortBy?: string;
 }) => {
+  const ticket = ticketId === undefined ?
+    null :
+    await dispatchRepository.findById(ticketId);
+  const excludeShopIds = Array.isArray(ticket?.excludedShopIds) ?
+    ticket.excludedShopIds as string[] :
+    [];
+  const excludeOperatorUids = Array.isArray(ticket?.excludedOperatorUids) ?
+    ticket.excludedOperatorUids as string[] :
+    [];
+  const vehicleClass = typeof ticket?.vehicleType === "string" ?
+    vehicleClassOf(ticket.vehicleType) :
+    undefined;
   const shops = await nearProviders({
     lat,
     lng,
@@ -188,6 +216,9 @@ export const getDispatchOffers = async ({
     radiusMeters,
     acceptingOnly: true,
     openOnly: false,
+    vehicleClass,
+    excludeShopIds,
+    excludeOperatorUids,
     limit,
     ticketId,
     minRating,
@@ -238,10 +269,32 @@ export const selectDispatch = async ({
   }
   const shop = await providerRepository.findById(shopId);
   if (!shop) throw new NotFoundError("Provider not found");
+  if (providerBlocked(shop)) {
+    throw new ValidationError("Provider is not available");
+  }
+  if (Array.isArray(ticket.excludedShopIds) &&
+    ticket.excludedShopIds.includes(shopId)) {
+    throw new ForbiddenError("This provider is excluded from the ticket");
+  }
+  if (Array.isArray(ticket.excludedOperatorUids) &&
+    typeof shop.operatorUid === "string" &&
+    ticket.excludedOperatorUids.includes(shop.operatorUid)) {
+    throw new ForbiddenError("This provider is excluded from the ticket");
+  }
+  if (Array.isArray(ticket.declinedShopIds) &&
+    ticket.declinedShopIds.includes(shopId)) {
+    throw new ValidationError("This provider already declined");
+  }
   if (shop.accepting === false) {
     throw new ValidationError("Provider is not accepting requests");
   }
   requireProviderForTicket(shop, ticket.ticketType);
+  if (!servesVehicleClass(
+    shop,
+    vehicleClassOf(ticket.vehicleType as string | undefined),
+  )) {
+    throw new ValidationError("Provider cannot handle this vehicle");
+  }
   const dest = (ticket.destinationSnapshot ??
     ticket.destinationPoint) as {lat?: unknown; lng?: unknown} | null;
   const dLat = typeof dest?.lat === "number" ? dest.lat : shop.lat;

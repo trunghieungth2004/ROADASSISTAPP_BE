@@ -4,12 +4,15 @@ import * as providerRepository from "../../../../repository/providerRepository";
 import * as userRepository from "../../../../repository/userRepository";
 import {
   approveMobileFix,
+  changeMobileShop,
   declineMobileFix,
+  expireMobileFixQuote,
   setMobileShopFix,
 } from "../../../../service/dispatch/shop";
 import {chatService} from "../../../../service/chatService";
-import {findCandidates} from "../../../../service/dispatch/candidates";
 import * as paymentService from "../../../../service/paymentService";
+import * as refundService from "../../../../service/refundService";
+import {findCandidates} from "../../../../service/dispatch/candidates";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
 
 jest.mock("../../../../repository/dispatchRepository");
@@ -25,13 +28,16 @@ jest.mock("../../../../service/chatService", () => ({
     })),
   },
 }));
-jest.mock("../../../../service/dispatch/candidates", () => ({
-  findCandidates: jest.fn(async () => ["op2"]),
-}));
 jest.mock("../../../../service/paymentService", () => ({
   cancelPendingPayments: jest.fn(async () => undefined),
   createPaymentForTicket: jest.fn(async () => ({id: "pay1"})),
   requestRefund: jest.fn(async () => ({id: "refund1"})),
+}));
+jest.mock("../../../../service/refundService", () => ({
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
+}));
+jest.mock("../../../../service/dispatch/candidates", () => ({
+  findCandidates: jest.fn(async () => ["op2"]),
 }));
 jest.mock("../../../../service/taskQueueService", () => ({
   enqueueDispatchPush: jest.fn(async () => ({enqueued: true})),
@@ -160,7 +166,7 @@ describe("mobile shop fix quote", () => {
 });
 
 describe("mobile fix approval", () => {
-  it("arms cash and moves the SOS to ready on rider approval", async () => {
+  it("arms cash and starts work on rider approval", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       quotedTicket() as never,
     );
@@ -184,7 +190,7 @@ describe("mobile fix approval", () => {
     );
     expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
       "sos1",
-      "7",
+      "6",
       "rider1",
     );
     expect(chatService.addSystemEvent).toHaveBeenCalledWith(
@@ -270,7 +276,7 @@ describe("mobile fix approval", () => {
 });
 
 describe("mobile fix decline", () => {
-  it("keeps call-out payable and rebroadcasts", async () => {
+  it("keeps the shop and clears the quote for a revised offer", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       quotedTicket({
         mobileFeeHistory: [{
@@ -289,66 +295,31 @@ describe("mobile fix decline", () => {
       reason: "Price too high",
     })).resolves.toEqual({declined: true});
 
-    expect(chatService.archiveTicketRoom).toHaveBeenCalledWith({
-      ticketId: "sos1",
-      version: 2,
-    });
-    expect(findCandidates).toHaveBeenCalledWith(expect.objectContaining({
-      excludeShopIds: ["mobile1"],
-      excludeOperatorUids: ["op1"],
-    }));
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "sos1",
       expect.objectContaining({
-        assignedShopId: null,
-        assignedUid: null,
-        assignedKind: null,
-        mobileCallOutFee: null,
-        mobileTravelFee: null,
         finalAmount: null,
         invoiceItems: null,
+        mobileFixApprovedAt: null,
         mobileFixDeclineReason: "Price too high",
-        excludedShopIds: ["mobile1"],
-        excludedOperatorUids: ["op1"],
-        formerAssignedShopIds: ["mobile1"],
-        chatVersion: 3,
-        candidates: ["op2"],
-        mobileFeeHistory: [
-          expect.objectContaining({shopId: "mobile0"}),
-          expect.objectContaining({
-            shopId: "mobile1",
-            callOutFee: 50000,
-            travelFee: 15000,
-            fixAmount: 120000,
-            reason: "Price too high",
-          }),
-        ],
+        quoteExpiresAt: null,
       }),
     );
     expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
       "sos1",
-      "1",
+      "3",
       "rider1",
     );
     expect(paymentService.cancelPendingPayments).toHaveBeenCalledWith("sos1");
     expect(chatService.addSystemEvent).toHaveBeenCalledWith(
       "sos1",
-      "The rider declined the fix quote.",
+      "The rider asked for a revised fix quote.",
       "MOBILE_FIX_DECLINED",
       {reason: "Price too high"},
     );
-    expect(jest.mocked(chatService.addSystemEvent).mock
-      .invocationCallOrder[0]).toBeLessThan(
-      jest.mocked(chatService.archiveTicketRoom).mock
-        .invocationCallOrder[0],
-    );
     expect(enqueueDispatchPush).toHaveBeenCalledWith(
       "sos1",
-      expect.stringMatching(/^-mobile-fix-declined-/),
-    );
-    expect(enqueueDispatchPush).toHaveBeenCalledWith(
-      "sos1",
-      expect.stringMatching(/^-mobile-fix-declined-shop-/),
+      expect.stringMatching(/^-mobile-fix-declined-operator-/),
       expect.objectContaining({
         audience: "shop",
         shopId: "mobile1",
@@ -368,5 +339,190 @@ describe("mobile fix decline", () => {
     })).rejects.toMatchObject({statusCode: 403});
 
     expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("mobile fix expiry", () => {
+  it("expires the quote and refunds held payments", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      quotedTicket({quoteExpiresAt: "2020-01-01T00:00:00.000Z"}) as never,
+    );
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "pay1", method: "SEPAY", status: "HELD"},
+    ] as never);
+
+    await expect(expireMobileFixQuote("sos1")).resolves.toEqual({
+      expired: true,
+    });
+
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "sos1",
+      expect.objectContaining({
+        finalAmount: null,
+        invoiceItems: null,
+        quoteExpiresAt: null,
+        quoteExpiredAt: expect.any(String),
+      }),
+    );
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "sos1",
+      "3",
+      "sweep",
+    );
+    expect(paymentService.cancelPendingPayments).toHaveBeenCalledWith("sos1");
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay1",
+        reason: "Mobile fix quote expired",
+      }),
+    );
+    expect(chatService.addSystemEvent).toHaveBeenCalledWith(
+      "sos1",
+      "The mobile fix quote expired without a rider decision.",
+      "MOBILE_FIX_EXPIRED",
+    );
+  });
+
+  it("leaves a disputed quote alone", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      quotedTicket({
+        quoteExpiresAt: "2020-01-01T00:00:00.000Z",
+        disputeHold: true,
+      }) as never,
+    );
+
+    await expect(expireMobileFixQuote("sos1")).resolves.toEqual({
+      expired: false,
+    });
+    expect(dispatchRepository.update).not.toHaveBeenCalled();
+    expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("mobile quote history", () => {
+  it("records a sent quote with a version", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      quotedTicket({
+        status: "3",
+        finalAmount: null,
+        invoiceItems: null,
+      }) as never,
+    );
+
+    await expect(setMobileShopFix({
+      userId: "op1",
+      ticketId: "sos1",
+      fixAmount: 120000,
+      items: [{name: "Battery", qty: 1, unitPrice: 120000}],
+    })).resolves.toEqual({updated: 1});
+
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "sos1",
+      expect.objectContaining({
+        quoteVersion: 1,
+        quoteHistory: [
+          expect.objectContaining({
+            version: 1,
+            amount: 120000,
+            status: "SENT",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("records a declined quote without adding a visit fee", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      quotedTicket() as never,
+    );
+
+    await expect(declineMobileFix({
+      userId: "rider1",
+      ticketId: "sos1",
+      reason: "Price too high",
+    })).resolves.toEqual({declined: true});
+
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "sos1",
+      expect.objectContaining({
+        quoteHistory: [
+          expect.objectContaining({
+            amount: 120000,
+            status: "DECLINED",
+            reason: "Price too high",
+          }),
+        ],
+      }),
+    );
+    expect(dispatchRepository.update).not.toHaveBeenCalledWith(
+      "sos1",
+      expect.objectContaining({mobileFeeHistory: expect.anything()}),
+    );
+  });
+});
+
+describe("mobile shop change", () => {
+  it("drops the shop, records the visit and rebroadcasts", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      quotedTicket({
+        mobileFeeHistory: [],
+      }) as never,
+    );
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {id: "pay1", method: "SEPAY", status: "HELD"},
+    ] as never);
+
+    await expect(changeMobileShop({
+      userId: "rider1",
+      ticketId: "sos1",
+      reason: "Price too high",
+    })).resolves.toEqual({
+      changed: true,
+      requeued: true,
+      noCandidates: false,
+    });
+
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "sos1",
+      expect.objectContaining({
+        assignedShopId: null,
+        assignedUid: null,
+        assignedKind: null,
+        mobileCallOutFee: null,
+        mobileTravelFee: null,
+        finalAmount: null,
+        excludedShopIds: ["mobile1"],
+        excludedOperatorUids: ["op1"],
+        formerAssignedShopIds: ["mobile1"],
+        mobileFeeHistory: [
+          expect.objectContaining({
+            shopId: "mobile1",
+            callOutFee: 50000,
+            travelFee: 15000,
+            fixAmount: 120000,
+            reason: "Price too high",
+          }),
+        ],
+        quoteHistory: [
+          expect.objectContaining({status: "REPLACED"}),
+        ],
+      }),
+    );
+    expect(dispatchRepository.update).toHaveBeenCalledWith("sos1", {
+      candidates: ["op2"],
+      candidateTs: expect.any(String),
+    });
+    expect(dispatchRepository.updateStatus).toHaveBeenCalledWith(
+      "sos1",
+      "1",
+      "rider1",
+    );
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({paymentId: "pay1"}),
+    );
+    expect(findCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      excludeShopIds: ["mobile1"],
+      excludeOperatorUids: ["op1"],
+    }));
   });
 });

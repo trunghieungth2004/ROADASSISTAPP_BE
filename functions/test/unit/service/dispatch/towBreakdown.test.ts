@@ -248,8 +248,17 @@ describe("tow breakdown re-match", () => {
     expect(findTowOperators).toHaveBeenCalledWith(expect.objectContaining({
       lat: 10.707,
       lng: 106.6,
+      excludeShopIds: ["tow1"],
+      excludeOperatorUids: ["op1"],
     }));
     expect(stopWaiting).toHaveBeenCalledWith("tow1ticket");
+    expect(providerRepository.update).toHaveBeenCalledWith("tow1", {
+      accepting: false,
+    });
+    expect(patch.excludedShopIds).toEqual(["tow1"]);
+    expect(patch.excludedOperatorUids).toEqual(["op1"]);
+    expect(patch.loadedAt).toBeNull();
+    expect(patch.cancelledBy).toBeNull();
   });
 
   it("pays deadhead only when a breakdown happens before loading", async () => {
@@ -338,7 +347,19 @@ describe("tow breakdown re-match", () => {
         typeof patch === "object" && patch !== null &&
         "towFeeHistory" in patch,
     );
-    expect(update).toBeUndefined();
+    expect(update).toBeDefined();
+    const patch = update?.[1] as Record<string, unknown>;
+    expect(patch.towFeeHistory).toEqual([
+      expect.objectContaining({
+        shopId: "tow1",
+        reasonCode: "TOWER_CANCEL_UNREACHABLE",
+      }),
+    ]);
+    expect(patch.excludedShopIds).toEqual(["tow1"]);
+    expect(patch.excludedOperatorUids).toEqual(["op1"]);
+    expect(providerRepository.update).toHaveBeenCalledWith("tow1", {
+      accepting: false,
+    });
   });
 });
 

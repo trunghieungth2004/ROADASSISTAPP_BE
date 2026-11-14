@@ -59,7 +59,6 @@ interface PlatformConfig {
   refundPolicy: string;
   features: {
     quickFix: boolean;
-    towCashAtDelivery: boolean;
     phoneMasking: boolean;
   };
   updatedAt?: string | null;
@@ -144,7 +143,6 @@ const get = async (): Promise<PlatformConfig> => {
     ),
     features: {
       quickFix: asBoolean(features.quickFix, true),
-      towCashAtDelivery: asBoolean(features.towCashAtDelivery, true),
       phoneMasking: asBoolean(features.phoneMasking, false),
     },
     ceilingMultiplier: asNumber(

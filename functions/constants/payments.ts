@@ -137,7 +137,6 @@ const PLATFORM_CONFIG_DEFAULTS = {
   refundPolicy: REFUND_POLICY.FULL,
   features: {
     quickFix: true,
-    towCashAtDelivery: true,
     phoneMasking: false,
   },
   providerPricing: {

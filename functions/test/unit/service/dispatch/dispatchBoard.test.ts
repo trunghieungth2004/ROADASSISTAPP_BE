@@ -123,6 +123,27 @@ describe("dispatchService.nearDispatch", () => {
     ]);
   });
 
+  it("hides a tow ticket from its cancelled tower", async () => {
+    jest.mocked(dispatchRepository.findByStatusForTypes).mockResolvedValue([
+      {id: "tow", lat: 10.7626, lng: 106.6602, ticketType: "TOW",
+        vehicleType: "CAR", excludedShopIds: ["tow1"],
+        excludedOperatorUids: ["towop"]},
+    ] as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "towop",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([
+      {id: "tow1", kind: "TOW", status: "ACTIVE", accepting: true},
+    ] as never);
+    const result = await nearDispatch({
+      userId: "towop",
+      lat: 10.7626,
+      lng: 106.6602,
+    });
+    expect(result).toEqual([]);
+  });
+
   it("hides pending tickets from users without a provider role", async () => {
     jest.mocked(dispatchRepository.findByStatusForTypes).mockResolvedValue([
       {id: "near", lat: 10.7626, lng: 106.6602, ticketType: "SOS"},
@@ -426,6 +447,46 @@ describe("dispatchService.findTowOperators", () => {
         }
         return {id, kind: "SHOP", status: "ACTIVE"} as never;
       }) as never,
+    );
+    await expect(
+      findTowOperators({lat: 10.7626, lng: 106.6602}),
+    ).resolves.toEqual([]);
+  });
+  it("excludes cancelled shops and operators", async () => {
+    jest.mocked(
+      providerLocationRepository.findByGeohashPrefixes,
+    ).mockResolvedValue([
+      loc({providerId: "tow1"}),
+      loc({providerId: "tow2"}),
+    ] as never);
+    jest.mocked(providerRepository.findById).mockImplementation(
+      (async (id: string) => tow({
+        id,
+        operatorUid: id === "tow1" ? "op1" : "op2",
+      })) as never,
+    );
+    await expect(findTowOperators({
+      lat: 10.7626,
+      lng: 106.6602,
+      excludeShopIds: ["tow1"],
+      excludeOperatorUids: ["op2"],
+    })).resolves.toEqual([]);
+  });
+  it("skips suspended and restricted towers", async () => {
+    jest.mocked(
+      providerLocationRepository.findByGeohashPrefixes,
+    ).mockResolvedValue([
+      loc({providerId: "tow1"}),
+      loc({providerId: "tow2"}),
+    ] as never);
+    jest.mocked(providerRepository.findById).mockImplementation(
+      (async (id: string) => tow({
+        id,
+        operatorUid: id === "tow1" ? "op1" : "op2",
+        ...(id === "tow1" ?
+          {suspended: true} :
+          {restrictedUntil: new Date(Date.now() + 3600000).toISOString()}),
+      })) as never,
     );
     await expect(
       findTowOperators({lat: 10.7626, lng: 106.6602}),

@@ -113,6 +113,27 @@ describe("createPaymentForTicket", () => {
     );
   });
 
+  it("allows prior tower travel after a tower cancels the tow", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      ticketType: "TOW",
+      status: "5",
+      cancelledBy: "towerop1",
+      assignedShopId: "tow1",
+      towFare: {final: null, estimate: 200000, waitingFee: 0},
+      towFeeHistory: [{shopId: "old", amount: 50000}],
+    } as never);
+    await createPaymentForTicket({
+      userId: "rider1",
+      ticketId: "t1",
+      method: "SEPAY",
+    });
+    expect(paymentRepository.createGuarded).toHaveBeenCalledWith(
+      expect.objectContaining({amount: 50000, method: "SEPAY"}),
+    );
+  });
+
   it("does not charge a normal re-match partial on rider cancel", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",

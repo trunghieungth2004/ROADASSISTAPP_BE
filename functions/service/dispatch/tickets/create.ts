@@ -313,7 +313,11 @@ export const createDispatch = async ({
   }
   if (ticketType === "TOW") {
     const candidates = addressedTow === true ? [] :
-      await findTowOperators({lat, lng, vehicleType});
+      await findTowOperators({
+        lat, lng, vehicleType,
+        excludeOperatorUids: excludedOperatorUids ?? [],
+        excludeShopIds: excludedShopIds ?? [],
+      });
     if (candidates.length > 0) {
       await dispatchRepository.update(ticket.id, {
         candidates,

@@ -23,6 +23,7 @@ import {
   VEHICLE_TYPE,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
+import {providerBlocked} from "../dispatch/providerEligibility";
 import {
   BOOKING_DEPOSIT_MAX,
   BOOKING_DEPOSIT_PERCENT_MAX,
@@ -497,14 +498,16 @@ const assertAcceptingChange = async (
 };
 
 const assertProviderNotRestricted = (
-  provider: {restrictedUntil?: unknown},
+  provider: {
+    status?: unknown;
+    suspended?: unknown;
+    restrictedUntil?: unknown;
+  },
   accepting?: boolean,
 ): void => {
-  if (accepting === true &&
-    typeof provider.restrictedUntil === "string" &&
-    Date.parse(provider.restrictedUntil) > Date.now()) {
+  if (accepting === true && providerBlocked(provider)) {
     throw new ValidationError(
-      "Your provider is restricted from accepting new jobs",
+      "Your provider is not available to accept new jobs",
     );
   }
 };

@@ -64,8 +64,30 @@ const routeDeps = {
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/\/$/, ""))
   .filter(Boolean);
+const LOCAL_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+]);
+const PROJECT_ID = process.env.GCLOUD_PROJECT ?? "roadassistapp-c2e37";
+const PREVIEW_PROJECTS = [...new Set([
+  PROJECT_ID,
+  "roadassistapp-c2e37",
+])];
+const PREVIEW_ORIGIN = new RegExp(
+  `^https://(?:${PREVIEW_PROJECTS.join("|")})--[a-z0-9-]+\\.web\\.app$`,
+  "i",
+);
+
+const isAllowedOrigin = (origin: string): boolean => {
+  const normalized = origin.replace(/\/$/, "");
+  return ALLOWED_ORIGINS.includes(normalized) ||
+    LOCAL_ORIGINS.has(normalized) ||
+    PREVIEW_ORIGIN.test(normalized);
+};
 
 app.use(
   cors({
@@ -74,17 +96,19 @@ app.use(
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
       if (!origin) return callback(null, true);
-      return callback(null, ALLOWED_ORIGINS.includes(origin));
+      return callback(null, isAllowedOrigin(origin));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
+    exposedHeaders: [
       "X-Request-Id",
+      "RateLimit-Limit",
+      "RateLimit-Remaining",
+      "RateLimit-Reset",
+      "Retry-After",
     ],
     credentials: true,
     preflightContinue: true,
+    optionsSuccessStatus: 204,
   }),
 );
 app.options("*", (_req: Request, res: Response) => {

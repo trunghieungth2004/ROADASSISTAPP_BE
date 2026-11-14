@@ -283,7 +283,7 @@ const overturnReportAction = async (input: {
       provider.acceptingBeforeRestriction :
       true;
     await providerRepository.update(input.targetId, {
-      accepting: before,
+      accepting: provider?.suspended === true ? false : before,
       acceptingBeforeRestriction: null,
       restrictedUntil: null,
       restrictionReason: null,
@@ -393,7 +393,7 @@ const recoverStanding = async (): Promise<{recovered: number}> => {
       data.operatorUid :
       null;
     await providerRepository.update(doc.id, {
-      accepting: before,
+      accepting: data.suspended === true ? false : before,
       acceptingBeforeRestriction: null,
       restrictedUntil: null,
       restrictionReason: null,

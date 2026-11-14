@@ -29,6 +29,7 @@ import {ConflictError, ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 import {logError, logWarn} from "../../utils/logger";
 import * as cacheManager from "../../utils/cacheManager";
+import {providerBlocked} from "./providerEligibility";
 
 export const acceptAsShop = async (
   userId: string,
@@ -54,6 +55,9 @@ export const acceptAsShop = async (
     throw new ForbiddenError("This operator is excluded from the ticket");
   }
   requireProviderForTicket(shop, ticket.ticketType);
+  if (providerBlocked(shop)) {
+    throw new ValidationError("Provider is not available");
+  }
   if (shop.accepting === false) {
     throw new ValidationError("Provider is not accepting requests");
   }

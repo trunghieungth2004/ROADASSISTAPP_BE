@@ -57,13 +57,14 @@ const pendingPayouts = async (req: Request, res: Response) => {
 const settlePayoutBatch = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {payeeId, paymentIds, payoutRef, note} = req.body;
+    const {payeeId, paymentIds, payoutRef, note, proofUrl} = req.body;
     const result = await payoutService.settleBatch({
       adminUid: uid,
       payeeId,
       paymentIds,
       payoutRef,
       note,
+      proofUrl,
     });
     sendSuccess(res, result, {message: "Payout batch settled"});
   } catch (error) {

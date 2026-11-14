@@ -214,17 +214,31 @@ const fileAppeal = async (input: {
 const eligibleAppeals = async (userId: string) => {
   const providerIds = await providerIdsFor(userId);
   const ratings = await ratingService.receivedRatings(userId);
-  const ratingItems = [ratings.rider, ...ratings.providers]
-    .flatMap((group) => group.ratings.map((rating) => ({
+  const ratingItems = [
+    ...ratings.rider.ratings.map((rating) => ({
       subjectKind: APPEAL_SUBJECT.RATING,
       subjectId: rating.id,
       ticketId: rating.ticketId,
-      label: `Rating ${rating.score} · ${group.name}`,
+      label: `Rating ${rating.score} · ${ratings.rider.name}`,
       createdAt: rating.createdAt,
       canAppeal: rating.canAppeal,
       appealStatus: rating.appealStatus,
+      roleScope: "RIDER",
       snapshot: rating,
-    })));
+    })),
+    ...ratings.providers.flatMap((group) =>
+      group.ratings.map((rating) => ({
+        subjectKind: APPEAL_SUBJECT.RATING,
+        subjectId: rating.id,
+        ticketId: rating.ticketId,
+        label: `Rating ${rating.score} · ${group.name}`,
+        createdAt: rating.createdAt,
+        canAppeal: rating.canAppeal,
+        appealStatus: rating.appealStatus,
+        roleScope: "PROVIDER",
+        snapshot: rating,
+      }))),
+  ];
   const reportRows = await reportRepository.list({
     status: "RESOLVED",
     limit: 100,
@@ -244,11 +258,17 @@ const eligibleAppeals = async (userId: string) => {
       appeal.subjectId === report.id);
     const open = related.some((appeal) =>
       appeal.status === APPEAL_STATUS.OPEN);
+    const riderTarget = report.targetUid === userId ||
+      report.targetId === userId;
+    const providerTarget = providerIds.includes(report.targetId);
     return {
       subjectKind: APPEAL_SUBJECT.REPORT,
       subjectId: report.id,
       ticketId: report.ticketId,
       label: `${report.reason} · ${report.action}`,
+      roleScope: riderTarget && providerTarget ?
+        "BOTH" :
+        riderTarget ? "RIDER" : "PROVIDER",
       createdAt: report.decidedAt ?? report.createdAt,
       canAppeal: inWindow(
         report.decidedAt ?? report.createdAt,
@@ -275,6 +295,7 @@ const eligibleAppeals = async (userId: string) => {
     (dispute.status === "RESOLVED" || dispute.status === "DISMISSED") &&
     (dispute.filedBy === userId ||
       dispute.accusedId === userId ||
+      providerIds.includes(dispute.filedBy) ||
       (dispute.accusedId !== null && providerIds.includes(dispute.accusedId))));
   const disputeAppeals = await appealRepository.findBySubjectIds(
     APPEAL_SUBJECT.DISPUTE,
@@ -286,11 +307,18 @@ const eligibleAppeals = async (userId: string) => {
       appeal.subjectId === dispute.id);
     const open = related.some((appeal) =>
       appeal.status === APPEAL_STATUS.OPEN);
+    const riderParty = dispute.filedBy === userId ||
+      dispute.accusedId === userId;
+    const providerParty = providerIds.includes(dispute.filedBy) ||
+      (dispute.accusedId !== null && providerIds.includes(dispute.accusedId));
     return {
       subjectKind: APPEAL_SUBJECT.DISPUTE,
       subjectId: dispute.id,
       ticketId: dispute.ticketId,
       label: `${dispute.type} · ${dispute.outcome ?? dispute.status}`,
+      roleScope: riderParty && providerParty ?
+        "BOTH" :
+        riderParty ? "RIDER" : "PROVIDER",
       createdAt: dispute.resolvedAt ?? dispute.updatedAt,
       canAppeal: inWindow(
         dispute.resolvedAt ?? dispute.updatedAt,

@@ -46,6 +46,9 @@ export const releaseTicket = async ({
     ticket.ticketType !== "SOS") {
     throw new ValidationError("Only shop tickets can be released");
   }
+  if (ticket.disputeHold === true) {
+    throw new ValidationError("Dispute under review");
+  }
   if (!RELEASABLE.has(String(ticket.status))) {
     throw new ValidationError("Work already started; use unfixable");
   }

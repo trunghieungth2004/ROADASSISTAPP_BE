@@ -27,6 +27,8 @@ import {
   ValidationError,
 } from "../../../utils/errors";
 import * as cacheManager from "../../../utils/cacheManager";
+import {approveShopQuoteWork} from "../quote/paid";
+import {expireMobileFixQuote} from "./mobile";
 
 type QuoteCatalog = Array<{
   code: string;
@@ -198,6 +200,11 @@ export const approveQuote = async ({
   if (ticket.userId !== userId) {
     throw new ForbiddenError("Only the rider approves the quote");
   }
+  if (typeof ticket.quoteApprovedAt === "string" &&
+    (ticket.status === STATUS_DISPATCH.IN_PROGRESS ||
+      ticket.status === STATUS_DISPATCH.READY)) {
+    return {approved: true};
+  }
   if (ticket.depositStatus === "REQUESTED") {
     throw new ValidationError("Settle or waive the deposit first");
   }
@@ -272,47 +279,10 @@ export const approveQuote = async ({
   if (!funded) {
     throw new ValidationError("Payment required before starting work");
   }
-  await dispatchRepository.update(ticketId, {
-    paymentArmed: true,
-    quoteApprovedAt: new Date().toISOString(),
-  });
-  await dispatchRepository.updateStatus(
-    ticketId,
-    STATUS_DISPATCH.IN_PROGRESS,
-    userId,
-  );
-  cacheManager.del(NS);
-  await chatService.addSystemEvent(
-    ticketId,
-    "The rider approved the quote.",
-    "QUOTE_APPROVED",
-  );
-  try {
-    const items = Array.isArray(ticket.quoteItems) ? ticket.quoteItems : [];
-    const codes = items
-      .map((item) => (item as {serviceCode?: unknown}).serviceCode)
-      .filter((code): code is string =>
-        typeof code === "string" && code !== "");
-    const providerId = typeof ticket.assignedShopId === "string" &&
-      ticket.assignedShopId !== "" ?
-      ticket.assignedShopId :
-      typeof ticket.providerId === "string" ? ticket.providerId : "";
-    if (providerId !== "") {
-      await providerRepository.incrementServiceUsage(providerId, codes);
-    }
-  } catch {
-    void 0;
+  const approved = await approveShopQuoteWork(ticketId, userId);
+  if (!approved) {
+    throw new ValidationError("No quote awaiting approval");
   }
-  await enqueueDispatchPush(
-    ticketId,
-    `-quote-approved-${Date.now()}`,
-    {
-      audience: "operator",
-      urgent: "true",
-      title: "Quote approved",
-      body: "The rider approved your quote — tap to view",
-    },
-  );
   return {approved: true};
 };
 
@@ -442,6 +412,23 @@ const expireQuoteNow = async (
   });
   await paymentService.cancelPendingPayments(ticket.id)
     .catch(() => undefined);
+  try {
+    const payments = await paymentRepository.findByTicketId(ticket.id);
+    for (const payment of payments) {
+      if (payment.status === "HELD" ||
+        payment.status === "CONFIRMED" ||
+        payment.status === "PARTIAL") {
+        await refundService.requestRefund({
+          paymentId: payment.id,
+          requestedBy: ticket.userId,
+          automatic: true,
+          reason: "Quote expired",
+        });
+      }
+    }
+  } catch {
+    void 0;
+  }
   await dispatchRepository.updateStatus(ticket.id, backTo, "sweep");
   await chatService.addSystemEvent(
     ticket.id,
@@ -472,11 +459,17 @@ export const sweepExpiredQuotes = async (): Promise<number> => {
   let expired = 0;
   for (const ticket of quoted) {
     if (ticket.ticketType !== "WALK_IN" &&
-      ticket.ticketType !== "MECHANIC") continue;
+      ticket.ticketType !== "MECHANIC" &&
+      ticket.ticketType !== "SOS") continue;
     if (ticket.disputeHold === true) continue;
     const raw = ticket.quoteExpiresAt;
     const expiresAt = typeof raw === "string" ? Date.parse(raw) : NaN;
     if (!Number.isFinite(expiresAt) || expiresAt > now) continue;
+    if (ticket.ticketType === "SOS") {
+      const result = await expireMobileFixQuote(ticket.id);
+      if (result.expired) expired += 1;
+      continue;
+    }
     await expireQuoteNow(ticket);
     expired += 1;
   }

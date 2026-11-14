@@ -683,7 +683,7 @@ describe("dispatchService.deliverDispatchPush", () => {
     ).resolves.toEqual({updated: 1, requeued: true});
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
-      expect.objectContaining({cancelledBy: "op1"}),
+      expect.objectContaining({cancelledBy: null}),
     );
     expect(dispatchRepository.update).toHaveBeenCalledWith(
       "t1",
@@ -698,10 +698,10 @@ describe("dispatchService.deliverDispatchPush", () => {
     );
     expect(enqueueDispatchPush).toHaveBeenCalledWith(
       "t1",
-      "-cancelled-rider",
+      "-rematch-rider",
       expect.objectContaining({
         audience: "rider",
-        title: "Tow cancelled by tower",
+        title: "Finding another tower",
       }),
     );
   });
@@ -778,7 +778,7 @@ describe("dispatchService.deliverDispatchPush", () => {
     );
   });
 
-  it("keeps the tower as canceller when the rider cancels a requeued tow",
+  it("marks the rider as canceller when the rider cancels a requeued tow",
     async () => {
       jest.mocked(dispatchRepository.findById).mockResolvedValue({
         id: "t1",
@@ -809,7 +809,7 @@ describe("dispatchService.deliverDispatchPush", () => {
       await expect(
         updateDispatchStatus({id: "t1", status: "5", userId: "rider1"}),
       ).resolves.toEqual({updated: 1});
-      expect(dispatchRepository.update).not.toHaveBeenCalledWith(
+      expect(dispatchRepository.update).toHaveBeenCalledWith(
         "t1",
         expect.objectContaining({cancelledBy: "rider1"}),
       );

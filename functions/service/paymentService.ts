@@ -11,6 +11,8 @@ import * as userRepository from "../repository/userRepository";
 import {listPayments} from "./payment/adminPayments";
 import * as platformConfigService from "./platformConfigService";
 import * as sepayService from "./sepayService";
+import {approvePaidQuote} from "./dispatch/quote/paid";
+import {logError} from "../utils/logger";
 import * as subscriptionService from "./subscriptionService";
 import {
   cancelActiveForSwitch,
@@ -70,6 +72,7 @@ export type TicketLike = {
     final?: number | null;
     estimate?: number | null;
     waitingFee?: number | null;
+    partial?: boolean | null;
   } | null;
   depositAmount?: number | null; depositStatus?: string | null;
   warrantyOfTicketId?: string | null; warrantyClaimId?: string | null;
@@ -80,6 +83,13 @@ type PaymentWithCheckout = paymentRepository.Payment & {
 };
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value !== "";
+const towHistoryAmountFor = (ticket: TicketLike): number =>
+  Array.isArray(ticket.towFeeHistory) ?
+    ticket.towFeeHistory.reduce((sum, entry) =>
+      sum + (typeof entry.amount === "number" && entry.amount > 0 ?
+        entry.amount :
+        0), 0) :
+    0;
 const notify = async (task: Promise<unknown>): Promise<void> => {
   try {
     await task;
@@ -91,25 +101,26 @@ const billableAmountFor = (ticket: TicketLike):
   {amount: number; waitingFee: number} | null => {
   if (isWarrantyRework(ticket)) return null;
   if (ticket.ticketType === "TOW") {
-    if (ticket.status !== STATUS_DISPATCH.RESOLVED &&
-      !(ticket.status === STATUS_DISPATCH.CANCELLED &&
-        ticket.cancelledBy === ticket.userId)) {
-      return null;
-    }
     const fare = ticket.towFare;
+    const historyAmount = towHistoryAmountFor(ticket);
     const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
       ticket.cancelledBy === ticket.userId;
-    const reMatched = riderCancelled && !nonEmpty(ticket.assignedShopId);
+    const priorTowCharge = ticket.status === STATUS_DISPATCH.CANCELLED &&
+      historyAmount > 0;
+    if (ticket.status !== STATUS_DISPATCH.RESOLVED &&
+      !(ticket.status === STATUS_DISPATCH.CANCELLED &&
+        (riderCancelled || priorTowCharge))) {
+      return null;
+    }
+    const reMatched = (riderCancelled && !nonEmpty(ticket.assignedShopId)) ||
+      (priorTowCharge && !riderCancelled &&
+        fare?.partial !== true);
     const base = reMatched ?
       null :
       fare && typeof fare === "object" ?
         (typeof fare.final === "number" ? fare.final :
           typeof fare.estimate === "number" ? fare.estimate : null) :
         (typeof ticket.finalAmount === "number" ? ticket.finalAmount : null);
-    const historyAmount = Array.isArray(ticket.towFeeHistory) ?
-      ticket.towFeeHistory.reduce((sum, entry) =>
-        sum + (typeof entry.amount === "number" ? entry.amount : 0), 0) :
-      0;
     if (base === null && historyAmount === 0) return null;
     const waitingFee = fare && typeof fare.waitingFee === "number" ?
       fare.waitingFee :
@@ -142,6 +153,7 @@ const billableAmountFor = (ticket: TicketLike):
     if (assigned &&
       (ticket.status === STATUS_DISPATCH.RESOLVED ||
         ticket.status === STATUS_DISPATCH.READY ||
+        ticket.status === STATUS_DISPATCH.IN_PROGRESS ||
         ticket.status === STATUS_DISPATCH.QUOTED) &&
       typeof ticket.finalAmount === "number") {
       return {amount: history + callOut + travel + fix, waitingFee: 0};
@@ -363,13 +375,20 @@ const createPaymentForTicket = async ({
   const riderCancelled = ticket.status === STATUS_DISPATCH.CANCELLED &&
     ticket.cancelledBy === ticket.userId &&
     (ticket.ticketType === "TOW" || ticket.ticketType === "SOS");
-  if (blocked.has(ticket.status) && !unfixableSos && !riderCancelled) {
+  const priorTowCharge = ticket.ticketType === "TOW" &&
+    ticket.status === STATUS_DISPATCH.CANCELLED &&
+    Array.isArray(ticket.towFeeHistory) &&
+    ticket.towFeeHistory.some((entry) =>
+      typeof entry.amount === "number" && entry.amount > 0);
+  if (blocked.has(ticket.status) && !unfixableSos && !riderCancelled &&
+    !priorTowCharge) {
     throw new ValidationError("Ticket is not payable");
   }
   if (
     ticket.ticketType === "TOW" &&
     ticket.status !== STATUS_DISPATCH.RESOLVED &&
-    !riderCancelled
+    !riderCancelled &&
+    !priorTowCharge
   ) {
     throw new ValidationError(
       "Tow payment is available after the tow is resolved",
@@ -518,6 +537,14 @@ const handleSepayIpn = async (
   if (payment.status === PAYMENT_STATUS.HELD ||
     payment.status === PAYMENT_STATUS.CONFIRMED) {
     await subscriptionService.activateFromPayment(payment);
+    if (payment.purpose !== SUBSCRIPTION_PURPOSE &&
+      payment.purpose !== DEPOSIT_PURPOSE) {
+      await approvePaidQuote(payment.ticketId, payment.riderUid)
+        .catch((err) => logError("payments", "auto-approve-quote-failed", {
+          ticketId: payment.ticketId,
+          paymentId: payment.id,
+        }, err));
+    }
     return payment;
   }
   if (payment.status !== PAYMENT_STATUS.PENDING) {
@@ -553,6 +580,11 @@ const handleSepayIpn = async (
       await notify(paymentPush.deliverReceived(held));
     } else {
       await stampTicketPayment(payment.ticketId, held);
+      await approvePaidQuote(held.ticketId, held.riderUid)
+        .catch((err) => logError("payments", "auto-approve-quote-failed", {
+          ticketId: held.ticketId,
+          paymentId: held.id,
+        }, err));
       await notify(paymentPush.deliverReceived(held));
     }
   }

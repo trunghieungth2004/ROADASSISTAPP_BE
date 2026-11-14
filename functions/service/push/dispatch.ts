@@ -248,6 +248,12 @@ export const deliverTowWithdrawn = async (
       lat: ticket.lat,
       lng: ticket.lng,
       vehicleType: ticket.vehicleType as string | undefined,
+      excludeOperatorUids: Array.isArray(ticket.excludedOperatorUids) ?
+        ticket.excludedOperatorUids as string[] :
+        [],
+      excludeShopIds: Array.isArray(ticket.excludedShopIds) ?
+        ticket.excludedShopIds as string[] :
+        [],
     });
   }
   if (candidates.length === 0) return {delivered: 0, skipped: true};
@@ -352,6 +358,12 @@ const deliverDispatchPushInner = async (
       lat: ticket.lat,
       lng: ticket.lng,
       vehicleType: ticket.vehicleType as string | undefined,
+      excludeOperatorUids: Array.isArray(ticket.excludedOperatorUids) ?
+        ticket.excludedOperatorUids as string[] :
+        [],
+      excludeShopIds: Array.isArray(ticket.excludedShopIds) ?
+        ticket.excludedShopIds as string[] :
+        [],
     });
   }
   if (candidates.length === 0) return {delivered: 0, skipped: true};

@@ -7,37 +7,26 @@ import * as providerRepository from "../../../repository/providerRepository";
 
 import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
-import {vehicleClassOf} from "../../providerService";
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {chatService} from "../../chatService";
 
-import {autoFile, bumpCancelCounters} from "../../disputeService";
 import * as platformConfigService from "../../platformConfigService";
-import {accrue, stopWaiting} from "../waiting";
+import {accrue} from "../waiting";
 import {
   NS,
   TERMINAL_STATUSES,
   TOWER_CANCEL_SOURCE,
-  TOWER_SEARCH_ACTIVE,
 } from "../constants";
-import {ACCUSED_KIND, DISPUTE_TYPE} from "../../../constants/disputes";
 import {BOOKING_STATUS} from "../../../constants/booking";
 
-import {freezeTowLeg, trackedDeadheadKm, trackedLoadedKm} from "../helpers";
-
 import {
-  actualDeadheadKm,
   DEFAULT_TOW_RATES,
-  isNightFare,
-  partialTowFare,
   quoteTowFareForRoute,
-  type TowFareQuote,
 } from "../fare";
-import {findTowOperators} from "../candidates";
 import {stampTowEta} from "../accept";
+import {rematchTow} from "./towRematch";
 
 import {
-  PROVIDER_KIND,
   PROVIDER_STATUS,
   STATUS_DISPATCH,
 } from "../../../constants/status";
@@ -92,198 +81,17 @@ export const cancelTowerSearch = async ({
   if (!isAssignee && !isOperator && caller.role !== ROLE_ADMIN) {
     throw new ForbiddenError("Only the tower cancels mid-tow");
   }
-  const nextLat = typeof lat === "number" ? lat : ticket.lat;
-  const nextLng = typeof lng === "number" ? lng : ticket.lng;
-  const destId = typeof ticket.destinationShopId === "string" &&
-    ticket.destinationShopId !== "" ?
-    ticket.destinationShopId as string :
-    null;
-  const priorBefore = ticket.towFare as TowFareQuote | null | undefined;
-  const tracked = trackedDeadheadKm(ticket, towerId) ?? 0;
-  const breakdown = reasonCode === "TOWER_CANCEL_BREAKDOWN";
-  const trackedLoaded = breakdown ?
-    trackedLoadedKm(ticket, towerId) ?? 0 :
-    0;
-  await freezeTowLeg(ticketId, {
-    towLegs: ticket.towLegs,
-    towDistanceMeters: ticket.towDistanceMeters,
-    assignedShopId: ticket.assignedShopId,
-    lat: nextLat,
-    lng: nextLng,
-  }, destId, tracked);
-  const fresh = await dispatchRepository.findById(ticketId);
-  const partialKm = actualDeadheadKm(fresh?.towLegs);
-  const towRates = await platformConfigService.getTowRates()
-    .catch(() => DEFAULT_TOW_RATES);
-  const partial = partialTowFare({
-    ...(typeof ticket.vehicleType === "string" ?
-      {vehicleClass: vehicleClassOf(ticket.vehicleType)} :
-      {}),
-    night: isNightFare(new Date(), towRates.nightWindow),
-    deadheadKm: partialKm + trackedLoaded,
-    ...(typeof priorBefore?.perKmFee === "number" ?
-      {perKmFee: priorBefore.perKmFee} :
-      {}),
-    rates: towRates,
-  });
-  const prior = fresh?.towFare as TowFareQuote | null | undefined;
-  const cappedKm = Math.round(partialKm * 10) / 10;
-  await dispatchRepository.update(ticketId, {
-    towFare: breakdown ? {
-      estimate: 0,
-      ceiling: Math.max(0, (typeof prior?.ceiling === "number" ?
-        prior.ceiling :
-        0) - partial),
-      final: null,
-      partial: false,
-      deadheadKm: 0,
-      loadedKm: 0,
-      night: isNightFare(new Date(), towRates.nightWindow),
-      nightMultiplier: towRates.nightMultiplier,
-      vehicleClass: typeof prior?.vehicleClass === "string" ?
-        prior.vehicleClass :
-        vehicleClassOf(ticket.vehicleType),
-    } : {
-      estimate: typeof prior?.estimate === "number" ? prior.estimate : 0,
-      ceiling: typeof prior?.ceiling === "number" ? prior.ceiling : 0,
-      final: partial,
-      partial: true,
-      deadheadKm: partialKm,
-      loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
-      night: isNightFare(new Date(), towRates.nightWindow),
-      nightMultiplier: towRates.nightMultiplier,
-      vehicleClass: typeof prior?.vehicleClass === "string" ?
-        prior.vehicleClass :
-        vehicleClassOf(ticket.vehicleType),
-    },
-    towActual: {
-      quotedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : null,
-      actualKm: cappedKm,
-      cappedKm,
-      loadedTraveledKm: trackedLoaded,
-      ...(breakdown ? {breakdown: true} : {}),
-    },
-    ...(breakdown ? {
-      towFeeCap: typeof ticket.towFeeCap === "number" ?
-        ticket.towFeeCap :
-        typeof prior?.ceiling === "number" ? prior.ceiling : null,
-      towFeeHistory: [
-        ...(Array.isArray(ticket.towFeeHistory) ? ticket.towFeeHistory : []),
-        {
-          shopId: towerId,
-          shopName: tower?.name ?? null,
-          amount: partial,
-          deadheadKm: partialKm,
-          loadedKm: trackedLoaded,
-          at: new Date().toISOString(),
-          reasonCode,
-        },
-      ],
-    } : {}),
-  });
-  const history = Array.isArray(ticket.pickupHistory) ?
-    [...(ticket.pickupHistory as Array<{
-      lat: number;
-      lng: number;
-      at: string;
-      reason: string;
-    }>)] :
-    [];
-  history.push({
-    lat: nextLat,
-    lng: nextLng,
-    at: new Date().toISOString(),
-    reason: breakdown ? "tower-breakdown" : TOWER_CANCEL_SOURCE.REMATCH,
-  });
-  await dispatchRepository.update(ticketId, {
-    lat: nextLat,
-    lng: nextLng,
-    pickupHistory: history,
-    assignedShopId: null,
-    assignedUid: null,
-    assignedKind: null,
-    assignedAt: null,
-    loadedAt: null,
-    towerSearch: TOWER_SEARCH_ACTIVE,
-    etaPickupAt: null,
-    etaDropoffAt: null,
-    etaNotifiedAt: null,
-    candidates: [],
-    candidateTs: null,
-  });
-  await dispatchRepository.updateStatus(
-    ticketId,
-    STATUS_DISPATCH.PENDING,
+  return rematchTow({
+    ticket,
     userId,
-  );
-  try {
-    await stopWaiting(ticketId);
-  } catch {
-    return {updated: 1, requeued: true};
-  }
-  try {
-    if (tower && tower.kind === PROVIDER_KIND.TOW &&
-      tower.accepting === false) {
-      await providerRepository.update(towerId, {accepting: true});
-      cacheManager.del("shop");
-      cacheManager.del("provider");
-    }
-  } catch {
-    return {updated: 1, requeued: true};
-  }
-  try {
-    const operators = await findTowOperators({
-      lat: nextLat,
-      lng: nextLng,
-      vehicleType: ticket.vehicleType as string | undefined,
-    });
-    if (operators.length > 0) {
-      await dispatchRepository.update(ticketId, {
-        candidates: operators,
-        candidateTs: new Date().toISOString(),
-      });
-    }
-  } catch {
-    return {updated: 1, requeued: true};
-  }
-  cacheManager.del(NS);
-  await enqueueDispatchPush(ticketId, "-rematch-rider", {
-    audience: "rider",
-    urgent: "true",
-    title: "Finding another tower",
-    body: breakdown ?
-      "The tower broke down — finding another tower" :
-      partialKm + trackedLoaded > 0 ?
-        "The tower cancelled — searching for a new tower " +
-        `(${cappedKm} km on record)` :
-        "The tower cancelled — searching for a new tower",
+    reasonCode,
+    note,
+    lat,
+    lng,
+    pickupReason: reasonCode === "TOWER_CANCEL_BREAKDOWN" ?
+      "tower-breakdown" :
+      TOWER_CANCEL_SOURCE.REMATCH,
   });
-  await enqueueDispatchPush(ticketId, "-rematch-towers", {
-    audience: "tower-candidates",
-    title: "Tow request available",
-    body: "A tow request needs a tower — tap to view",
-  });
-  if (!breakdown) {
-    try {
-      await autoFile({
-        ticketId,
-        reporterUid: ticket.userId,
-        accusedKind: ACCUSED_KIND.TOWER,
-        accusedId: towerId,
-        reasonCode,
-        ...(note !== undefined ? {note} : {}),
-        type: DISPUTE_TYPE.TOWER_CANCEL_MID,
-      });
-    } catch {
-      return {updated: 1, requeued: true};
-    }
-    try {
-      await bumpCancelCounters({providerId: towerId, userId});
-    } catch {
-      return {updated: 1, requeued: true};
-    }
-  }
-  return {updated: 1, requeued: true};
 };
 
 export const markTowLoaded = async ({

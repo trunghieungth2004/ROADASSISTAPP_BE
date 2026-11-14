@@ -16,10 +16,12 @@ import {
   approveQuote,
   updateWorkOrder,
   approveInvoice,
+  releaseTicket,
 } from "../../../../service/dispatchService";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
 import {continueSos} from "../../../../service/dispatch/sos";
 import * as paymentService from "../../../../service/paymentService";
+import * as refundService from "../../../../service/refundService";
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -37,6 +39,9 @@ jest.mock("../../../../utils/valhalla", () => ({
 }));
 jest.mock("../../../../service/taskQueueService");
 jest.mock("../../../../service/dispatch/sos");
+jest.mock("../../../../service/refundService", () => ({
+  requestRefund: jest.fn(async () => ({id: "refund1"})),
+}));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -510,6 +515,206 @@ describe("dispatchService markUnfixable", () => {
       }),
     );
   });
+  it("refunds confirmed cash when the job is unfixable", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "6",
+      ticketType: "WALK_IN",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      {
+        id: "p1",
+        ticketId: "t1",
+        method: "CASH",
+        status: "CONFIRMED",
+        amount: 100000,
+        refundAmount: null,
+      },
+    ] as never);
+    jest.mocked(paymentRepository.findByTicketId).mockResolvedValue([
+      {
+        id: "p1",
+        ticketId: "t1",
+        method: "CASH",
+        status: "CONFIRMED",
+        amount: 100000,
+        refundAmount: null,
+      },
+    ] as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toEqual({unfixable: true});
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "p1",
+        amount: 100000,
+        automatic: true,
+        requestedBy: "op1",
+      }),
+    );
+  });
+
+  it("refunds a held SePay payment when the job is unfixable", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "6",
+      ticketType: "WALK_IN",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      {
+        id: "p1",
+        ticketId: "t1",
+        method: "SEPAY",
+        status: "HELD",
+        amount: 500000,
+        refundAmount: null,
+      },
+    ] as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toEqual({unfixable: true});
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "p1",
+        amount: 500000,
+        automatic: true,
+        requestedBy: "op1",
+      }),
+    );
+  });
+
+  it("refunds only the unrefunded remainder", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "6",
+      ticketType: "MECHANIC",
+      assignedShopId: "shop9",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      {
+        id: "p1",
+        ticketId: "t1",
+        method: "SEPAY",
+        status: "PARTIAL",
+        amount: 500000,
+        refundAmount: 200000,
+      },
+    ] as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toEqual({unfixable: true});
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({paymentId: "p1", amount: 300000}),
+    );
+  });
+
+  it("keeps the SOS call-out and refunds the excess", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "SOS",
+      assignedShopId: "mobile1",
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 41000,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "mobile1",
+      kind: "MOBILE_SHOP",
+      operatorUid: "op1",
+    } as never);
+    jest.mocked(paymentRepository.findByTicket).mockResolvedValue([
+      {
+        id: "p1",
+        ticketId: "t1",
+        method: "SEPAY",
+        status: "HELD",
+        amount: 200000,
+        refundAmount: null,
+      },
+    ] as never);
+    await expect(markUnfixable({
+      userId: "op1",
+      ticketId: "t1",
+      reason: "Frame bent",
+      photoUrls: ["dispatch/t1/frame.jpg"],
+    })).resolves.toMatchObject({unfixable: true});
+    expect(refundService.requestRefund).toHaveBeenCalledWith(
+      expect.objectContaining({paymentId: "p1", amount: 150000}),
+    );
+  });
+});
+
+describe("dispatchService release", () => {
+  it("blocks release while a dispute is under review", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "2",
+      ticketType: "WALK_IN",
+      assignedShopId: "shop9",
+      disputeHold: true,
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop9",
+      kind: "SHOP",
+      operatorUid: "op1",
+    } as never);
+    await expect(releaseTicket({
+      userId: "op1",
+      ticketId: "t1",
+    })).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.updateStatus).not.toHaveBeenCalled();
+  });
 });
 
 describe("dispatchService quote approval", () => {
@@ -925,11 +1130,11 @@ it("blocks status changes while a dispute hold is active", async () => {
   ).rejects.toMatchObject({statusCode: 403});
 });
 
-it("lets the assigned mobile shop mark an SOS fix complete", async () => {
+it("lets the assigned mobile shop mark an SOS fix ready", async () => {
   jest.mocked(dispatchRepository.findById).mockResolvedValue({
     id: "t1",
     userId: "rider1",
-    status: "3",
+    status: "6",
     ticketType: "SOS",
     assignedShopId: "mobile1",
     finalAmount: 120000,
@@ -957,7 +1162,7 @@ it("requires the fix fee before an SOS fix is complete", async () => {
   jest.mocked(dispatchRepository.findById).mockResolvedValue({
     id: "t1",
     userId: "rider1",
-    status: "3",
+    status: "6",
     ticketType: "SOS",
     assignedShopId: "mobile1",
   } as never);

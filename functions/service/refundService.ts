@@ -48,7 +48,8 @@ const requestRefund = async ({
   if (!payment) throw new NotFoundError("Payment not found");
   const caller = await userRepository.findById(requestedBy);
   if (!caller) throw new NotFoundError("User not found");
-  if (caller.role !== ROLE_ADMIN && payment.riderUid !== requestedBy) {
+  if (!automatic && caller.role !== ROLE_ADMIN &&
+    payment.riderUid !== requestedBy) {
     throw new ForbiddenError("Only the rider requests a refund");
   }
   if (!REFUNDABLE_STATUSES.includes(payment.status)) {

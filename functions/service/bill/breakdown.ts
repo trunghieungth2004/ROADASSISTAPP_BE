@@ -81,7 +81,6 @@ type TowFareSnapshot = {
   distanceKm: number | null;
   billableKm: number | null;
   historyAmount: number;
-  historyCount: number;
 };
 
 const towFareSnapshot = (ticket: DispatchTicket): TowFareSnapshot => {
@@ -134,7 +133,6 @@ const towFareSnapshot = (ticket: DispatchTicket): TowFareSnapshot => {
     distanceKm,
     billableKm,
     historyAmount,
-    historyCount: history.length,
   };
 };
 
@@ -263,6 +261,42 @@ const adjustmentLine = (
   };
 };
 
+const priorTowLines = (ticket: DispatchTicket): BreakdownLine[] => {
+  const history = Array.isArray(ticket.towFeeHistory) ?
+    ticket.towFeeHistory :
+    [];
+  const lines: BreakdownLine[] = [];
+  for (const entry of history) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const amount = typeof entry.amount === "number" ? entry.amount : 0;
+    if (amount <= 0) continue;
+    const deadheadKm = typeof entry.deadheadKm === "number" ?
+      entry.deadheadKm :
+      null;
+    const loadedKm = typeof entry.loadedKm === "number" ?
+      entry.loadedKm :
+      null;
+    const totalKm = deadheadKm === null && loadedKm === null ?
+      null :
+      (deadheadKm ?? 0) + (loadedKm ?? 0);
+    const shopName = typeof entry.shopName === "string" &&
+      entry.shopName !== "" ?
+      entry.shopName :
+      null;
+    const detail = [
+      totalKm !== null ? `${totalKm.toFixed(2)} km` : null,
+      shopName,
+    ].filter((part): part is string => part !== null).join(" · ");
+    lines.push({
+      code: "PRIOR_TOW",
+      label: "Prior tower travel",
+      amount,
+      detail: detail !== "" ? detail : null,
+    });
+  }
+  return lines;
+};
+
 const towBreakdown = (
   ticket: DispatchTicket,
   amount: number,
@@ -274,13 +308,7 @@ const towBreakdown = (
       normalLines(ticket, amount, snapshot) :
       [];
   if (snapshot.historyAmount > 0) {
-    breakdown.push({
-      code: "PRIOR_TOW",
-      label: "Prior tower travel",
-      amount: snapshot.historyAmount,
-      detail: snapshot.historyCount > 1 ?
-        `${snapshot.historyCount} prior towers` : null,
-    });
+    breakdown.push(...priorTowLines(ticket));
   }
   if (breakdown.length === 0) {
     breakdown.push({

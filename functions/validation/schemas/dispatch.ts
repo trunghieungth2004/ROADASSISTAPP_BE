@@ -144,6 +144,10 @@ export const dispatchSchemas = {
     ticketId: strReq(),
     reason: Joi.string().trim().max(280).allow("", null).optional(),
   }),
+  changeMobileShop: Joi.object({
+    ticketId: strReq(),
+    reason: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
   setMobileShopFix: Joi.object({
     ticketId: strReq(),
     fixAmount: Joi.number().integer().min(0).max(999999999).required(),

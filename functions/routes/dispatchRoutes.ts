@@ -220,6 +220,13 @@ export default (
     dispatchController.declineMobileFix,
   );
   app.post(
+    "/dispatch/mobile-shop/change",
+    writeLimited,
+    requireAuth,
+    validate({body: schemas.changeMobileShop}),
+    dispatchController.changeMobileShop,
+  );
+  app.post(
     "/dispatch/mobile-shop/tow-offer",
     writeLimited,
     requireAuth,

@@ -22,6 +22,8 @@ export {
   setMobileShopFix,
   approveMobileFix,
   declineMobileFix,
+  changeMobileShop,
+  expireMobileFixQuote,
   offerMobileShopTow,
   respondMobileShopTow,
 } from "./mobile";

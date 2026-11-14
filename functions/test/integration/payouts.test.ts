@@ -23,7 +23,7 @@ const seedPayment = async (
     payeeId: PAYEE,
     amount: 100000,
     currency: "VND",
-    method: "CASH",
+    method: "SEPAY",
     status: "CONFIRMED",
     qrRef: null,
     ipnRef: null,
@@ -132,6 +132,37 @@ describe("payout settlement", () => {
       net: 90000,
       itemCount: 1,
     });
+  });
+
+  it("keeps cash out of payouts and rejects explicit cash ids", async () => {
+    const cash = await seedPayment({method: "CASH"});
+    const online = await seedPayment({ticketId: "t2"});
+    const pending = await request(app)
+      .post("/admin/payouts/pending")
+      .set("Authorization", bearer(ADMIN))
+      .send({});
+    expect(pending.body.data).toHaveLength(1);
+    expect(pending.body.data[0]).toMatchObject({
+      payeeId: PAYEE,
+      itemCount: 1,
+      gross: 100000,
+      net: 90000,
+    });
+    const reject = await request(app)
+      .post("/admin/payouts/batch")
+      .set("Authorization", bearer(ADMIN))
+      .send({payeeId: PAYEE, paymentIds: [cash]});
+    expect(reject.status).toBe(400);
+    expect(reject.body.message).toContain("Cash payments are not paid out");
+    expect((await paymentDoc(cash)).payoutBatchId).toBeNull();
+    const settle = await request(app)
+      .post("/admin/payouts/batch")
+      .set("Authorization", bearer(ADMIN))
+      .send({payeeId: PAYEE});
+    expect(settle.status).toBe(200);
+    expect(settle.body.data.settled).toBe(1);
+    expect((await paymentDoc(cash)).payoutBatchId).toBeNull();
+    expect((await paymentDoc(online)).payoutBatchId).toBeTruthy();
   });
 
   it("skips refunded and already-stamped payments", async () => {

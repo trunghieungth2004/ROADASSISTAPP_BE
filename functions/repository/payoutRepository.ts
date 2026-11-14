@@ -32,6 +32,14 @@ interface Payout {
   payoutRef: string;
   payoutMethod: string;
   note: string | null;
+  proofUrl?: string | null;
+  payeeAccount?: {
+    bankCode: string;
+    bankName: string;
+    accountNumber: string;
+    holderName: string;
+    updatedAt: string;
+  } | null;
   batchedUid: string;
   batchedAt: string;
   createdAt: string;
@@ -54,6 +62,7 @@ interface PayoutRequest {
   decidedBy: string | null;
   decisionNote: string | null;
   payoutBatchId: string | null;
+  proofUrl?: string | null;
   [key: string]: unknown;
 }
 
@@ -317,6 +326,7 @@ const decideRequest = async (
     decidedBy: string;
     decisionNote?: string | null;
     payoutBatchId?: string | null;
+    proofUrl?: string | null;
   },
 ): Promise<void> => {
   await db.collection(PAYOUT_REQUEST_COLLECTION).doc(id).update({
@@ -325,6 +335,7 @@ const decideRequest = async (
     decidedAt: new Date().toISOString(),
     decisionNote: fields.decisionNote ?? null,
     payoutBatchId: fields.payoutBatchId ?? null,
+    proofUrl: fields.proofUrl ?? null,
   });
 };
 

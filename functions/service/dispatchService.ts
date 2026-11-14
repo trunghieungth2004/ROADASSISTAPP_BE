@@ -31,6 +31,7 @@ export {
   setMobileShopFix,
   approveMobileFix,
   declineMobileFix,
+  changeMobileShop,
   offerMobileShopTow,
   respondMobileShopTow,
   respondReturnTow,

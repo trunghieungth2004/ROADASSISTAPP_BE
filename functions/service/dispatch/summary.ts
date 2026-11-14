@@ -202,6 +202,12 @@ const mobileTowAvailabilityFor = async (
       ...(typeof ticket.vehicleType === "string" ?
         {vehicleType: ticket.vehicleType} :
         {}),
+      excludeOperatorUids: Array.isArray(ticket.excludedOperatorUids) ?
+        ticket.excludedOperatorUids as string[] :
+        [],
+      excludeShopIds: Array.isArray(ticket.excludedShopIds) ?
+        ticket.excludedShopIds as string[] :
+        [],
     });
   } catch {
     candidates = [];

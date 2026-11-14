@@ -72,13 +72,14 @@ const requests = async (req: Request, res: Response) => {
 const decideRequest = async (req: Request, res: Response) => {
   try {
     const {uid} = req as AuthedRequest;
-    const {requestId, approve, note, payoutRef} = req.body;
+    const {requestId, approve, note, payoutRef, proofUrl} = req.body;
     const result = await payoutService.decideRequest({
       adminUid: uid,
       requestId,
       approve,
       note,
       payoutRef,
+      proofUrl,
     });
     sendSuccess(res, result);
   } catch (error) {

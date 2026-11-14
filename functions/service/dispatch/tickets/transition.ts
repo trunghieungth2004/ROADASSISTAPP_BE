@@ -1,43 +1,33 @@
 import {spawnShopTicket} from "./tow";
 import {assertTransition} from "./assertTransition";
 export {assertTransition} from "./assertTransition";
-import type {PickupHistoryEntry} from "./types";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
-import * as paymentRepository from "../../../repository/paymentRepository";
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as providerLocationRepository from
   "../../../repository/providerLocationRepository";
-import {vehicleClassOf} from "../../providerService";
 import {enqueueDispatchPush} from "../../taskQueueService";
 import {chatService} from "../../chatService";
 import {stampWarranty} from "./warranty";
 import {haversineMeters} from "../../../utils/geo";
-import {autoFile, bumpCancelCounters} from "../../disputeService";
 import {startWaiting, stopWaiting} from "../waiting";
 import {
-  NS, TOWER_CANCEL_SOURCE, VALID_STATUSES,
-  TOWER_SEARCH_ACTIVE, ARRIVAL_RADIUS_M,
+  NS, TOWER_CANCEL_SOURCE, VALID_STATUSES, ARRIVAL_RADIUS_M,
 } from "../constants";
-import {
-  ACCUSED_KIND,
-  DISPUTE_REASON,
-  DISPUTE_TYPE,
-} from "../../../constants/disputes";
-import {PAYMENT_STATUS} from "../../../constants/payments";
-import {
-  freezeTowLeg, loadedTrackDistance, trackedDeadheadKm,
-} from "../helpers";
+import {loadedTrackDistance} from "../helpers";
 import {schedulePaymentReminder} from "../../paymentReminderService";
 import {assertNearTowDestination} from "./deliveryGuard";
 import {
-  actualDeadheadKm, DEFAULT_TOW_RATES, isNightFare,
-  partialTowFare, quoteTowFare, towRatesForProvider,
+  DEFAULT_TOW_RATES, quoteTowFare, towRatesForProvider,
   type TowFareQuote,
 } from "../fare";
-import {findTowOperators} from "../candidates";
 import * as paymentService from "../../paymentService";
-import * as refundService from "../../refundService";
+import {rematchTow} from "./towRematch";
+import {
+  createCancellationCharge,
+  settleCancellation,
+} from "./cancellation";
+import {providerBlocked} from "../providerEligibility";
 import * as platformConfigService from "../../platformConfigService";
 import {
   PROVIDER_KIND, PROVIDER_STATUS, PROVIDER_FRESH_MS, STATUS_DISPATCH,
@@ -47,7 +37,6 @@ import {
   ForbiddenError, NotFoundError,
   ValidationError,
 } from "../../../utils/errors";
-import {db, FieldValue} from "../../../config/firebase";
 import * as cacheManager from "../../../utils/cacheManager";
 import {logError} from "../../../utils/logger";
 export const updateDispatchStatus = async ({
@@ -197,243 +186,28 @@ export const updateDispatchStatus = async ({
   const towerCancel = (isOperator || isAssignee) && !isRider && engagedTow &&
     status === STATUS_DISPATCH.CANCELLED;
   if (towerCancel) {
-    const towerId = ticket.assignedShopId as string;
-    const destId = typeof ticket.destinationShopId === "string" &&
-      ticket.destinationShopId !== "" ?
-      ticket.destinationShopId as string :
-      null;
-    const priorBefore = ticket.towFare as TowFareQuote | null | undefined;
-    const tracked = trackedDeadheadKm(ticket, towerId) ?? 0;
-    await freezeTowLeg(id, {
-      towLegs: ticket.towLegs,
-      towDistanceMeters: ticket.towDistanceMeters,
-      assignedShopId: ticket.assignedShopId,
-      lat: ticket.lat,
-      lng: ticket.lng,
-    }, destId, tracked);
-    const fresh = await dispatchRepository.findById(id);
-    const partialKm = actualDeadheadKm(fresh?.towLegs);
-    const partial = partialTowFare({
-      ...(typeof ticket.vehicleType === "string" ?
-        {vehicleClass: vehicleClassOf(ticket.vehicleType)} :
-        {}),
-      night: isNightFare(new Date(), towRates.nightWindow),
-      deadheadKm: partialKm,
-      ...(typeof priorBefore?.perKmFee === "number" ?
-        {perKmFee: priorBefore.perKmFee} :
-        {}),
-      rates: towFareRates,
+    return rematchTow({
+      ticket,
+      userId,
+      reasonCode: typeof reasonCode === "string" ? reasonCode : "",
+      lat,
+      lng,
+      pickupReason: TOWER_CANCEL_SOURCE.STATUS,
     });
-    const prior = fresh?.towFare as TowFareQuote | null | undefined;
-    const cappedKm = Math.round(partialKm * 10) / 10;
-    await dispatchRepository.update(id, {
-      towFare: {
-        estimate: typeof prior?.estimate === "number" ? prior.estimate : 0,
-        ceiling: typeof prior?.ceiling === "number" ? prior.ceiling : 0,
-        final: partial,
-        partial: true,
-        deadheadKm: partialKm,
-        loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
-        night: isNightFare(new Date(), towRates.nightWindow),
-        vehicleClass: typeof prior?.vehicleClass === "string" ?
-          prior.vehicleClass :
-          vehicleClassOf(ticket.vehicleType),
-      },
-      towActual: {
-        quotedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : null,
-        actualKm: cappedKm,
-        cappedKm,
-      },
-    });
-    const nextLat = typeof lat === "number" ? lat : ticket.lat;
-    const nextLng = typeof lng === "number" ? lng : ticket.lng;
-    const history = Array.isArray(ticket.pickupHistory) ?
-      [...(ticket.pickupHistory as PickupHistoryEntry[])] :
-      [];
-    history.push({
-      lat: nextLat,
-      lng: nextLng,
-      at: new Date().toISOString(),
-      reason: TOWER_CANCEL_SOURCE.STATUS,
-    });
-    const chatVersion = typeof ticket.chatVersion === "number" ?
-      ticket.chatVersion :
-      0;
-    const archived = await chatService.archiveTicketRoom({
-      ticketId: id,
-      version: chatVersion,
-    }).catch(() => null);
-    let shopName: string | null = null;
-    try {
-      const tower = await providerRepository.findById(towerId);
-      shopName = tower && typeof tower.name === "string" ? tower.name : null;
-    } catch {
-      shopName = null;
-    }
-    await dispatchRepository.update(id, {
-      lat: nextLat,
-      lng: nextLng,
-      pickupHistory: history,
-      assignedShopId: null,
-      assignedUid: null,
-      assignedKind: null,
-      chatVersion: chatVersion + 1,
-      ...(archived !== null ?
-        {
-          chatHistory: FieldValue.arrayUnion({
-            version: chatVersion,
-            roomId: archived.roomId,
-            shopId: towerId,
-            shopName,
-            at: archived.at,
-          }),
-        } :
-        {}),
-      formerAssignedShopIds: FieldValue.arrayUnion(towerId),
-      towCancelHistory: FieldValue.arrayUnion({
-        shopId: towerId,
-        by: userId,
-        at: new Date().toISOString(),
-        ...(typeof reasonCode === "string" && reasonCode !== "" ?
-          {reasonCode} :
-          {}),
-      }),
-      towerSearch: TOWER_SEARCH_ACTIVE,
-      etaPickupAt: null,
-      etaDropoffAt: null,
-      etaNotifiedAt: null,
-      cancelledBy: userId,
-      candidates: [],
-      candidateTs: null,
-    });
-    await dispatchRepository.updateStatus(id, STATUS_DISPATCH.PENDING, userId);
-    try {
-      const tower = await providerRepository.findById(towerId);
-      if (tower && tower.kind === PROVIDER_KIND.TOW &&
-        tower.accepting === false) {
-        await providerRepository.update(towerId, {accepting: true});
-        cacheManager.del("shop");
-        cacheManager.del("provider");
-      }
-    } catch {
-      return {updated: 1, requeued: true};
-    }
-    try {
-      const operators = await findTowOperators({
-        lat: nextLat,
-        lng: nextLng,
-        vehicleType: ticket.vehicleType as string | undefined,
-      });
-      if (operators.length > 0) {
-        await dispatchRepository.update(id, {
-          candidates: operators,
-          candidateTs: new Date().toISOString(),
-        });
-      }
-    } catch {
-      return {updated: 1, requeued: true};
-    }
-    cacheManager.del(NS);
-    await enqueueDispatchPush(id, "-cancelled-rider", {
-      audience: "rider",
-      urgent: "true",
-      title: "Tow cancelled by tower",
-      body: partialKm > 0 ?
-        "The tower cancelled — searching for a new tower " +
-        `(${cappedKm} km on record)` :
-        "The tower cancelled — searching for a new tower",
-    });
-    await enqueueDispatchPush(id, "-requeue-towers", {
-      audience: "tower-candidates",
-      title: "Tow request available",
-      body: "A tow request needs a tower — tap to view",
-    });
-    if (reasonCode !== DISPUTE_REASON.TOWER_CANCEL_BREAKDOWN) {
-      try {
-        await autoFile({
-          ticketId: id,
-          reporterUid: ticket.userId,
-          accusedKind: ACCUSED_KIND.TOWER,
-          accusedId: towerId,
-          reasonCode: typeof reasonCode === "string" && reasonCode !== "" ?
-            reasonCode :
-            DISPUTE_REASON.TOWER_CANCEL_OTHER,
-          type: DISPUTE_TYPE.TOWER_CANCEL_MID,
-        });
-      } catch {
-        return {updated: 1, requeued: true};
-      }
-      try {
-        await bumpCancelCounters({providerId: towerId, userId});
-        try {
-          await db.collection("users").doc(ticket.userId).update({
-            disputes: FieldValue.increment(0),
-          });
-        } catch {
-          return {updated: 1, requeued: true};
-        }
-      } catch {
-        return {updated: 1, requeued: true};
-      }
-    }
-    return {updated: 1, requeued: true};
   }
-  if ((isRider ||
-    (isOperator && ticket.ticketType === "SOS" &&
-      ticket.status === STATUS_DISPATCH.MATCHED)) &&
-    status === STATUS_DISPATCH.CANCELLED) {
-    if (ticket.ticketType === "TOW" &&
-      typeof ticket.assignedShopId === "string" &&
-      ticket.assignedShopId !== "") {
-      const prior = ticket.towFare as TowFareQuote | null | undefined;
-      const deadheadKm = typeof prior?.deadheadKm === "number" ?
-        prior.deadheadKm :
-        0;
-      const partial = partialTowFare({
-        vehicleClass: vehicleClassOf(ticket.vehicleType),
-        night: isNightFare(new Date(), towRates.nightWindow),
-        deadheadKm,
-        rates: towFareRates,
-      });
-      await dispatchRepository.update(id, {
-        towFare: {
-          estimate: typeof prior?.estimate === "number" ? prior.estimate : 0,
-          ceiling: typeof prior?.ceiling === "number" ? prior.ceiling : 0,
-          final: partial,
-          partial: true,
-          deadheadKm,
-          loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
-          night: isNightFare(new Date(), towRates.nightWindow),
-          vehicleClass: typeof prior?.vehicleClass === "string" ?
-            prior.vehicleClass :
-            vehicleClassOf(ticket.vehicleType),
-        },
-      });
-    }
-    try {
-      await paymentService.cancelPendingPayments(id);
-    } catch {
-      void 0;
-    }
-    try {
-      const payments = await paymentRepository.findByTicketId(id);
-      for (const payment of payments) {
-        if (payment.status === PAYMENT_STATUS.HELD ||
-          payment.status === PAYMENT_STATUS.CONFIRMED ||
-          payment.status === PAYMENT_STATUS.PARTIAL) {
-          await refundService.requestRefund({
-            paymentId: payment.id,
-            requestedBy: userId,
-            automatic: true,
-            reason: "Ticket closed",
-          });
-        }
-      }
-    } catch {
-      void 0;
-    }
+  if (status === STATUS_DISPATCH.CANCELLED) {
+    await settleCancellation({
+      ticket,
+      userId,
+      isRider,
+      towRates,
+      towFareRates,
+    });
   }
   await dispatchRepository.updateStatus(id, status, userId);
+  if (status === STATUS_DISPATCH.CANCELLED) {
+    await createCancellationCharge(id);
+  }
   await schedulePaymentReminder(id, {...ticket, status} as never);
   if (status === STATUS_DISPATCH.RESOLVED) {
     await stampWarranty(id, ticket);
@@ -593,63 +367,6 @@ export const updateDispatchStatus = async ({
     }
   }
   if (status === STATUS_DISPATCH.CANCELLED) {
-    const wasEngaged = ticket.ticketType === "TOW" &&
-      typeof ticket.assignedShopId === "string" &&
-      ticket.assignedShopId !== "";
-    let partialKm = 0;
-    if (wasEngaged) {
-      const destId = typeof ticket.destinationShopId === "string" &&
-        ticket.destinationShopId !== "" ?
-        ticket.destinationShopId as string :
-        null;
-      const priorBefore = ticket.towFare as TowFareQuote | null | undefined;
-      const towerId = ticket.assignedShopId as string;
-      const tracked = trackedDeadheadKm(ticket, towerId) ?? 0;
-      await freezeTowLeg(id, {
-        towLegs: ticket.towLegs,
-        towDistanceMeters: ticket.towDistanceMeters,
-        assignedShopId: ticket.assignedShopId,
-        lat: ticket.lat,
-        lng: ticket.lng,
-      }, destId, tracked);
-      const fresh = await dispatchRepository.findById(id);
-      partialKm = actualDeadheadKm(fresh?.towLegs);
-      const partial = partialTowFare({
-        ...(typeof ticket.vehicleType === "string" ?
-          {vehicleClass: vehicleClassOf(ticket.vehicleType)} :
-          {}),
-        night: isNightFare(new Date(), towRates.nightWindow),
-        deadheadKm: partialKm,
-        ...(typeof priorBefore?.perKmFee === "number" ?
-          {perKmFee: priorBefore.perKmFee} :
-          {}),
-        rates: towFareRates,
-      });
-      const prior = fresh?.towFare as TowFareQuote | null | undefined;
-      await dispatchRepository.update(id, {
-        towFare: {
-          estimate: typeof prior?.estimate === "number" ? prior.estimate : 0,
-          ceiling: typeof prior?.ceiling === "number" ? prior.ceiling : 0,
-          final: partial,
-          partial: true,
-          deadheadKm: partialKm,
-          loadedKm: typeof prior?.loadedKm === "number" ? prior.loadedKm : 0,
-          night: isNightFare(new Date(), towRates.nightWindow),
-          vehicleClass: typeof prior?.vehicleClass === "string" ?
-            prior.vehicleClass :
-            vehicleClassOf(ticket.vehicleType),
-        },
-      });
-    }
-    const preserveTowerCancel = ticket.ticketType === "TOW" &&
-      (typeof ticket.assignedShopId !== "string" ||
-        ticket.assignedShopId === "") &&
-      typeof ticket.cancelledBy === "string" &&
-      ticket.cancelledBy !== "" &&
-      ticket.cancelledBy !== userId;
-    if (!preserveTowerCancel) {
-      await dispatchRepository.update(id, {cancelledBy: userId});
-    }
     if (ticket.ticketType === "TOW" &&
       ticket.towKind === "RETURN" &&
       ticket.status !== STATUS_DISPATCH.ARRIVED) {
@@ -723,14 +440,15 @@ export const updateDispatchStatus = async ({
   }
   if (
     (status === STATUS_DISPATCH.RESOLVED ||
-      status === STATUS_DISPATCH.CANCELLED) &&
+      (status === STATUS_DISPATCH.CANCELLED && isRider)) &&
     typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== ""
   ) {
     const shop = await providerRepository.findById(
       ticket.assignedShopId as string,
     );
-    if (shop && shop.kind === PROVIDER_KIND.TOW && shop.accepting === false) {
+    if (shop && shop.kind === PROVIDER_KIND.TOW &&
+      shop.accepting === false && !providerBlocked(shop)) {
       await providerRepository.update(shop.id, {accepting: true});
       cacheManager.del("shop");
       cacheManager.del("provider");

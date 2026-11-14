@@ -67,6 +67,8 @@ export const sweepDispatchSla = async (): Promise<{
         lng: ticket.lng,
         radiusMeters: radius,
         vehicleType: ticket.vehicleType as string | undefined,
+        excludeOperatorUids: exclude,
+        excludeShopIds: strArray(ticket.excludedShopIds),
       }) :
       await findCandidates({
         lat: ticket.lat,
@@ -74,6 +76,7 @@ export const sweepDispatchSla = async (): Promise<{
         radiusMeters: radius,
         vehicleType: ticket.vehicleType as string | undefined,
         excludeOperatorUids: exclude,
+        excludeShopIds: strArray(ticket.excludedShopIds),
         ...(typeof ticket.symptom === "string" ?
           {serviceCategory: ticket.symptom} :
           {}),
