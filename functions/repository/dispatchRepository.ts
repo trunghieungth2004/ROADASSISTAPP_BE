@@ -148,6 +148,7 @@ interface DispatchTicket {
     reasonCode?: string | null;
   }>;
   towFeeCap?: number | null;
+  towFareRebase?: boolean | null;
   chatVersion?: number;
   chatHistory?: Array<{
     version: number;

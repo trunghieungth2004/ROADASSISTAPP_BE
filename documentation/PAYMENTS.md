@@ -36,7 +36,7 @@ All amounts are integer VND. `round1k(x) = round(x / 1000) × 1000`.
 | Source | Formula |
 |---|---|
 | TOW fare | `round1k(max(minimumTowFee, night × (base + perKm × max(0, loadedKm − includedKm))))`; `base`/`perKm` come from the provider's `towBaseFee`/`towPerKmFee` when set, otherwise the platform card. Resolve and cancel recomputes reuse the assigned tower's card, not the platform defaults. The bill shows loaded distance for a completed tow and deadhead distance for a partial/cancelled tow; `totalDistanceKm` is audit-only. Sparse GPS tracks fall back to the quoted loaded distance for billing |
-| TOW ceiling | `round1k(estimate × ceilingMultiplier)`; bound at accept |
+| TOW ceiling | `round1k(estimate × ceilingMultiplier)`; bound at accept and rebased to the new route on a rider retarget |
 | TOW final | `min(estimate, ceiling)` |
 | TOW cancel partial | `deadheadPayable ? round1k(night × perKm × actualTraveledDeadheadKm) : 0`; `traveledKm` is summed from the current assignment's `jobTrack` points (`shopId` + `assignedAt`), stopping at pickup; fewer than two points bills 0 |
 | TOW breakdown partial | `deadheadPayable ? round1k(night × perKm × (actualTraveledDeadheadKm + loadedTraveledKm)) : 0`; no base; loaded km is summed from `jobTrack` after `loadedAt` |
@@ -96,7 +96,8 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Pending / matched / arrived, not resolved | `1`–`3` | 0 now | A TOW charge is only creatable after `4` (resolved). The live estimate is display-only. |
 | Tower accepted, job resolved | `4` | `final + waitingFee` | `final = min(recomputed estimate, ceiling)`. Loaded km is GPS-measured, capped at quoted km × 1.15; without GPS it falls back to quoted km. |
 | Tower tries to resolve away from the drop-off | `3` | no change | The assigned tower's fresh fix must be within 200 m of the drop-off; a farther fix returns `400 "Too far from the drop-off point to mark delivered"` before any status or charge change. A stale or missing fix skips the guard. |
-| GPS haul overruns the quote | `4` | recomputed on capped km | Quoted 10 km, actual 13 km → bill 11.5 km. The ceiling still binds. |
+| GPS haul overruns the quote | `4` | recomputed on capped km | Quoted 10 km, actual 13 km → bill 11.5 km. The current leg's ceiling still binds. |
+| Rider changes the drop-off, tower engaged | `2`/`3` | re-quoted | The new route is priced and the leg ceiling is rebased to the new quote (estimate × `ceilingMultiplier`); a farther drop-off is no longer clamped by the original ceiling. Pending retargets rebase when the next tower accepts. |
 | Bike, day, 8 loaded km | `4` | 200,000 | 150,000 + 10,000 × (8 − 3). Ceiling 220,000; final 200,000. |
 | Car, night, 12 loaded km | `4` | 825,000 | 1.5 × (500,000 + 25,000 × (12 − 10)). Ceiling 908,000; final 825,000. |
 | Waiting 15 min at 15,000/15 min, 10 min grace | `4` | fare + 5,000 | `ceil(5 min / 1 min) × 1,000`. Waiting only accrues while the tower is within 200 m of the rider pin. |
@@ -105,7 +106,7 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Rider cancels after a normal tower cancel and before a new tower accepts | `5` | 0 | The previous tower's partial stays on `towFare` as an audit record, but the rider is not charged. |
 | Rider cancels after a genuine breakdown and before a new tower accepts | `5` | `sum(towFeeHistory.amount)` | The outgoing tower's tracked partial remains payable; the replacement fare was never stamped. |
 | Tower cancels / re-match (not breakdown) | back to `1` | 0 now | The partial is recorded on the ticket for the audit trail only; no charge is created while the ticket is pending. A new tower re-stamps the quote. |
-| Tower breaks down (genuine) | back to `1` | `round1k(night × perKm × (deadhead + loaded))` | No base; loaded is 0 before `loadedAt`. The outgoing partial is appended to `towFeeHistory` and stays payable; `towFeeCap` keeps the original ceiling and the replacement tower's estimate is capped at `towFeeCap − history`. No `TOWER_CANCEL_MID` dispute or cancel counters. |
+| Tower breaks down (genuine) | back to `1` | `round1k(night × perKm × (deadhead + loaded))` | No base; loaded is 0 before `loadedAt`. The outgoing partial is appended to `towFeeHistory` and stays payable; `towFeeCap` keeps the original ceiling and the replacement tower's estimate is capped at `towFeeCap − history`. A rider retarget after a breakdown keeps the partials payable and rebases the remaining leg, so `towFeeCap` becomes `sum(towFeeHistory.amount) + the new leg ceiling`. No `TOWER_CANCEL_MID` dispute or cancel counters. |
 | Destination shop declines | `3`/`7` | no change | The tower stays engaged; waiting may start. The partial lands only if the tow is later re-matched or cancelled. |
 | TOW resolved at a drop-off shop | `4` + child walk-in | two tickets, two bills | The drop-off spawns a `WALK_IN`; the tower bill and the repair bill are separate. |
 | Return tow after a walk-in is ready | new TOW | separate bill | Accepting the return-tow offer creates a linked TOW with its own bill. |
@@ -173,7 +174,7 @@ Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch an
 | Moment | Write |
 |---|---|
 | Accept | `{estimate, ceiling, deadheadKm, loadedKm, night, vehicleClass, baseFee, perKmFee, final: null}` |
-| Retarget (matched/arrived) | recompute, estimate capped at the stored ceiling (ceiling never moves) |
+| Retarget (pending or matched/arrived) | re-quote the new route; the estimate is not clamped by the old ceiling and the leg ceiling is rebased to the new quote. A pending retarget is marked and rebased when the next tower accepts; prior genuine-breakdown partials stay payable. |
 | Resolve | `final` = min(estimate, ceiling) |
 | Engaged cancel (tower re-match or rider cancel) | `final` = traveled deadhead partial, `partial: true` |
 | Board preview | `POST /dispatch/fare/estimate` (viewer position in, quote out, never stored) |
@@ -291,8 +292,10 @@ The outgoing tower's partial is appended to `towFeeHistory` (payable, not
 audit-only), `towFeeCap` preserves the original ceiling, and the replacement
 tower starts from the breakdown point. Its quote is capped at
 `towFeeCap − sum(towFeeHistory.amount)`, so the old partial plus the new fare
-never exceeds the original ceiling. A breakdown is not a tower cancellation:
-no `TOWER_CANCEL_MID` dispute, no cancel counters.
+never exceeds the original ceiling. A rider retarget after a breakdown leaves
+those partials payable and rebases the replacement leg: `towFeeCap` becomes
+`sum(towFeeHistory.amount) + the new leg ceiling`. A breakdown is not a tower
+cancellation: no `TOWER_CANCEL_MID` dispute, no cancel counters.
 
 ## Legacy path (deprecated, preserved)
 

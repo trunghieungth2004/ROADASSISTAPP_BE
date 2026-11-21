@@ -403,6 +403,58 @@ describe("dispatchService.updateDispatchStatus", () => {
     create.mockRestore();
   });
 
+  it("pays the rebased ceiling after a rider retarget", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      providerId: "tow1",
+      lat: 10.71,
+      lng: 106.61,
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      jobTrack: [
+        {lat: 10.71, lng: 106.61},
+        {lat: 10.98, lng: 106.8},
+      ],
+      towFare: {
+        estimate: 420000,
+        ceiling: 462000,
+        deadheadKm: 1,
+        loadedKm: 30,
+        night: false,
+        vehicleClass: "SOLO_BIKE",
+        baseFee: 150000,
+        perKmFee: 10000,
+        includedKm: 3,
+        billableKm: 27,
+      },
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        towFare: expect.objectContaining({
+          ceiling: 462000,
+          final: 420000,
+        }),
+      }),
+    );
+  });
+
   it("falls back to the routed distance for a sparse GPS track", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",

@@ -228,7 +228,9 @@ export const acceptAsShop = async (
   }
   if (ticket.ticketType === "TOW") {
     await stampTowEta(ticketId, ticket, shopId);
-    await stampTowFare(ticketId, ticket, shopId);
+    await stampTowFare(ticketId, ticket, shopId, {
+      rebase: ticket.towFareRebase === true,
+    });
   }
   const fresh = await dispatchRepository.findById(ticketId);
   let acceptNotice: {title: string; body: string} | null = null;

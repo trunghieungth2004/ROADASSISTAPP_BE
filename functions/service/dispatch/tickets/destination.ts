@@ -65,6 +65,19 @@ export const updateDispatchDestination = async ({userId,
   const prevShopId = typeof ticket.destinationShopId === "string" ?
     ticket.destinationShopId :
     "";
+  const prevPoint = ticket.destinationPoint &&
+    typeof ticket.destinationPoint === "object" ?
+    ticket.destinationPoint as {lat?: unknown; lng?: unknown} :
+    null;
+  const nextShopId = destinationShopId ?? "";
+  const destinationChanged = nextShopId !== "" ?
+    nextShopId !== prevShopId :
+    !prevPoint ||
+    prevPoint.lat !== destinationPoint?.lat ||
+    prevPoint.lng !== destinationPoint?.lng;
+  const pendingTowRebase = destinationChanged &&
+    ticket.ticketType === "TOW" &&
+    ticket.status === STATUS_DISPATCH.PENDING;
   const destinationSnapshot = await resolveDestination(
     destinationShopId,
     destinationPoint,
@@ -82,6 +95,7 @@ export const updateDispatchDestination = async ({userId,
     estimateNote: null,
     estimateExpiresAt: null,
     estimateApprovedAt: null,
+    ...(pendingTowRebase ? {towFareRebase: true} : {}),
   });
   try {
     await stopWaiting(ticketId);
@@ -101,13 +115,12 @@ export const updateDispatchDestination = async ({userId,
       destinationPoint: destinationPoint ?? null,
     }, ticket.assignedShopId as string);
     await stampTowFare(ticketId, {
-      lat: ticket.lat,
-      lng: ticket.lng,
-      vehicleType: ticket.vehicleType,
+      ...ticket,
       destinationShopId: destinationShopId ?? null,
       destinationPoint: destinationPoint ?? null,
-      towFare: ticket.towFare ?? null,
-    }, ticket.assignedShopId as string);
+    }, ticket.assignedShopId as string, {
+      rebase: destinationChanged && ticket.ticketType === "TOW",
+    });
   }
   if (typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== "") {

@@ -459,7 +459,7 @@ describe("dispatchService.updateDispatchDestination", () => {
     expect(stamped).toBeDefined();
   });
 
-  it("caps the restamped fare at the accept-time ceiling", async () => {
+  it("rebases the restamped fare at the new destination ceiling", async () => {
     const stored = {
       id: "t1",
       userId: "rider1",
@@ -521,10 +521,91 @@ describe("dispatchService.updateDispatchDestination", () => {
       }),
     ).resolves.toEqual(stored);
     const fare = jest.mocked(dispatchRepository.update).mock.calls
-      .map((call) => call[1] as {towFare?: {estimate: number; ceiling: number}})
+      .map((call) => call[1] as {
+        towFare?: {estimate: number; ceiling: number};
+        towFeeCap?: number | null;
+      })
       .find((patch) => typeof patch.towFare?.estimate === "number");
-    expect(fare?.towFare?.estimate).toBeLessThanOrEqual(220000);
-    expect(fare?.towFare?.ceiling).toBe(220000);
+    expect(fare?.towFare?.estimate).toBeGreaterThan(220000);
+    expect(fare?.towFare?.ceiling).toBeGreaterThan(220000);
+    expect(fare?.towFare?.ceiling).toBeGreaterThanOrEqual(
+      fare?.towFare?.estimate ?? 0,
+    );
+    expect(fare?.towFeeCap).toBeNull();
+  });
+
+  it("keeps breakdown partials payable when the rider retargets", async () => {
+    const stored = {
+      id: "t1",
+      userId: "rider1",
+      status: "2",
+      assignedShopId: "tow1",
+      destinationShopId: "shop1",
+      destinationPoint: null,
+      destinationSnapshot: {
+        id: "shop1",
+        name: "Fix Co",
+        lat: 10.7,
+        lng: 106.6,
+        kind: "SHOP",
+      },
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce({
+        ...ticket,
+        status: "2",
+        assignedShopId: "tow1",
+        lat: 10.71,
+        lng: 106.61,
+        vehicleType: "SCOOTER",
+        towFare: {estimate: 200000, ceiling: 220000, final: null},
+        towFeeCap: 220000,
+        towFeeHistory: [{amount: 50000}],
+      } as never)
+      .mockResolvedValue(stored as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      name: "Fix Co",
+      lat: 10.7,
+      lng: 106.6,
+      kind: "SHOP",
+      status: "ACTIVE",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map([["tow1", {
+        providerId: "tow1",
+        lat: 10.69,
+        lng: 106.59,
+        geoHash: "w3gv",
+        geoCell: "w3gv",
+        lastSeen: new Date().toISOString(),
+      }]]),
+    );
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute
+      .mockResolvedValueOnce({distanceMeters: 3000, durationSeconds: 600})
+      .mockResolvedValueOnce({distanceMeters: 3000, durationSeconds: 600})
+      .mockResolvedValue({distanceMeters: 50000, durationSeconds: 3600});
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationShopId: "shop1",
+      }),
+    ).resolves.toEqual(stored);
+    const fare = jest.mocked(dispatchRepository.update).mock.calls
+      .map((call) => call[1] as {
+        towFare?: {estimate: number; ceiling: number};
+        towFeeCap?: number | null;
+        towFeeHistory?: unknown;
+      })
+      .find((patch) => typeof patch.towFare?.estimate === "number");
+    expect(fare?.towFare?.estimate).toBeGreaterThan(220000);
+    expect(fare?.towFeeCap).toBe(50000 + (fare?.towFare?.ceiling ?? 0));
+    expect(fare?.towFeeHistory).toBeUndefined();
   });
 
   it("skips the ETA restamp on pending retargets", async () => {
@@ -566,6 +647,10 @@ describe("dispatchService.updateDispatchDestination", () => {
         "string",
     );
     expect(stamped).toBeUndefined();
+    expect(dispatchRepository.update).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({towFareRebase: true}),
+    );
   });
 });
 

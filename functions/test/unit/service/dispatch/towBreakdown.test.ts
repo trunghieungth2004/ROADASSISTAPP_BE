@@ -321,6 +321,43 @@ describe("tow breakdown re-match", () => {
     expect(update?.[1]).toMatchObject({towFeeCap: 500000});
   });
 
+  it("preserves a rebased cap across a later breakdown", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue(
+      towTicket({
+        towFeeCap: 512000,
+        towFeeHistory: [{amount: 50000}],
+        towFare: {
+          estimate: 420000,
+          ceiling: 462000,
+          final: null,
+          partial: false,
+          deadheadKm: 0,
+          loadedKm: 0,
+          night: false,
+          vehicleClass: "CAR",
+        },
+      }) as never,
+    );
+
+    await cancelTowerSearch({
+      userId: "op1",
+      ticketId: "tow1ticket",
+      lat: 10.707,
+      lng: 106.6,
+      reasonCode: "TOWER_CANCEL_BREAKDOWN",
+    });
+
+    const update = jest.mocked(dispatchRepository.update).mock.calls.find(
+      ([id, patch]) => id === "tow1ticket" &&
+        typeof patch === "object" && patch !== null &&
+        "towFeeHistory" in patch,
+    );
+    expect(update?.[1]).toMatchObject({towFeeCap: 512000});
+    expect(
+      (update?.[1] as {towFare?: {ceiling?: number}}).towFare?.ceiling,
+    ).toBeLessThanOrEqual(462000);
+  });
+
   it("keeps the dispute for a non-breakdown reason", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue(
       towTicket({loadedAt: null}) as never,

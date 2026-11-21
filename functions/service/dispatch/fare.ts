@@ -254,6 +254,7 @@ export const stampTowFare = async (
     towFeeHistory?: unknown;
   },
   shopId: string,
+  options?: {rebase?: boolean},
 ): Promise<void> => {
   try {
     const baseRates = await platformConfigService.getTowRates()
@@ -313,11 +314,14 @@ export const stampTowFare = async (
         return sum + (typeof amount === "number" ? amount : 0);
       }, 0) :
       0;
-    const cap = typeof ticket.towFeeCap === "number" ?
-      Math.max(0, ticket.towFeeCap - historyAmount) :
-      ticket.towFare && typeof ticket.towFare.ceiling === "number" ?
-        ticket.towFare.ceiling :
-        null;
+    const rebase = options?.rebase === true;
+    const cap = rebase ?
+      quote.ceiling :
+      typeof ticket.towFeeCap === "number" ?
+        Math.max(0, ticket.towFeeCap - historyAmount) :
+        ticket.towFare && typeof ticket.towFare.ceiling === "number" ?
+          ticket.towFare.ceiling :
+          null;
     const estimate = cap === null ?
       quote.estimate :
       Math.min(quote.estimate, cap);
@@ -328,6 +332,10 @@ export const stampTowFare = async (
         ceiling: cap ?? quote.ceiling,
         final: null,
       },
+      ...(rebase ? {
+        towFeeCap: historyAmount > 0 ? historyAmount + quote.ceiling : null,
+        towFareRebase: false,
+      } : {}),
     });
   } catch (err) {
     logError("dispatch", "tow-fare-stamp-failed", {ticketId}, err);

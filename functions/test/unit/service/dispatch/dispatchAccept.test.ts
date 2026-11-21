@@ -162,6 +162,63 @@ describe("dispatchService.acceptDispatch", () => {
     );
   });
 
+  it("rebases a pending rider retarget when the tower accepts", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "1",
+      ticketType: "TOW",
+      lat: 10.71,
+      lng: 106.61,
+      vehicleType: "SCOOTER",
+      destinationPoint: {lat: 10.8, lng: 106.7},
+      towFare: {estimate: 200000, ceiling: 220000, final: null},
+      towFeeCap: 220000,
+      towFeeHistory: [{amount: 50000}],
+      towFareRebase: true,
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "30A12345",
+      kind: "TOW",
+      status: "ACTIVE",
+      accepting: true,
+      operatorUid: "op1",
+      plate: "30A12345",
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+      services: ["RIDER"],
+    } as never);
+    jest.mocked(dispatchRepository.claimForAssignment).mockResolvedValue(
+      true,
+    );
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute
+      .mockResolvedValueOnce({distanceMeters: 0, durationSeconds: 60})
+      .mockResolvedValueOnce({distanceMeters: 30000, durationSeconds: 3600});
+    await expect(
+      acceptDispatch({
+        userId: "op1",
+        ticketId: "t1",
+        shopId: "tow1",
+      }),
+    ).resolves.toEqual({matched: true, kind: "TOW"});
+    const fare = jest.mocked(dispatchRepository.update).mock.calls
+      .map((call) => call[1] as {
+        towFare?: {estimate: number; ceiling: number};
+        towFeeCap?: number | null;
+        towFareRebase?: boolean;
+      })
+      .find((patch) => typeof patch.towFare?.estimate === "number");
+    expect(fare?.towFare?.estimate).toBeGreaterThan(220000);
+    expect(fare?.towFeeCap).toBe(50000 + (fare?.towFare?.ceiling ?? 0));
+    expect(fare?.towFareRebase).toBe(false);
+  });
+
   it("sends one rider push when a mobile shop accepts an SOS", async () => {
     const sos = {
       id: "s1",
