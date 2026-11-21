@@ -1,5 +1,7 @@
 import * as providerRepository from "../../../../repository/providerRepository";
 import * as userRepository from "../../../../repository/userRepository";
+import * as vehicleProfileRepository from "../../../../repository/vehicleProfileRepository";
+import {deliverAdminPush} from "../../../../service/push/admin";
 import {
   createMobileShopProvider,
   createShopProvider,
@@ -33,6 +35,9 @@ jest.mock("../../../../repository/providerRepository", () => {
     findByNamePrefix: jest.fn(),
   };
 });
+jest.mock("../../../../service/push/admin", () => ({
+  deliverAdminPush: jest.fn(async () => ({delivered: 1, skipped: false})),
+}));
 jest.mock("../../../../repository/userRepository");
 jest.mock("../../../../repository/providerReportRepository", () => ({
   create: jest.fn(),
@@ -48,6 +53,11 @@ jest.mock("../../../../repository/providerLocationRepository", () => ({
   findByIds: jest.fn(),
   findByGeohashPrefixes: jest.fn(),
   deleteStale: jest.fn(),
+}));
+jest.mock("../../../../repository/vehicleProfileRepository", () => ({
+  findByPlate: jest.fn(async () => null),
+  create: jest.fn(async () => ({id: "vp1"})),
+  update: jest.fn(),
 }));
 
 beforeEach(() => {
@@ -148,6 +158,53 @@ describe("providerService.createShopProvider", () => {
   });
 });
 
+describe("providerService.create notifications", () => {
+  it("pushes an admin notification for every provider kind", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(providerRepository.findByOperator).mockResolvedValue([]);
+    jest.mocked(providerRepository.findByPlate).mockResolvedValue(null);
+    jest.mocked(providerRepository.createShop).mockResolvedValue({
+      id: "s1",
+      name: "Shop",
+      kind: "SHOP",
+    } as never);
+    jest.mocked(providerRepository.createTow).mockResolvedValue({
+      id: "T1",
+      name: "Tow",
+      kind: "TOW",
+    } as never);
+    jest.mocked(providerRepository.createMobileShop).mockResolvedValue({
+      id: "M1",
+      name: "Mobile",
+      kind: "MOBILE_SHOP",
+    } as never);
+
+    await createShopProvider({userId: "u1", name: "Shop", lat: 1, lng: 2});
+    await createTowProvider({userId: "u1", name: "Tow", lat: 1, lng: 2,
+      plate: "30A-12345", vehicleType: "VAN"});
+    await createMobileShopProvider({userId: "u1", name: "Mobile", lat: 1,
+      lng: 2, plate: "59A-12345", vehicleType: "BIKE",
+      licenseNumber: "L1"});
+
+    expect(deliverAdminPush).toHaveBeenCalledTimes(3);
+    expect(deliverAdminPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "PROVIDER_APPLICATION",
+        refId: "s1",
+        route: "/admin?section=providers&providerId=s1",
+      }),
+    );
+    expect(deliverAdminPush).toHaveBeenCalledWith(
+      expect.objectContaining({refId: "T1"}),
+    );
+    expect(deliverAdminPush).toHaveBeenCalledWith(
+      expect.objectContaining({refId: "M1"}),
+    );
+  });
+});
+
 describe("providerService.createTowProvider", () => {
   it("rejects malformed plates", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
@@ -188,6 +245,7 @@ describe("providerService.createTowProvider", () => {
     expect(providerRepository.createTow).toHaveBeenCalledWith(
       expect.objectContaining({plate: "30A12345", plateRaw: "30a-123.45"}),
     );
+    expect(vehicleProfileRepository.create).not.toHaveBeenCalled();
   });
 });
 

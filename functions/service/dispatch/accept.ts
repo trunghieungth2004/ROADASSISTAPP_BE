@@ -31,6 +31,49 @@ import {logError, logWarn} from "../../utils/logger";
 import * as cacheManager from "../../utils/cacheManager";
 import {providerBlocked} from "./providerEligibility";
 
+export const mobileVisitNotice = (
+  ticket: Record<string, unknown>,
+): {body: string; chat: string} => {
+  const callOut = typeof ticket.mobileCallOutFee === "number" ?
+    Math.round(ticket.mobileCallOutFee) :
+    0;
+  const travel = typeof ticket.mobileTravelFee === "number" ?
+    Math.round(ticket.mobileTravelFee) :
+    0;
+  const waived = ticket.mobileCallOutWaived === true;
+  const km = typeof ticket.mobileTravelKm === "number" ?
+    ticket.mobileTravelKm :
+    null;
+  const rate = typeof ticket.mobileTravelRate === "number" ?
+    Math.round(ticket.mobileTravelRate) :
+    0;
+  const money = (value: number): string => `${value.toLocaleString("en-US")} VND`;
+  const total = (waived ? 0 : callOut) + travel;
+  if (total <= 0) {
+    return {
+      body: "No call-out or travel fee. Repair is quoted separately.",
+      chat: "Mobile shop accepted. No call-out or travel fee. Repair is quoted separately.",
+    };
+  }
+  const callOutPart = waived ?
+    "call-out waived (shop within 1 km)" :
+    callOut > 0 ?
+      `call-out ${money(callOut)}` :
+      "no call-out fee";
+  const travelPart = travel > 0 ?
+    `travel ${money(travel)}` :
+    "no travel fee";
+  const detail = `${callOutPart} + ${travelPart}`;
+  const distance = travel > 0 && km !== null && km > 0 ?
+    ` (${km.toFixed(1)} km${rate > 0 ? ` × ${money(rate)}/km` : ""})` :
+    "";
+  return {
+    body: `Visit estimate ${money(total)} — ${detail}. Repair is quoted separately.`,
+    chat: `Mobile shop accepted. Visit estimate ${money(total)} — ${detail}${distance}. ` +
+      "Travel is not charged if the vehicle is marked unfixable. Repair is quoted separately.",
+  };
+};
+
 export const acceptAsShop = async (
   userId: string,
   ticketId: string,
@@ -202,19 +245,9 @@ export const acceptAsShop = async (
     acceptNotice = {title: "Tow accepted", body: feeText};
   }
   if (fresh && ticket.ticketType === "SOS") {
-    const callOut = typeof fresh.mobileCallOutFee === "number" ?
-      fresh.mobileCallOutFee :
-      0;
-    const travel = typeof fresh.mobileTravelFee === "number" ?
-      fresh.mobileTravelFee :
-      0;
-    const callOutText = Math.round(callOut).toLocaleString("en-US");
-    const travelText = Math.round(travel).toLocaleString("en-US");
-    const feeText =
-      `Mobile shop accepted. Call-out ${callOutText} VND, ` +
-      `travel ${travelText} VND.`;
-    await chatService.addSystemEvent(ticketId, feeText);
-    acceptNotice = {title: "Mobile shop accepted", body: feeText};
+    const notice = mobileVisitNotice(fresh);
+    await chatService.addSystemEvent(ticketId, notice.chat);
+    acceptNotice = {title: "Mobile shop accepted", body: notice.body};
   }
   cacheManager.del(NS);
   cacheManager.del("shop");

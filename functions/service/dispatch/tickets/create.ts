@@ -1,12 +1,6 @@
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 
 import {assertRiderCanRequest} from "../../standing";
-
-const assertDescription = (description?: string): void => {
-  if (typeof description === "string" && description.length > 1000) {
-    throw new ValidationError("Description is too long");
-  }
-};
 import * as userRepository from "../../../repository/userRepository";
 import * as providerRepository from "../../../repository/providerRepository";
 import * as vehicleProfileRepository from
@@ -34,6 +28,7 @@ import {
   MOBILE_SHOP_DEFAULT_RADIUS,
   PROVIDER_KIND,
   PROVIDER_STATUS,
+  SERVICE_CHANNEL,
   TOW_DISPATCH_RADIUS,
 } from "../../../constants/status";
 import {DISPATCH_SLA_MINUTES} from "../../../constants/dispatch";
@@ -47,6 +42,34 @@ import {
 
 import * as cacheManager from "../../../utils/cacheManager";
 import {validatePhotoPathsStructure} from "../../../utils/media";
+
+const assertDispatchContent = (
+  description?: string,
+  photoUrls?: string[],
+): void => {
+  if (typeof description === "string" && description.length > 1000) {
+    throw new ValidationError("Description is too long");
+  }
+  validatePhotoPathsStructure(photoUrls);
+};
+
+const assertWalkInAssistChannel = (
+  shop: Record<string, unknown>,
+): void => {
+  const services = Array.isArray(shop.services) ? shop.services : [];
+  if (services.length === 0) return;
+  const usable = services.some((service) => {
+    if (typeof service !== "object" || service === null) return false;
+    const channels = (service as {channels?: unknown}).channels;
+    if (!Array.isArray(channels) || channels.length === 0) return true;
+    return channels.includes(SERVICE_CHANNEL.ASSIST);
+  });
+  if (!usable) {
+    throw new ValidationError(
+      "Walk-in shop has no services available for assistance",
+    );
+  }
+};
 
 const liveTicketConflict = (
   mine: dispatchRepository.DispatchTicket[],
@@ -99,7 +122,6 @@ const vehicleProfileFor = async (
   if (!profile) throw new ValidationError("Vehicle not found");
   return profile;
 };
-
 export const createDispatch = async ({
   userId,
   ticketType,
@@ -179,8 +201,7 @@ export const createDispatch = async ({
     (vehicleId === undefined || vehicleId === "")) {
     throw new ValidationError("Select a vehicle before filing this request");
   }
-  assertDescription(description);
-  validatePhotoPathsStructure(photoUrls);
+  assertDispatchContent(description, photoUrls);
   let providerSnapshot: Record<string, unknown> | undefined;
   if (ticketType === "WALK_IN") {
     if (!providerId) {
@@ -196,6 +217,7 @@ export const createDispatch = async ({
       (shop.accepting === false && allowOffDutyShop !== true)) {
       throw new ValidationError("Walk-in shop is not available");
     }
+    assertWalkInAssistChannel(shop);
     if (!servesVehicleClass(shop, vehicleClassOf(vehicleType))) {
       throw new ValidationError(
         "Walk-in shop does not service this vehicle class",

@@ -160,6 +160,8 @@ interface DispatchTicket {
     status: string;
     shopId: string;
     destinationShopId: string | null;
+    destinationSnapshot?: Record<string, unknown> | null;
+    originPoint?: {lat: number; lng: number} | null;
     mode: string;
     towProviderId: string | null;
     by: string;
@@ -169,6 +171,7 @@ interface DispatchTicket {
   returnTowOffer?: {
     status: string;
     shopId: string;
+    originSnapshot?: Record<string, unknown> | null;
     by: string;
     at: string;
   } | null;

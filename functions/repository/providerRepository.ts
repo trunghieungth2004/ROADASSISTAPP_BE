@@ -44,7 +44,9 @@ interface Provider {
   plate?: string | null;
   plateRaw?: string | null;
   vehicleType?: string | null;
+  vehicleLabel?: string | null;
   vehicleWidth?: number | null;
+  vehicleHeight?: number | null;
   vehicleProfileId?: string | null;
   towBaseFee?: number | null;
   towPerKmFee?: number | null;
@@ -137,7 +139,9 @@ const createMobileShop = async (data: {
   plate: string;
   plateRaw: string;
   vehicleType: string;
+  vehicleLabel?: string | null;
   vehicleWidth?: number | null;
+  vehicleHeight?: number | null;
   vehicleProfileId?: string | null;
   callOutFee?: number;
   travelPerKmFee?: number;
@@ -161,7 +165,9 @@ const createMobileShop = async (data: {
     plate: data.plate,
     plateRaw: data.plateRaw,
     vehicleType: data.vehicleType,
+    vehicleLabel: data.vehicleLabel ?? null,
     vehicleWidth: data.vehicleWidth ?? null,
+    vehicleHeight: data.vehicleHeight ?? null,
     vehicleProfileId: data.vehicleProfileId ?? null,
     callOutFee: data.callOutFee ?? null,
     travelPerKmFee: data.travelPerKmFee ?? null,
@@ -195,7 +201,9 @@ const createTow = async (data: {
   plate: string;
   plateRaw: string;
   vehicleType: string;
+  vehicleLabel?: string | null;
   vehicleWidth?: number | null;
+  vehicleHeight?: number | null;
   vehicleProfileId?: string | null;
   towBaseFee?: number;
   towPerKmFee?: number;
@@ -216,7 +224,9 @@ const createTow = async (data: {
     plate: data.plate,
     plateRaw: data.plateRaw,
     vehicleType: data.vehicleType,
+    vehicleLabel: data.vehicleLabel ?? null,
     vehicleWidth: data.vehicleWidth ?? null,
+    vehicleHeight: data.vehicleHeight ?? null,
     vehicleProfileId: data.vehicleProfileId ?? null,
     towBaseFee: data.towBaseFee ?? null,
     towPerKmFee: data.towPerKmFee ?? null,

@@ -1,4 +1,5 @@
 import {tryRefundPayment, tryVoidPendingPayments} from "./helpers";
+import {returnTowPickupSnapshot} from "../helpers";
 import * as dispatchRepository from "../../../repository/dispatchRepository";
 import * as paymentService from "../../paymentService";
 
@@ -26,23 +27,25 @@ import * as cacheManager from "../../../utils/cacheManager";
 import {validatePhotoPaths} from "../../../utils/media";
 import {DISPATCH_PHOTO_PREFIX} from "../../../constants/media";
 
-const returnTowOfferPatch = (
+const returnTowOfferPatch = async (
   ticket: dispatchRepository.DispatchTicket,
   userId: string,
   nowIso: string,
-): Record<string, unknown> => {
+): Promise<Record<string, unknown>> => {
   if (ticket.ticketType === "SOS") return {};
   const shopId = typeof ticket.assignedShopId === "string" &&
     ticket.assignedShopId !== "" ?
     ticket.assignedShopId :
     typeof ticket.providerId === "string" ? ticket.providerId : "";
   if (shopId === "") return {};
+  const originSnapshot = await returnTowPickupSnapshot(ticket);
   return {
     returnTowOffer: {
       status: "PENDING",
       shopId,
       by: userId,
       at: nowIso,
+      ...(originSnapshot !== null ? {originSnapshot} : {}),
     },
   };
 };
@@ -114,7 +117,7 @@ export const markUnfixable = async ({
       by: userId,
       at: nowIso,
     },
-    ...returnTowOfferPatch(ticket, userId, nowIso),
+    ...(await returnTowOfferPatch(ticket, userId, nowIso)),
   });
   await dispatchRepository.updateStatus(
     ticketId,

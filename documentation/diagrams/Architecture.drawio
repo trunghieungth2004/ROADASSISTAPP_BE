@@ -1,6 +1,6 @@
 <mxfile host="Electron" agent="OpenCode">
   <diagram id="roadassist-architecture" name="RoadAssist Architecture">
-    <mxGraphModel dx="2883" dy="2486" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1160" background="#FFFFFF" math="0" shadow="0">
+    <mxGraphModel dx="4331" dy="2660" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1160" background="#FFFFFF" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -29,10 +29,10 @@
           <mxGeometry height="120" width="120" x="900" y="440" as="geometry" />
         </mxCell>
         <mxCell id="scheduler" parent="1" style="sketch=0;outlineConnect=0;fontColor=#0F172A;fillColor=#4285F4;strokeColor=none;align=center;verticalLabelPosition=bottom;verticalAlign=top;html=1;fontFamily=Helvetica;fontSize=12;fontStyle=1;shape=mxgraph.gcp2.cloud_scheduler;aspect=fixed;" value="Cloud Scheduler&#xa;Sweeps + reminders" vertex="1">
-          <mxGeometry height="120" width="120" x="1280" y="440" as="geometry" />
+          <mxGeometry height="120" width="120" x="1320" y="440" as="geometry" />
         </mxCell>
         <mxCell id="secret" parent="1" style="sketch=0;outlineConnect=0;fontColor=#0F172A;fillColor=#EA4335;strokeColor=none;align=center;verticalLabelPosition=bottom;verticalAlign=top;html=1;fontFamily=Helvetica;fontSize=12;fontStyle=1;shape=mxgraph.gcp2.cloud_iam;aspect=fixed;" value="IAM + Secret Manager&#xa;Runtime access" vertex="1">
-          <mxGeometry height="120" width="120" x="1080" y="720" as="geometry" />
+          <mxGeometry height="120" width="120" x="1100" y="720" as="geometry" />
         </mxCell>
         <mxCell id="8q6n6JawOn6sdCdX5EpG-16" edge="1" parent="1" source="fcm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;strokeColor=#9333EA;dashed=1;" target="8q6n6JawOn6sdCdX5EpG-7">
           <mxGeometry relative="1" as="geometry">
@@ -43,7 +43,7 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="fcm" parent="1" style="sketch=0;outlineConnect=0;fontColor=#0F172A;fillColor=#A142F4;strokeColor=none;align=center;verticalLabelPosition=bottom;verticalAlign=top;html=1;fontFamily=Helvetica;fontSize=12;fontStyle=1;shape=mxgraph.gcp2.cloud_messaging;aspect=fixed;" value="Firebase Cloud Messaging&#xa;Push notifications" vertex="1">
-          <mxGeometry height="120" width="120" x="1280" y="710" as="geometry" />
+          <mxGeometry height="120" width="120" x="1300" y="710" as="geometry" />
         </mxCell>
         <mxCell id="legend-request-line" edge="1" parent="1" style="line;strokeWidth=2;html=1;strokeColor=#2563EB;endArrow=none;" value="">
           <mxGeometry height="10" relative="1" width="50" as="geometry">
@@ -150,14 +150,15 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="edge-scheduler-api" edge="1" parent="1" source="scheduler" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#F59E0B;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#B45309;fontSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;" target="api" value="scheduled sweeps">
-          <mxGeometry relative="1" x="0.6564" as="geometry">
+          <mxGeometry relative="1" x="0.6583" as="geometry">
             <Array as="points">
-              <mxPoint x="1340" y="300" />
+              <mxPoint x="1380" y="300" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="edge-api-valhalla" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#1D4ED8;fontSize=10;labelBackgroundColor=#FFFFFF;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="8q6n6JawOn6sdCdX5EpG-15" value="route request / response">
-          <mxGeometry relative="1" x="0.0373" as="geometry">
+        <mxCell id="edge-api-valhalla" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#1D4ED8;fontSize=10;labelBackgroundColor=#FFFFFF;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="8q6n6JawOn6sdCdX5EpG-15" value="route request/&lt;div&gt;response&lt;/div&gt;">
+          <mxGeometry relative="1" x="-0.1186" as="geometry">
+            <mxPoint as="offset" />
             <Array as="points">
               <mxPoint x="980" y="400" />
               <mxPoint x="1070" y="400" />
@@ -167,28 +168,31 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="edge-api-secret" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#DC2626;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#B91C1C;fontSize=10;labelBackgroundColor=#FFFFFF;entryX=0.5;entryY=0;" target="secret" value="secrets + identity">
-          <mxGeometry relative="1" x="-0.151" as="geometry">
+          <mxGeometry relative="1" x="0.1852" as="geometry">
+            <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="1010" y="390" />
-              <mxPoint x="1140" y="390" />
+              <mxPoint x="1010" y="370" />
+              <mxPoint x="1160" y="370" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="edge-api-fcm" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9333EA;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#7E22CE;fontSize=10;labelBackgroundColor=#FFFFFF;entryX=0.5;entryY=0;" target="fcm" value="send push">
-          <mxGeometry relative="1" x="-0.0118" as="geometry">
+          <mxGeometry relative="1" x="0.0857" as="geometry">
+            <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="1210" y="330" />
-              <mxPoint x="1210" y="640" />
-              <mxPoint x="1340" y="640" />
+              <mxPoint x="1250" y="330" />
+              <mxPoint x="1250" y="640" />
+              <mxPoint x="1360" y="640" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="edge-api-logging" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;dashed=1;strokeColor=#94A3B8;strokeWidth=1.2;fontFamily=Helvetica;fontColor=#64748B;fontSize=10;labelBackgroundColor=#FFFFFF;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="8q6n6JawOn6sdCdX5EpG-11" value="logs / metrics">
-          <mxGeometry relative="1" x="0.1657" as="geometry">
+          <mxGeometry relative="1" x="-0.3043" as="geometry">
+            <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="1380" y="280" />
-              <mxPoint x="1380" y="360" />
-              <mxPoint x="1566.8" y="360" />
+              <mxPoint x="1480" y="280" />
+              <mxPoint x="1480" y="360" />
+              <mxPoint x="1570" y="360" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -212,7 +216,7 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="edge-rider-sepay" edge="1" parent="1" source="8q6n6JawOn6sdCdX5EpG-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 3;strokeColor=#DC2626;strokeWidth=1.5;fontFamily=Helvetica;fontColor=#B91C1C;fontSize=10;labelBackgroundColor=#FFFFFF;exitX=0.491;exitY=-0.024;exitDx=0;exitDy=0;exitPerimeter=0;" target="8q6n6JawOn6sdCdX5EpG-3" value="checkout / return URL">
-          <mxGeometry relative="1" x="0.1735" as="geometry">
+          <mxGeometry relative="1" x="0.2674" as="geometry">
             <mxPoint as="offset" />
             <Array as="points">
               <mxPoint x="204.2" y="-40" />
@@ -272,7 +276,7 @@
           <mxGeometry height="120" width="120" x="900" y="720" as="geometry" />
         </mxCell>
         <mxCell id="valhalla" parent="1" style="sketch=0;outlineConnect=0;fontColor=#0F172A;fillColor=#4285F4;strokeColor=none;align=center;verticalLabelPosition=bottom;verticalAlign=top;html=1;fontFamily=Helvetica;fontSize=12;fontStyle=1;shape=mxgraph.gcp2.cloud_run;aspect=fixed;" value="" vertex="1">
-          <mxGeometry height="50" width="50" x="810" y="720" as="geometry" />
+          <mxGeometry height="50" width="50" x="880" y="720" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

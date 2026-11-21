@@ -192,6 +192,13 @@ describe("dispatchService tow drop-off policy", () => {
         accepting: true,
         operatorUid: "op1",
         vehicleClasses: ["CAR"],
+        ...(id === "shop1" ? {services: [{
+          code: "OIL",
+          name: "Oil",
+          displayPrice: 100000,
+          quoteRequired: false,
+          channels: ["ASSIST"],
+        }]} : {}),
       } as never),
     );
     jest.mocked(dispatchRepository.create).mockResolvedValue({
@@ -265,6 +272,13 @@ describe("dispatchService tow drop-off policy", () => {
         accepting: true,
         operatorUid: "op1",
         vehicleClasses: ["CAR"],
+        ...(id === "shop1" ? {services: [{
+          code: "OIL",
+          name: "Oil",
+          displayPrice: 100000,
+          quoteRequired: false,
+          channels: ["ASSIST"],
+        }]} : {}),
       } as never),
     );
     await expect(
@@ -306,6 +320,13 @@ describe("dispatchService tow drop-off policy", () => {
         status: "ACTIVE",
         accepting: id === "shop1" ? false : true,
         operatorUid: "op1",
+        ...(id === "shop1" ? {services: [{
+          code: "OIL",
+          name: "Oil",
+          displayPrice: 100000,
+          quoteRequired: false,
+          channels: ["ASSIST"],
+        }]} : {}),
       } as never),
     );
     jest.mocked(dispatchRepository.create).mockResolvedValue({

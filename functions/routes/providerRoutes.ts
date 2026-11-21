@@ -58,6 +58,13 @@ export default (
     providerController.getPricingLimits,
   );
   app.post(
+    "/providers/admin/list",
+    requireAuth,
+    requireRole("1"),
+    validate({body: schemas.adminProviderList}),
+    providerController.adminListProviders,
+  );
+  app.post(
     "/providers/pending",
     requireAuth,
     requireRole("1"),

@@ -1,6 +1,7 @@
 import {Request, Response} from "express";
 import * as adminService from "../service/adminService";
 import * as analyticsService from "../service/analyticsService";
+import * as dayDetailService from "../service/dayDetailService";
 import * as payoutService from "../service/payoutService";
 import * as paymentService from "../service/paymentService";
 import * as platformConfigService from "../service/platformConfigService";
@@ -158,8 +159,26 @@ const audit = async (req: Request, res: Response) => {
 
 const dashboard = async (req: Request, res: Response) => {
   try {
-    const {days} = req.body ?? {};
-    const result = await analyticsService.dashboard({days});
+    const {days, startDate, endDate} = req.body ?? {};
+    const result = await analyticsService.dashboard({
+      days,
+      startDate,
+      endDate,
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const dashboardDay = async (req: Request, res: Response) => {
+  try {
+    const {uid} = req as AuthedRequest;
+    const {date} = req.body ?? {};
+    const result = await dayDetailService.adminDayDetail({
+      adminUid: uid,
+      date,
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -187,6 +206,7 @@ export {
   revenueReport,
   payeeReport,
   dashboard,
+  dashboardDay,
   providerStats,
   ops,
   audit,

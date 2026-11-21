@@ -10,7 +10,9 @@ import {
 } from "./primitives";
 import Joi from "joi";
 import {
+  PROVIDER_KIND,
   PROVIDER_REPORT_REASON,
+  PROVIDER_STATUS,
   SERVICE_CATEGORY,
   SHOP_SEARCH_MAX_RADIUS,
   TOW_VEHICLE_TYPE,
@@ -58,9 +60,19 @@ export const providersSchemas = {
         otherwise: Joi.forbidden(),
       }),
     }),
+    vehicleLabel: Joi.when("kind", {
+      is: Joi.valid("TOW", "MOBILE_SHOP"),
+      then: Joi.string().trim().max(120).allow("", null).optional(),
+      otherwise: Joi.forbidden(),
+    }),
     vehicleWidth: Joi.when("kind", {
       is: Joi.valid("TOW", "MOBILE_SHOP"),
       then: Joi.number().min(0.3).max(3).optional(),
+      otherwise: Joi.forbidden(),
+    }),
+    vehicleHeight: Joi.when("kind", {
+      is: Joi.valid("TOW", "MOBILE_SHOP"),
+      then: Joi.number().min(0.5).max(3).optional(),
       otherwise: Joi.forbidden(),
     }),
     serviceFee: Joi.when("kind", {
@@ -128,7 +140,9 @@ export const providersSchemas = {
     vehicleType: Joi.string()
       .valid(...Object.values(VEHICLE_TYPE))
       .optional(),
+    vehicleLabel: Joi.string().trim().max(120).allow("", null).optional(),
     vehicleWidth: Joi.number().min(0.3).max(3).optional(),
+    vehicleHeight: Joi.number().min(0.5).max(3).optional(),
     towBaseFee: Joi.number().integer().min(0).max(999999999).optional(),
     towPerKmFee: Joi.number().integer().min(0).max(99999).optional(),
     waitingRatePer15Min: Joi.number().integer().min(0).max(100000).optional(),
@@ -194,6 +208,19 @@ export const providersSchemas = {
     providerId: strReq(),
     approve: Joi.boolean().required(),
     reviewNote: Joi.string().trim().max(280).allow("", null).optional(),
+  }),
+  adminProviderList: Joi.object({
+    status: Joi.string()
+      .valid(...Object.values(PROVIDER_STATUS))
+      .allow("")
+      .optional(),
+    kind: Joi.string()
+      .valid(...Object.values(PROVIDER_KIND))
+      .allow("")
+      .optional(),
+    startDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    endDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    limit: Joi.number().integer().min(1).max(500).optional(),
   }),
   reportProvider: Joi.object({
     providerId: strReq(),

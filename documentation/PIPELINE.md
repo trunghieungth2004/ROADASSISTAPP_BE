@@ -207,7 +207,7 @@ the name (a repeated suffix silently swallows the later push):
 | Tow resolves at an off-duty shop | `-dropoff-arrived` | destination shop (carried) | "Tow drop-off arrived" | destination shop active but off-duty; forced walk-in spawn |
 | Destination retargeted to shop | `-destination-shop-<shopId>` | destination shop (carried) | "Incoming tow" | new destinationShopId set |
 | Destination moved away from shop | `-dropped-<shopId>` | previous shop (carried) | "Drop-off changed" | previous ≠ new, both set |
-| Accept (shop/tower/mobile shop) | `-status-2-rider` | rider (explicit) | per-type matched body; TOW/SOS carry the fare or call-out/travel in the same push | always on accept, one rider push |
+| Accept (shop/tower/mobile shop) | `-status-2-rider` | rider (explicit) | per-type matched body; TOW carries the fare and SOS carries a visit estimate (call-out + travel, zero components named as waived/no fee, repair quoted separately) | always on accept, one rider push |
 | Status → `3`/`4`/`6`/`7`/`8` via PUT | `-status-X` | rider | per-status body (`8` appends reason) | non-TOW listed statuses only |
 | Tower arrived | `-tow-arrived-rider` | rider (urgent) | "Tow arrived at pickup" / "Tow arrived at hangar" | TOW tower marks `2→3`; no generic status push |
 | Tower delivered | `-tow-delivered-rider` | rider (urgent) | "Tow delivered" / "Delivered to rider" | TOW tower marks `3→4` after `loadedAt`; no generic status push |

@@ -192,6 +192,13 @@ export default (
     adminController.dashboard,
   );
   app.post(
+    "/admin/dashboard/day",
+    requireAuth,
+    requireRole(ROLE_ADMIN),
+    validate({body: schemas.adminDashboardDay}),
+    adminController.dashboardDay,
+  );
+  app.post(
     "/admin/providers/stats",
     requireAuth,
     requireRole(ROLE_ADMIN),

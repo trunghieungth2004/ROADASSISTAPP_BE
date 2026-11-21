@@ -1,9 +1,12 @@
 import * as providerRepository from "../../../../repository/providerRepository";
 import * as userRepository from "../../../../repository/userRepository";
+import {deliverAdminPush} from "../../../../service/push/admin";
+import {sendUserPush} from "../../../../service/push/user";
 import {
   createTowProvider,
   myProviders,
   listPending,
+  listProviders,
   reviewProvider,
   reportProvider,
   listReports,
@@ -28,6 +31,7 @@ jest.mock("../../../../repository/providerRepository", () => {
     ...actual,
     createShop: jest.fn(),
     createTow: jest.fn(),
+    findAll: jest.fn(),
     findById: jest.fn(),
     findByOperator: jest.fn(),
     findPending: jest.fn(),
@@ -40,6 +44,12 @@ jest.mock("../../../../repository/providerRepository", () => {
   };
 });
 jest.mock("../../../../repository/userRepository");
+jest.mock("../../../../service/push/admin", () => ({
+  deliverAdminPush: jest.fn(async () => ({delivered: 1, skipped: false})),
+}));
+jest.mock("../../../../service/push/user", () => ({
+  sendUserPush: jest.fn(async () => undefined),
+}));
 jest.mock("../../../../repository/providerReportRepository", () => ({
   create: jest.fn(),
   findOpenByReporter: jest.fn(),
@@ -54,6 +64,16 @@ jest.mock("../../../../repository/providerLocationRepository", () => ({
   findByIds: jest.fn(),
   findByGeohashPrefixes: jest.fn(),
   deleteStale: jest.fn(),
+}));
+jest.mock("../../../../repository/vehicleProfileRepository", () => ({
+  findById: jest.fn(),
+  findByUser: jest.fn(),
+  findByPlate: jest.fn(async () => null),
+  create: jest.fn(async () => ({id: "vp1"})),
+  update: jest.fn(),
+  remove: jest.fn(),
+  addRideConfig: jest.fn(),
+  findRideConfigs: jest.fn(),
 }));
 
 beforeEach(() => {
@@ -81,6 +101,66 @@ describe("providerService review", () => {
         applicantEmail: "op@example.com",
       }),
     ]);
+  });
+
+  it("filters the provider approval queue and returns counts", async () => {
+    jest.mocked(userRepository.findById).mockImplementation((async (id: string) =>
+      id === "admin" ?
+        {id: "admin", role: "1"} :
+        {id, email: "op@example.com", displayName: "Op"}) as never);
+    jest.mocked(providerRepository.findAll).mockResolvedValue([
+      {id: "p1", name: "Shop", kind: "SHOP", status: "PENDING",
+        operatorUid: "u1", requestedAt: "2026-10-10T08:00:00.000Z"},
+      {id: "p2", name: "Tow", kind: "TOW", status: "ACTIVE",
+        operatorUid: "u2", requestedAt: "2026-10-11T08:00:00.000Z"},
+      {id: "p3", name: "Tow 2", kind: "TOW", status: "PENDING",
+        operatorUid: "u3", requestedAt: "2026-10-12T08:00:00.000Z"},
+    ] as never);
+    const result = await listProviders({
+      adminUid: "admin",
+      status: "PENDING",
+      kind: "SHOP",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+    expect(result.total).toBe(1);
+    expect(result.counts).toMatchObject({ALL: 3, PENDING: 2, ACTIVE: 1, DENIED: 0});
+    expect(result.kindCounts).toMatchObject({SHOP: 1, TOW: 2});
+    expect(result.items[0]).toMatchObject({
+      id: "p1",
+      applicantEmail: "op@example.com",
+      openReportCount: 0,
+    });
+  });
+
+  it("pushes the operator after a review", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "admin",
+      role: "1",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "p1",
+      name: "Fix Shop",
+      status: "PENDING",
+      operatorUid: "u1",
+    } as never);
+    jest.mocked(providerRepository.decide).mockResolvedValue(true);
+    await reviewProvider({
+      adminUid: "admin",
+      providerId: "p1",
+      approve: false,
+      reviewNote: "Missing license",
+    });
+    expect(sendUserPush).toHaveBeenCalledWith(
+      "u1",
+      "Provider application declined",
+      expect.stringContaining("Missing license"),
+      expect.objectContaining({
+        event: "PROVIDER_REVIEWED",
+        providerId: "p1",
+        status: "DENIED",
+      }),
+    );
   });
 
   it("activates on approval and treats a lost race as decided", async () => {
@@ -136,6 +216,39 @@ describe("providerService moderation", () => {
         approve: false}),
     ).resolves.toEqual({decided: true, status: "DENIED"});
     expect(locations.remove).toHaveBeenCalledWith("30A12345");
+  });
+
+  it("routes provider reports to the providers queue", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "p1",
+      name: "Fix Shop",
+      kind: "SHOP",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
+    const reports = jest.requireMock(
+      "../../../../repository/providerReportRepository",
+    ) as {
+      findOpenByReporter: jest.Mock;
+      create: jest.Mock;
+    };
+    reports.findOpenByReporter.mockResolvedValue(null);
+    reports.create.mockResolvedValue({id: "r1"});
+    await reportProvider({
+      userId: "u1",
+      providerId: "p1",
+      reason: "FAKE_BUSINESS",
+    });
+    expect(deliverAdminPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "PROVIDER_REPORT",
+        refId: "r1",
+        route: "/admin?section=providers&providerId=p1",
+      }),
+    );
   });
 
   it("rejects review from non-admins with 403", async () => {

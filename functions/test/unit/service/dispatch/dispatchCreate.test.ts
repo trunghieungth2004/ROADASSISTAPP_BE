@@ -125,6 +125,38 @@ describe("dispatchService.createDispatch", () => {
     expect(dispatchRepository.create).not.toHaveBeenCalled();
   });
 
+  it("rejects walk-in shops without an ASSIST service", async () => {
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "u1",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "shop1",
+      kind: "SHOP",
+      name: "Booking-only Shop",
+      lat: 10.7,
+      lng: 106.6,
+      status: "ACTIVE",
+      accepting: true,
+      vehicleClasses: ["SOLO_BIKE"],
+      services: [{
+        code: "ENGINE",
+        name: "Engine",
+        channels: ["BOOKING"],
+      }],
+    } as never);
+    await expect(
+      createDispatch({
+        userId: "u1",
+        ticketType: "WALK_IN",
+        lat: 1,
+        lng: 2,
+        providerId: "shop1",
+        vehicleType: "BIKE",
+      }),
+    ).rejects.toMatchObject({statusCode: 400});
+    expect(dispatchRepository.create).not.toHaveBeenCalled();
+  });
+
   it("allows the internal car walk-in spawn", async () => {
     jest.mocked(userRepository.findById).mockResolvedValue({
       id: "u1",
@@ -138,6 +170,11 @@ describe("dispatchService.createDispatch", () => {
       status: "ACTIVE",
       accepting: true,
       vehicleClasses: ["CAR"],
+      services: [{
+        code: "ENGINE",
+        name: "Engine",
+        channels: ["ASSIST"],
+      }],
     } as never);
     const ticket = {id: "walk1", status: "1"};
     jest.mocked(dispatchRepository.create).mockResolvedValue(ticket as never);

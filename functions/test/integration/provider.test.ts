@@ -142,6 +142,21 @@ describe("provider endpoints", () => {
     expect(plates).toContain("30A12345");
   });
 
+  it("POST /providers/admin/list filters the approval queue", async () => {
+    const res = await request(app)
+      .post("/providers/admin/list")
+      .set("Authorization", bearer(ADMIN))
+      .send({status: "PENDING", kind: "TOW"});
+    expect(res.status).toBe(200);
+    expect(res.body.data.total).toBe(1);
+    expect(res.body.data.counts.PENDING).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.kindCounts.TOW).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.items[0]).toMatchObject({
+      plate: "30A12345",
+      openReportCount: 0,
+    });
+  });
+
   it("POST /providers/review approves and surfaces the tow", async () => {
     const review = await request(app)
       .post("/providers/review")
@@ -156,6 +171,18 @@ describe("provider endpoints", () => {
     expect(res.status).toBe(200);
     const ids = (res.body.data as {id: string}[]).map((s) => s.id);
     expect(ids).toContain("30A12345");
+    const me = await request(app)
+      .post("/users/me")
+      .set("Authorization", bearer(USER))
+      .send({});
+    const vehicle = (me.body.data.vehicles as Array<{
+      plate?: string;
+      providerLinks?: Array<{kind: string; status: string}>;
+    }>).find((row) => row.plate === "30A-12345" || row.plate === "30A12345");
+    expect(vehicle).toBeDefined();
+    expect(vehicle?.providerLinks).toEqual(expect.arrayContaining([
+      expect.objectContaining({kind: "TOW", status: "ACTIVE"}),
+    ]));
   });
 
   it("POST /providers/review rejects a second review as decided", async () => {

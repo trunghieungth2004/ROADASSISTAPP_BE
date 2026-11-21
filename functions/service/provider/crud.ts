@@ -19,11 +19,13 @@ import {
   PROVIDER_KIND,
   PROVIDER_STATUS,
   VEHICLE_CLASS,
+  VEHICLE_DEFAULT_HEIGHT,
   VEHICLE_DEFAULT_WIDTH,
   VEHICLE_TYPE,
 } from "../../constants/status";
 import {ROLE_ADMIN} from "../../constants/roles";
 import {providerBlocked} from "../dispatch/providerEligibility";
+import {deliverAdminPush} from "../push/admin";
 import {
   BOOKING_DEPOSIT_MAX,
   BOOKING_DEPOSIT_PERCENT_MAX,
@@ -43,6 +45,7 @@ import {
 } from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 import * as platformConfigService from "../platformConfigService";
+import {ensureProviderVehicleProfile} from "./vehicle";
 
 export const PLATE_SHAPE = /^\d{2}[A-Z0-9]{1,3}\d{4,6}$/;
 export const SHOP_NS = "shop";
@@ -102,6 +105,20 @@ const providerClassesFor = (
     [vehicleClassOf(provider.vehicleType)] : undefined;
 };
 
+const notifyProviderApplication = async (provider: {
+  id: string;
+  name: string;
+  kind: string;
+}) => {
+  await deliverAdminPush({
+    event: "PROVIDER_APPLICATION",
+    title: "New provider application",
+    body: `${provider.name} applied as ${provider.kind}.`,
+    refId: provider.id,
+    route: `/admin?section=providers&providerId=${provider.id}`,
+  }).catch(() => undefined);
+};
+
 export const createShopProvider = async ({
   userId,
   name,
@@ -159,6 +176,7 @@ export const createShopProvider = async ({
       {}),
     serviceFee,
   });
+  await notifyProviderApplication(created);
   cacheManager.del(PROVIDER_NS, userId);
   cacheManager.del(SHOP_NS);
   return created;
@@ -172,6 +190,9 @@ export const createMobileShopProvider = async ({
   label,
   plate,
   vehicleType,
+  vehicleLabel,
+  vehicleWidth,
+  vehicleHeight,
   licenseNumber,
   licensePhotoUrl,
   callOutFee,
@@ -185,6 +206,9 @@ export const createMobileShopProvider = async ({
   label?: string;
   plate: string;
   vehicleType: string;
+  vehicleLabel?: string;
+  vehicleWidth?: number;
+  vehicleHeight?: number;
   licenseNumber: string;
   licensePhotoUrl?: string;
   callOutFee?: number;
@@ -224,12 +248,6 @@ export const createMobileShopProvider = async ({
   if (existing && existing.operatorUid !== userId) {
     throw new ConflictError("This plate is already registered");
   }
-  const linkExisting = existing !== null &&
-    (typeof existing.vehicleType !== "string" ||
-      existing.vehicleType === vehicleType);
-  const linkedProfileId = linkExisting ?
-    existing?.vehicleProfileId ?? null :
-    null;
   const created = await providerRepository.createMobileShop({
     operatorUid: userId,
     name,
@@ -242,29 +260,19 @@ export const createMobileShopProvider = async ({
     plate: normalizedPlate,
     plateRaw: plate.trim(),
     vehicleType,
-    vehicleWidth: VEHICLE_DEFAULT_WIDTH[vehicleType] ?? null,
-    vehicleProfileId: linkedProfileId,
+    vehicleLabel: vehicleLabel?.trim() || null,
+    vehicleWidth: vehicleWidth ?? VEHICLE_DEFAULT_WIDTH[vehicleType] ?? null,
+    vehicleHeight: vehicleHeight ?? VEHICLE_DEFAULT_HEIGHT[vehicleType] ?? null,
+    vehicleProfileId: null,
     ...(normalizedServices !== undefined ?
       {services: normalizedServices} :
       {}),
     ...pricing,
   });
-  let vehicleProfileId = linkedProfileId;
-  if (!vehicleProfileId) {
-    const profile = await vehicleProfileRepository.create(userId, {
-      type: vehicleType,
-      baseWidth: VEHICLE_DEFAULT_WIDTH[vehicleType] ?? 0.7,
-      baseHeight: vehicleType === "CAR" ? 1.6 : 1.1,
-    });
-    vehicleProfileId = profile.id;
-    await providerRepository.update(created.id, {vehicleProfileId});
-    if (linkExisting && existing && existing.id !== created.id) {
-      await providerRepository.update(existing.id, {vehicleProfileId});
-    }
-  }
+  await notifyProviderApplication(created);
   cacheManager.del(PROVIDER_NS, userId);
   cacheManager.del(SHOP_NS);
-  return {...created, vehicleProfileId};
+  return {...created, vehicleProfileId: null};
 };
 
 export const createTowProvider = async ({
@@ -275,7 +283,9 @@ export const createTowProvider = async ({
   label,
   plate,
   vehicleType,
+  vehicleLabel,
   vehicleWidth,
+  vehicleHeight,
   towBaseFee,
   towPerKmFee,
   waitingRatePer15Min,
@@ -287,7 +297,9 @@ export const createTowProvider = async ({
   label?: string;
   plate: string;
   vehicleType: string;
+  vehicleLabel?: string;
   vehicleWidth?: number;
+  vehicleHeight?: number;
   towBaseFee?: number;
   towPerKmFee?: number;
   waitingRatePer15Min?: number;
@@ -319,12 +331,6 @@ export const createTowProvider = async ({
   if (existing && existing.operatorUid !== userId) {
     throw new ConflictError("This plate is already registered");
   }
-  const linkExisting = existing !== null &&
-    (typeof existing.vehicleType !== "string" ||
-      existing.vehicleType === "CAR");
-  const linkedProfileId = linkExisting ?
-    existing?.vehicleProfileId ?? null :
-    null;
   try {
     const created = await providerRepository.createTow({
       operatorUid: userId,
@@ -335,27 +341,17 @@ export const createTowProvider = async ({
       plate: normalized,
       plateRaw: plate.trim(),
       vehicleType,
+      vehicleLabel: vehicleLabel?.trim() || null,
       vehicleWidth: vehicleWidth ?? VEHICLE_DEFAULT_WIDTH.CAR,
-      vehicleProfileId: linkedProfileId,
+      vehicleHeight: vehicleHeight ?? VEHICLE_DEFAULT_HEIGHT.CAR,
+      vehicleProfileId: null,
       ...(waitingRatePer15Min !== undefined ? {waitingRatePer15Min} : {}),
       ...pricing,
     });
-    let vehicleProfileId = linkedProfileId;
-    if (!vehicleProfileId) {
-      const profile = await vehicleProfileRepository.create(userId, {
-        type: "CAR",
-        baseWidth: vehicleWidth ?? VEHICLE_DEFAULT_WIDTH.CAR,
-        baseHeight: 1.6,
-      });
-      vehicleProfileId = profile.id;
-      await providerRepository.update(created.id, {vehicleProfileId});
-      if (linkExisting && existing && existing.id !== created.id) {
-        await providerRepository.update(existing.id, {vehicleProfileId});
-      }
-    }
+    await notifyProviderApplication(created);
     cacheManager.del(PROVIDER_NS, userId);
     cacheManager.del(SHOP_NS);
-    return {...created, vehicleProfileId};
+    return {...created, vehicleProfileId: null};
   } catch (error) {
     const code = (error as {code?: number | string} | null)?.code;
     const message = error instanceof Error ? error.message : "";
@@ -512,6 +508,90 @@ const assertProviderNotRestricted = (
   }
 };
 
+const assertProviderVehicleFields = (
+  provider: Record<string, unknown>,
+  fields: {
+    plate?: string;
+    vehicleType?: string;
+    vehicleLabel?: string | null;
+    vehicleWidth?: number;
+    vehicleHeight?: number;
+  },
+): void => {
+  const isVehicleProvider = provider.kind === PROVIDER_KIND.TOW ||
+    provider.kind === PROVIDER_KIND.MOBILE_SHOP;
+  if (fields.vehicleType !== undefined && !isVehicleProvider) {
+    throw new ValidationError("Vehicle type is provider-vehicle-only");
+  }
+  if (fields.plate !== undefined && !isVehicleProvider) {
+    throw new ValidationError("Plate is provider-vehicle-only");
+  }
+  if ((fields.vehicleLabel !== undefined ||
+    fields.vehicleWidth !== undefined ||
+    fields.vehicleHeight !== undefined) && !isVehicleProvider) {
+    throw new ValidationError("Vehicle details are provider-vehicle-only");
+  }
+};
+
+const syncProviderVehicleProfile = async (
+  provider: Record<string, unknown>,
+  providerId: string,
+  patch: Record<string, unknown>,
+  fields: {
+    plate?: string;
+    vehicleType?: string;
+    vehicleLabel?: string | null;
+    vehicleWidth?: number;
+    vehicleHeight?: number;
+  },
+  linkedProfileId: string,
+  ownerUid: string,
+): Promise<void> => {
+  const vehicleChanged = fields.plate !== undefined ||
+    fields.vehicleType !== undefined ||
+    fields.vehicleLabel !== undefined ||
+    fields.vehicleWidth !== undefined ||
+    fields.vehicleHeight !== undefined;
+  if (linkedProfileId !== "" && ownerUid !== "" && vehicleChanged) {
+    const nextType = fields.vehicleType ??
+      (typeof provider.vehicleType === "string" ?
+        provider.vehicleType :
+        "BIKE");
+    const nextWidth = fields.vehicleWidth ??
+      (typeof provider.vehicleWidth === "number" ?
+        provider.vehicleWidth :
+        undefined);
+    const nextHeight = fields.vehicleHeight ??
+      (typeof provider.vehicleHeight === "number" ?
+        provider.vehicleHeight :
+        undefined);
+    const nextPlate = typeof patch.plate === "string" ?
+      patch.plate :
+      typeof provider.plate === "string" ? provider.plate : undefined;
+    const nextLabel = fields.vehicleLabel !== undefined ?
+      patch.vehicleLabel :
+      typeof provider.vehicleLabel === "string" ?
+        provider.vehicleLabel :
+        undefined;
+    await vehicleProfileRepository.update(ownerUid, linkedProfileId, {
+      type: nextType,
+      ...(nextWidth !== undefined ? {baseWidth: nextWidth} : {}),
+      ...(nextHeight !== undefined ? {baseHeight: nextHeight} : {}),
+      ...(nextPlate !== undefined ? {plate: nextPlate} : {}),
+      ...(nextLabel !== undefined ? {label: nextLabel} : {}),
+    });
+  }
+  if (ownerUid !== "" && vehicleChanged &&
+    provider.status === PROVIDER_STATUS.ACTIVE) {
+    await ensureProviderVehicleProfile({
+      ...provider,
+      ...patch,
+      id: providerId,
+      vehicleProfileId: linkedProfileId !== "" ? linkedProfileId : null,
+    });
+  }
+};
+
 export const updateProvider = async ({
   userId,
   providerId,
@@ -530,7 +610,9 @@ export const updateProvider = async ({
     licensePhotoUrl?: string | null;
     plate?: string;
     vehicleType?: string;
+    vehicleLabel?: string | null;
     vehicleWidth?: number;
+    vehicleHeight?: number;
     towBaseFee?: number;
     towPerKmFee?: number;
     waitingRatePer15Min?: number;
@@ -567,18 +649,10 @@ export const updateProvider = async ({
     provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
     throw new ValidationError("Vehicle classes are shop-only");
   }
-  if (fields.vehicleType !== undefined &&
-    provider.kind !== PROVIDER_KIND.TOW &&
-    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
-    throw new ValidationError("Vehicle type is provider-vehicle-only");
-  }
-  if (fields.plate !== undefined &&
-    provider.kind !== PROVIDER_KIND.TOW &&
-    provider.kind !== PROVIDER_KIND.MOBILE_SHOP) {
-    throw new ValidationError("Plate is provider-vehicle-only");
-  }
+  assertProviderVehicleFields(provider, fields);
   if (fields.plate !== undefined || fields.vehicleType !== undefined ||
-    fields.vehicleWidth !== undefined) {
+    fields.vehicleLabel !== undefined || fields.vehicleWidth !== undefined ||
+    fields.vehicleHeight !== undefined) {
     const active = await dispatchRepository.findActiveForShop(providerId);
     if (active.length > 0) {
       throw new ValidationError(
@@ -694,8 +768,14 @@ export const updateProvider = async ({
       patch.vehicleClasses = [vehicleClassOf(fields.vehicleType)];
     }
   }
+  if (fields.vehicleLabel !== undefined) {
+    patch.vehicleLabel = fields.vehicleLabel?.trim() || null;
+  }
   if (fields.vehicleWidth !== undefined) {
     patch.vehicleWidth = fields.vehicleWidth;
+  }
+  if (fields.vehicleHeight !== undefined) {
+    patch.vehicleHeight = fields.vehicleHeight;
   }
   if (fields.towBaseFee !== undefined) patch.towBaseFee = fields.towBaseFee;
   if (fields.towPerKmFee !== undefined) patch.towPerKmFee = fields.towPerKmFee;
@@ -740,21 +820,14 @@ export const updateProvider = async ({
   const ownerUid = typeof provider.operatorUid === "string" ?
     provider.operatorUid :
     "";
-  if (linkedProfileId !== "" && ownerUid !== "" &&
-    (fields.vehicleType !== undefined || fields.vehicleWidth !== undefined)) {
-    const nextType = fields.vehicleType ??
-      (typeof provider.vehicleType === "string" ?
-        provider.vehicleType :
-        "BIKE");
-    const nextWidth = fields.vehicleWidth ??
-      (typeof provider.vehicleWidth === "number" ?
-        provider.vehicleWidth :
-        undefined);
-    await vehicleProfileRepository.update(ownerUid, linkedProfileId, {
-      type: nextType,
-      ...(nextWidth !== undefined ? {baseWidth: nextWidth} : {}),
-    });
-  }
+  await syncProviderVehicleProfile(
+    provider,
+    providerId,
+    patch,
+    fields,
+    linkedProfileId,
+    ownerUid,
+  );
   if (fields.accepting === false) {
     await providerLocationRepository.remove(providerId);
   }

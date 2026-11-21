@@ -130,6 +130,8 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 
 The call-out waiver is inclusive at 1,000 m of routed shop→pickup distance. A fresh fix uses `ROUTE` and falls back to straight-line `FALLBACK`; a stale or missing fix uses the provider's registered base as `PROVIDER_BASE`. Travel is 0 only when neither origin is known. The ticket keeps `mobileTravelKm` and the applied `mobileTravelRate`; the SOS bill renders the travel line as `km × rate` and falls back to the fee alone for older tickets.
 
+On accept the rider receives one push and the ticket chat gets a system event. Both present the visit as an estimate built from call-out + travel, name zero components as waived or “no travel fee”, and state that the repair is quoted separately; the chat event adds the routed distance × rate and the rule that travel is not charged when the vehicle is later marked unfixable. The SOS detail sheet shows the same breakdown while the visit is active.
+
 Multi-attempt policy: every accepted mobile-shop visit is a separate dispatch and carries its own call-out. There is no chain-level cap and prior call-outs are not refunded when the rider continues; a waived visit contributes 0. An attempt that never gets a shop contributes 0.
 
 ### WALK_IN / MECHANIC

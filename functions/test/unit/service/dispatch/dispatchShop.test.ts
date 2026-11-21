@@ -61,6 +61,13 @@ describe("dispatchService walk-in tickets", () => {
     kind: "SHOP",
     status: "ACTIVE",
     operatorUid: "op1",
+    services: [{
+      code: "OIL",
+      name: "Oil",
+      displayPrice: 100000,
+      quoteRequired: false,
+      channels: ["ASSIST"],
+    }],
     ...(extra ?? {}),
   });
   const walkIn = (extra?: Record<string, unknown>) => {

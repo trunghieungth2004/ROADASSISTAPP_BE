@@ -43,6 +43,21 @@ const findByUser = async (userId: string): Promise<VehicleProfile[]> => {
   return results;
 };
 
+const normalizePlateKey = (value: unknown): string =>
+  typeof value === "string" ?
+    value.toUpperCase().replace(/[^A-Z0-9]/g, "") :
+    "";
+
+const findByPlate = async (
+  userId: string,
+  plate: string,
+): Promise<VehicleProfile | null> => {
+  const key = normalizePlateKey(plate);
+  if (key === "") return null;
+  const rows = await findByUser(userId);
+  return rows.find((row) => normalizePlateKey(row.plate) === key) ?? null;
+};
+
 const create = async (
   userId: string,
   data: {
@@ -137,6 +152,7 @@ const findRideConfigs = async (
 export {
   findById,
   findByUser,
+  findByPlate,
   create,
   update,
   remove,

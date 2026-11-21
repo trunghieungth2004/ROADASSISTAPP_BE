@@ -1131,6 +1131,13 @@ describe("dispatchService hardening", () => {
       status: "ACTIVE",
       operatorUid: "op1",
       openHours: "MON 08:00-18:00",
+      services: [{
+        code: "OIL",
+        name: "Oil",
+        displayPrice: 100000,
+        quoteRequired: false,
+        channels: ["ASSIST"],
+      }],
     } as never);
     jest.mocked(dispatchRepository.create).mockResolvedValue({
       id: "t1",

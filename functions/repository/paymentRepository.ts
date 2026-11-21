@@ -320,6 +320,17 @@ const findByPayeeAll = async (payeeId: string): Promise<Payment[]> => {
   return results;
 };
 
+const findByRiderAll = async (riderUid: string): Promise<Payment[]> => {
+  const snap = await db
+    .collection(PAYMENT_COLLECTION)
+    .where("riderUid", "==", riderUid)
+    .get();
+  const results: Payment[] = [];
+  snap.forEach((doc) => results.push({id: doc.id, ...doc.data()} as Payment));
+  results.sort(byCreatedDesc);
+  return results;
+};
+
 const findByReceived = async (
   limit: number = PAYMENT_LIST_LIMIT,
 ): Promise<Payment[]> => {
@@ -373,6 +384,7 @@ export {
   findByPayee,
   findByPayeeStatuses,
   findByPayeeAll,
+  findByRiderAll,
   findByReceived,
   updateStatusWhen,
   findAll,

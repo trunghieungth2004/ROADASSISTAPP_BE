@@ -23,7 +23,9 @@ import {
 } from "../../utils/errors";
 import * as cacheManager from "../../utils/cacheManager";
 import {deliverAdminPush} from "../push/admin";
+import {sendUserPush} from "../push/user";
 import * as auditService from "../auditService";
+import {ensureProviderVehicleProfile} from "./vehicle";
 
 export const listPending = async (adminUid?: string) => {
   if (adminUid) {
@@ -47,6 +49,88 @@ export const listPending = async (adminUid?: string) => {
     });
   }
   return out;
+};
+
+export const listProviders = async ({
+  adminUid,
+  status,
+  kind,
+  startDate,
+  endDate,
+  limit,
+}: {
+  adminUid: string;
+  status?: string;
+  kind?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}) => {
+  const caller = await userRepository.findById(adminUid);
+  if (!caller) throw new NotFoundError("User not found");
+  if (caller.role !== ROLE_ADMIN) {
+    throw new ForbiddenError("Admin role required");
+  }
+  const all = await providerRepository.findAll();
+  const statusCounts: Record<string, number> = {
+    ALL: all.length,
+    PENDING: 0,
+    ACTIVE: 0,
+    DENIED: 0,
+  };
+  const kindCounts: Record<string, number> = {
+    SHOP: 0,
+    TOW: 0,
+    MOBILE_SHOP: 0,
+  };
+  for (const provider of all) {
+    const providerStatus = typeof provider.status === "string" ?
+      provider.status :
+      "UNKNOWN";
+    statusCounts[providerStatus] = (statusCounts[providerStatus] ?? 0) + 1;
+    const providerKind = typeof provider.kind === "string" ?
+      provider.kind :
+      "UNKNOWN";
+    kindCounts[providerKind] = (kindCounts[providerKind] ?? 0) + 1;
+  }
+  const from = startDate ? `${startDate}T00:00:00.000Z` : "";
+  const to = endDate ? `${endDate}T23:59:59.999Z` : "";
+  const filtered = all.filter((provider) => {
+    if (status && provider.status !== status) return false;
+    if (kind && provider.kind !== kind) return false;
+    if (from === "" && to === "") return true;
+    const requested = typeof provider.requestedAt === "string" ?
+      provider.requestedAt :
+      typeof provider.createdAt === "string" ? provider.createdAt : "";
+    if (from !== "" && requested < from) return false;
+    if (to !== "" && requested > to) return false;
+    return true;
+  });
+  filtered.sort((a, b) => {
+    const av = typeof a.requestedAt === "string" ? a.requestedAt : "";
+    const bv = typeof b.requestedAt === "string" ? b.requestedAt : "";
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
+  const page = filtered.slice(0, typeof limit === "number" ? limit : 200);
+  const items = [];
+  for (const item of page) {
+    const applicant = await userRepository.findById(item.operatorUid ?? "");
+    const openReportCount =
+      await providerReportRepository.countOpenForProvider(item.id);
+    items.push({
+      ...item,
+      applicantEmail: applicant?.email ?? null,
+      applicantName: applicant?.displayName ?? null,
+      applicantPhone: applicant?.phone ?? null,
+      openReportCount,
+    });
+  }
+  return {
+    total: filtered.length,
+    counts: statusCounts,
+    kindCounts,
+    items,
+  };
 };
 
 export const reviewProvider = async ({
@@ -75,9 +159,22 @@ export const reviewProvider = async ({
   if (!decided) {
     return {decided: false, status: existing.status};
   }
-  await providerRepository.update(providerId, {accepting: approve});
+  await providerRepository.update(providerId, {
+    accepting: approve,
+    ...(!approve && typeof existing.vehicleProfileId === "string" ?
+      {vehicleProfileId: null} :
+      {}),
+  });
   if (!approve) {
     await providerLocationRepository.remove(providerId);
+  }
+  if (approve) {
+    const linked = existing.vehicleProfileId;
+    await ensureProviderVehicleProfile({
+      ...existing,
+      id: providerId,
+      vehicleProfileId: typeof linked === "string" ? linked : null,
+    }).catch(() => undefined);
   }
   cacheManager.del(PROVIDER_NS);
   cacheManager.del(SHOP_NS);
@@ -93,6 +190,23 @@ export const reviewProvider = async ({
     note: reviewNote ?? null,
     meta: {kind: existing.kind},
   });
+  const operatorUid = typeof existing.operatorUid === "string" ?
+    existing.operatorUid :
+    "";
+  if (operatorUid !== "") {
+    await sendUserPush(
+      operatorUid,
+      approve ? "Provider approved" : "Provider application declined",
+      approve ?
+        `${existing.name} is approved and can start accepting jobs.` :
+        `${existing.name} was not approved.${reviewNote ? ` ${reviewNote}` : ""}`,
+      {
+        event: "PROVIDER_REVIEWED",
+        providerId,
+        status: approve ? PROVIDER_STATUS.ACTIVE : PROVIDER_STATUS.DENIED,
+      },
+    ).catch(() => undefined);
+  }
   return {
     decided: true,
     status: approve ? PROVIDER_STATUS.ACTIVE : PROVIDER_STATUS.DENIED,
@@ -146,7 +260,7 @@ export const reportProvider = async ({
     title: "New provider report",
     body: `${provider.name}: ${reason}`,
     refId: report.id,
-    route: "/admin?section=requests",
+    route: `/admin?section=providers&providerId=${provider.id}`,
   }).catch(() => undefined);
   return report;
 };

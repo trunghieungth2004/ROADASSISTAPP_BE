@@ -170,6 +170,17 @@ const findByShop = async (
   return out;
 };
 
+const findAll = async (limit = 5000): Promise<Booking[]> => {
+  const snap = await db
+    .collection(COLLECTION)
+    .orderBy("scheduledAt", "desc")
+    .limit(limit)
+    .get();
+  const out: Booking[] = [];
+  snap.forEach((doc) => out.push({id: doc.id, ...doc.data()} as Booking));
+  return out;
+};
+
 const findForDay = async (
   providerId: string,
   startIso: string,
@@ -305,6 +316,7 @@ export {
   update,
   findByRider,
   findByShop,
+  findAll,
   findForDay,
   findReminderDue,
   findReminderDueV2,

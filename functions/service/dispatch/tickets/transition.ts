@@ -14,7 +14,7 @@ import {startWaiting, stopWaiting} from "../waiting";
 import {
   NS, TOWER_CANCEL_SOURCE, VALID_STATUSES, ARRIVAL_RADIUS_M,
 } from "../constants";
-import {loadedTrackDistance} from "../helpers";
+import {loadedTrackDistance, returnTowPickupSnapshot} from "../helpers";
 import {schedulePaymentReminder} from "../../paymentReminderService";
 import {assertNearTowDestination} from "./deliveryGuard";
 import {
@@ -228,6 +228,9 @@ export const updateDispatchStatus = async ({
     {from: String(ticket.status), to: status},
   );
   if (status === STATUS_DISPATCH.READY) {
+    const returnTowOrigin = ticket.ticketType === "WALK_IN" ?
+      await returnTowPickupSnapshot(ticket) :
+      null;
     await dispatchRepository.update(id, {
       fulfilledByShopId: ticket.assignedShopId ?? null,
       ...(ticket.ticketType === "WALK_IN" ?
@@ -239,6 +242,9 @@ export const updateDispatchStatus = async ({
               "",
             by: userId,
             at: new Date().toISOString(),
+            ...(returnTowOrigin !== null ?
+              {originSnapshot: returnTowOrigin} :
+              {}),
           },
         } :
         {}),

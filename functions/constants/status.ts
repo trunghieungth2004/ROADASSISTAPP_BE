@@ -95,6 +95,11 @@ const VEHICLE_DEFAULT_WIDTH: Record<string, number> = {
   CAR: 1.9,
 };
 
+const VEHICLE_DEFAULT_HEIGHT: Record<string, number> = {
+  BIKE: 1.1,
+  CAR: 1.6,
+};
+
 const TOW_VEHICLE_TYPE = {
   CAR: "CAR",
 } as const;
@@ -409,6 +414,7 @@ export {
   SERVICE_CHANNEL,
   VEHICLE_TYPE,
   VEHICLE_DEFAULT_WIDTH,
+  VEHICLE_DEFAULT_HEIGHT,
   TOW_VEHICLE_TYPE,
   VEHICLE_CLASS,
   SERVICE_ROLE,

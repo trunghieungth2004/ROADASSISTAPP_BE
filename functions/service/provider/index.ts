@@ -15,6 +15,7 @@ export {
 } from "./search";
 export {
   listPending,
+  listProviders,
   reviewProvider,
   reportProvider,
   listReports,

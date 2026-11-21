@@ -23,6 +23,54 @@ import {
 import {ForbiddenError, NotFoundError, ValidationError} from
   "../../utils/errors";
 
+export const providerOfferSnapshot = (
+  provider: {
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    kind: string;
+    label?: string | null;
+  } | null,
+): Record<string, unknown> | null => {
+  if (!provider) return null;
+  return {
+    id: provider.id,
+    name: provider.name,
+    lat: provider.lat,
+    lng: provider.lng,
+    kind: provider.kind,
+    label: provider.label ?? null,
+  };
+};
+
+export const returnTowPickupSnapshot = async (
+  ticket: {
+    destinationSnapshot?: Record<string, unknown> | null;
+    assignedShopId?: string | null;
+    providerId?: string | null;
+  },
+): Promise<Record<string, unknown> | null> => {
+  const snapshot = ticket.destinationSnapshot;
+  if (snapshot && typeof snapshot.lat === "number" &&
+    typeof snapshot.lng === "number") {
+    return {
+      ...(typeof snapshot.id === "string" ? {id: snapshot.id} : {}),
+      ...(typeof snapshot.name === "string" ? {name: snapshot.name} : {}),
+      ...(typeof snapshot.kind === "string" ? {kind: snapshot.kind} : {}),
+      lat: snapshot.lat,
+      lng: snapshot.lng,
+      label: typeof snapshot.label === "string" ? snapshot.label : null,
+    };
+  }
+  const shopId = typeof ticket.assignedShopId === "string" &&
+    ticket.assignedShopId !== "" ?
+    ticket.assignedShopId :
+    typeof ticket.providerId === "string" ? ticket.providerId : "";
+  if (shopId === "") return null;
+  return providerOfferSnapshot(await providerRepository.findById(shopId));
+};
+
 export const resolveDestination = async (
   destinationShopId: string | undefined,
   destinationPoint:

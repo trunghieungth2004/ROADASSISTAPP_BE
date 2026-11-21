@@ -125,7 +125,7 @@ List all users. No body schema.
 
 ### `POST /users/me` **(Auth)**
 
-Login bootstrap: the authenticated caller's profile plus their registered vehicles and the active (routing) vehicle in one call. No body required. `activeVehicle` is `null` until a vehicle is marked active. `subscription` is `null` until a SePay VIP plan is paid; `status` is derived from `expiresAt` on every read (`ACTIVE`/`EXPIRED`), so no scheduled expiry job is needed. `subscriptionPlans` is the server-authoritative plan catalog (amounts and durations) used by the paywall.
+Login bootstrap: the authenticated caller's profile plus their registered vehicles and the active (routing) vehicle in one call. No body required. Each vehicle carries `type`, `baseWidth`, `baseHeight`, `plate?`, `label?` and its `providerLinks`; `activeVehicle` is `null` until a vehicle is marked active. `subscription` is `null` until a SePay VIP plan is paid; `status` is derived from `expiresAt` on every read (`ACTIVE`/`EXPIRED`), so no scheduled expiry job is needed. `subscriptionPlans` is the server-authoritative plan catalog (amounts and durations) used by the paywall.
 
 **Response `200`:**
 ```json
@@ -319,10 +319,10 @@ Repair shops (`SHOP`), tow operators (`TOW`), and mobile shops (`MOBILE_SHOP`) a
 
 ### `POST /providers` **(Auth)**
 
-Create a provider record. `TOW` requires `plate` + `vehicleType` and may set `towBaseFee`/`towPerKmFee`; `MOBILE_SHOP` requires `plate` + `vehicleType` + `licenseNumber` and may set `callOutFee`/`travelPerKmFee`. Both are validated against the live `providerPricing` bounds in `platform_config/global` (defaults: tow base 100k–300k, per-km 8k–15k; mobile call-out 0–100k, travel 3k–10k); `SHOP` takes `openHours`, optional `vehicleClasses` (`SOLO_BIKE`/`CAR`, 1–2 unique), and an itemized `services` catalog. Out-of-bounds pricing is `400`. `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate.
+Create a provider record. `TOW` requires `plate` + `vehicleType` and may set `vehicleLabel`, `vehicleWidth`, `vehicleHeight`, `towBaseFee`/`towPerKmFee`; `MOBILE_SHOP` requires `plate` + `vehicleType` + `licenseNumber` and may set the same vehicle details plus `callOutFee`/`travelPerKmFee`. Both are validated against the live `providerPricing` bounds in `platform_config/global` (defaults: tow base 100k–300k, per-km 8k–15k; mobile call-out 0–100k, travel 3k–10k); `SHOP` takes `openHours`, optional `vehicleClasses` (`SOLO_BIKE`/`CAR`, 1–2 unique), and an itemized `services` catalog. Out-of-bounds pricing is `400`. `409` when the caller already operates that kind (unless the existing record is `DENIED`) or when the plate is taken. `400` for a malformed plate. Provider applications stay `PENDING` and do **not** create a vehicle profile; approval creates or links the user's vehicle using the stored plate, label, width and height. Every new application pushes admins to the provider queue with the new `providerId`.
 
 ```json
-{ "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "CAR", "vehicleWidth": 2.0, "towBaseFee": 200000, "towPerKmFee": 12000 }
+{ "kind": "TOW", "name": "Tow Co", "lat": 10.7626, "lng": 106.6602, "plate": "30A-12345", "vehicleType": "CAR", "vehicleLabel": "Flatbed", "vehicleWidth": 2.0, "vehicleHeight": 1.6, "towBaseFee": 200000, "towPerKmFee": 12000 }
 ```
 
 ### `POST /providers/mine` **(Auth)**
@@ -360,7 +360,7 @@ Name search over `ACTIVE`, non-suspended providers. Prefix match on the lowercas
 
 ### `PUT /providers` **(Auth)**
 
-Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, vehicle classes, the service catalog, provider pricing within the bounds above, or the availability toggle. Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
+Update a provider. Only the operator (or an admin) may edit name, label, location (`lat` + `lng` together, which also refreshes the geohash), hours, vehicle classes, the service catalog, provider pricing within the bounds above, or the availability toggle. TOW/MOBILE_SHOP edits also accept `plate`, `vehicleType`, `vehicleLabel`, `vehicleWidth` and `vehicleHeight`; an approved provider's linked vehicle profile is kept in sync (and created on demand if missing). Ownership never moves — `operatorUid` is assigned at creation and is not editable. Setting `accepting: false` also clears the tow live-location row.
 
 ```json
 { "providerId": "shop1", "accepting": false }
@@ -372,13 +372,40 @@ The caller's provider scorecards: per-provider `completedJobs`, rating, acceptan
 
 **Request:** `{}`
 
+### `POST /analytics/me` **(Auth)**
+
+Date-ranged analytics for the rider and provider scopes in one payload. Pass `days` (1–365) or `startDate`/`endDate` (`YYYY-MM-DD`); omitted dates default to the last 30 days and any range is capped at 365 days. `generatedAt` stamps freshness, and `comparison` returns the immediately preceding window plus `current`, `previous`, and percentage `change` for rider spend/tickets/completed/bookings and provider gross/net/taken/completed/bookings. `rider` returns `tickets` (total/active/completed plus `byType`/`byStatus`), `payments`, `bookings`, `services`, and a daily `series` of tickets/completed/spend/bookings. `provider` returns per-provider scorecards (taken and completed jobs, lifetime jobs, bookings, rating, service usage), aggregate `tickets` (`total`, `taken`, `completed`), `earnings` (including `commissionOwed`), `payouts`, `bookings`, weighted `rating`, `services`, and a daily `series` of jobs/completed/earnings/bookings. `taken` counts jobs assigned to the provider in the period, including former assignments; `completed` counts resolved jobs. `services` includes `total`, `byType`, `byCategory`, a ranked `services` array (`key`, `name`, `category`, `count`, `revenue`), and `topService` (`key`, `name`, `count`, `kind`). `windowDays`, `startDate`, and `endDate` echo the resolved range.
+
+**Request:**
+```json
+{ "startDate": "2026-10-01", "endDate": "2026-10-31" }
+```
+
+### `POST /analytics/me/day` **(Auth)**
+
+Daily drill-down behind the mobile activity chart. Pass `date` (`YYYY-MM-DD`) and optional `mode` (`RIDER`/`PROVIDER`). Returns `totals` plus compact rider/provider `tickets`, `bookings`, and `payments` for that UTC day. Rider scope uses the caller's filed tickets, bookings and payments; provider scope uses all providers operated by the caller. Invalid dates are `400`.
+
+**Request:**
+```json
+{ "date": "2026-11-18", "mode": "PROVIDER" }
+```
+
 ### `POST /providers/pending` **(Admin)**
 
 List pending providers with applicant name, email, and open-report count (`openReportCount`).
 
+### `POST /providers/admin/list` **(Admin)**
+
+First-class provider approval queue over every provider, newest application first. Optional `status` (`PENDING`/`ACTIVE`/`DENIED`), `kind` (`SHOP`/`TOW`/`MOBILE_SHOP`), `startDate`/`endDate` (`YYYY-MM-DD`, matched against `requestedAt` with `createdAt` as fallback), and `limit` (1–500). Returns `total`, status `counts` (including `ALL`), `kindCounts`, and `items` with applicant name/email/phone, `openReportCount`, `reviewNote`, and request/decision stamps. The admin panel pairs this list with `POST /providers/reports` in the same section, showing open reports with dismiss and suspend actions; application and report pushes include `providerId` so the panel preselects the row.
+
+**Request:**
+```json
+{ "status": "PENDING", "kind": "TOW", "startDate": "2026-10-01", "endDate": "2026-10-31" }
+```
+
 ### `POST /providers/review` **(Admin)**
 
-Approve or deny a provider. A second review of an already-decided record is a no-op (`{decided: false}`).
+Approve or deny a provider. Approval creates or links the user's `vehicle_profiles` row for TOW/MOBILE_SHOP from the stored plate, type, label, width and height; denial unlinks any legacy vehicle profile and keeps the provider out of the fleet. A second review of an already-decided record is a no-op (`{decided: false}`).
 
 ```json
 { "providerId": "30A12345", "approve": true }
@@ -386,7 +413,7 @@ Approve or deny a provider. A second review of an already-decided record is a no
 
 ### `POST /providers/report` **(Auth)**
 
-Report a provider. Any authenticated user may report — holding a ticket is deliberately not required, because "this shop doesn't exist" is the most common real report. Reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`. Only `ACTIVE`, non-suspended providers are reportable (`400` otherwise); one open report per reporter per provider (`409` on dupe).
+Report a provider. Any authenticated user may report — holding a ticket is deliberately not required, because "this shop doesn't exist" is the most common real report. Reasons: `FAKE_BUSINESS`, `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`. Only `ACTIVE`, non-suspended providers are reportable (`400` otherwise); one open report per reporter per provider (`409` on dupe). Admins receive a push that opens the provider queue with the reported provider preselected.
 
 ```json
 { "providerId": "30A12345", "reason": "FAKE_BUSINESS", "note": "Empty lot", "ticketId": "tick1" }
@@ -1383,7 +1410,7 @@ The rider picks a provider for a pending ticket (stays pending until the provide
 
 ### `POST /dispatch/accept` **(Auth)**
 
-Accept a pending ticket at will. `shopId` is required: the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended; for addressed tickets the shop must be the named one). Opening hours are advisory: the `accepting` switch is the operational gate, so a `WALK_IN` can be accepted outside listed hours while the shop is on duty. Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC`/`WALK_IN` tickets need a `SHOP` provider, and `SOS` tickets need a `MOBILE_SHOP` provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedShopId` (with `assignedKind` mirroring the provider — `TOW` for towers). The claim also clears `cancelledBy`, dropping the rider's "tower cancelled mid-job" banner once a requeued tow is picked up again. The response `kind` mirrors it too. Concurrent accepts on a taken ticket get `400`.
+Accept a pending ticket at will. `shopId` is required: the caller accepts for that provider (must be its operator or an admin; provider must be accepting, `ACTIVE`, and non-suspended; for addressed tickets the shop must be the named one). Opening hours are advisory: the `accepting` switch is the operational gate, so a `WALK_IN` can be accepted outside listed hours while the shop is on duty. Kind must match the ticket: `TOW` tickets need a `TOW` provider, `MECHANIC`/`WALK_IN` tickets need a `SHOP` provider, and `SOS` tickets need a `MOBILE_SHOP` provider (`400`/`403` otherwise). `TOW` providers additionally need a plate on file. Sets `MATCHED` and records `assignedShopId` (with `assignedKind` mirroring the provider — `TOW` for towers). The claim also clears `cancelledBy`, dropping the rider's "tower cancelled mid-job" banner once a requeued tow is picked up again. The response `kind` mirrors it too. Concurrent accepts on a taken ticket get `400`. A mobile-shop SOS accept also stamps `mobileCallOutFee`, `mobileCallOutWaived`, `mobileTravelKm`, `mobileTravelRate` and `mobileTravelFee`, then sends the rider one push plus a chat system event. Both describe the visit as an estimate built from the call-out and travel components, omit zero-value components ("call-out waived", "no travel fee"), state that the repair is quoted separately, and the chat event adds the distance × rate and notes that travel is not charged when the vehicle is later marked unfixable.
 
 **Request:**
 ```json
@@ -2295,11 +2322,20 @@ Mark every outstanding cash-commission entry for a payee as settled after an off
 
 ### `POST /admin/dashboard` **(Admin)**
 
-Aggregate marketplace snapshot over `days` (default 30): `users` (total/active/admins), `providers` (total/suspended, `byKind` with status counts, rating average/count), `tickets` (total/active/matched/matchRate/avgAcceptMinutes, `byType`, `byStatus`), `money` (gross/commission/refunded/net, payouts net and deducted commission, `commissionOwed`, `payeesOwingCommission`, `byMethod`, `byStatus`), and `flags` (total/recent7d/`byStatus`). `series` adds daily revenue/SLA/ticket/user/provider/case buckets, payment/ticket/case/flag breakdowns, and `topProviders`.
+Aggregate marketplace snapshot over a date range. Pass `days` (1–365) for a trailing window, or `startDate`/`endDate` (`YYYY-MM-DD`) for an explicit range; omitted dates default to the last 30 days and any range is capped at 365 days. `startDate`/`endDate`/`from`/`to` echo the resolved window, and `generatedAt` stamps freshness. `comparison` returns the immediately preceding window plus `current`, `previous`, and percentage `change` for gross, commission, net, tickets, completed jobs, bookings and completed bookings. The snapshot contains `users` (total/active/admins), `providers` (total/suspended, `byKind` with status counts, rating average/count), `tickets` (total/active/matched/matchRate/avgAcceptMinutes, `byType`, `byStatus`), `bookings` (total/active/completed/cancelled/declined/noShow, `byStatus`, `byService`), `services` (total, `byType`, `byCategory`, ranked `services`, and `topService`), `money` (gross/commission/refunded/net, payouts net and deducted commission, `commissionOwed`, `payeesOwingCommission`, `byMethod`, `byStatus`), and `flags` (total/recent7d/`byStatus`). `series` adds daily revenue/SLA/ticket/booking/user/provider/case buckets, payment/ticket/case/flag breakdowns, and `topProviders`.
 
 **Request:**
 ```json
-{ "days": 30 }
+{ "startDate": "2026-10-01", "endDate": "2026-10-31" }
+```
+
+### `POST /admin/dashboard/day` **(Admin)**
+
+Daily drill-down behind the dashboard date charts. Pass `date` (`YYYY-MM-DD`). Returns `totals` (tickets, completed, bookings, gross, commission) plus compact `tickets`, `bookings`, and `payments` arrays for that UTC day. Ticket rows include type, status, rider/provider names, amount and payment status; bookings include scheduled time, services and deposit; payments include amount, commission, method and status. Invalid dates are `400`.
+
+**Request:**
+```json
+{ "date": "2026-11-18" }
 ```
 
 ### `POST /admin/tickets` **(Admin)**
@@ -2477,15 +2513,11 @@ Validation failures include an `errors` array:
 
 ### `POST /dispatch/mobile-shop/tow-offer` **(Auth, mobile shop)**
 
-The assigned mobile shop offers a tow for an unfixable SOS vehicle. If the operator has an `ACTIVE`, non-suspended, accepting TOW with the same `vehicleProfileId` and plate, the offer is `DIRECT` and that tower is assigned on acceptance. Otherwise the offer is `NETWORK`: no tower is assigned, and acceptance creates a pending TOW broadcast to nearby towers. Either mode expires after 15 minutes. Optional `destinationShopId` targets the mobile shop's own repair shop; it must be `ACTIVE`, non-suspended, and accepting drop-offs. Otherwise the rider chooses a destination when accepting.
+The assigned mobile shop offers a tow for an unfixable SOS vehicle. If the operator has an `ACTIVE`, non-suspended, accepting TOW with the same `vehicleProfileId` and plate, the offer is `DIRECT` and that tower is assigned on acceptance. Otherwise the offer is `NETWORK`: no tower is assigned, and acceptance creates a pending TOW broadcast to nearby towers. Either mode expires after 15 minutes. Optional `destinationShopId` targets the mobile shop's own repair shop; it must be `ACTIVE`, non-suspended, and accepting drop-offs. The offer stamps `originPoint` and, when a shop was preselected, a `destinationSnapshot` (`id`, `name`, `lat`, `lng`, `label`) so clients can show a pickup/drop-off confirmation. Without a preset shop, the rider chooses the destination at acceptance.
 
 ### `POST /dispatch/mobile-shop/tow-offer/respond` **(Auth, rider)**
 
-The rider accepta destination when accepting.
-
-### `POST /dispatch/mobile-shop/tow-offer/respond` **(Auth, rider)**
-
-The rider accepts or declines a mobile-shop tow offer. Accepting a `DIRECT` offer creates a linked TOW ticket addressed to the same-vehicle TOW and accepts it directly. Accepting a `NETWORK` offer creates a linked pending TOW with `sourceTicketId`, no `providerId`, and `addressedTow: false`, then broadcasts it to nearby towers without auto-accepting one. Both copy the rider's note and photos and capture `destinationShopId` or `destinationPoint` when no shop was offered. Declining or expiry marks the offer declined/expired and creates a linked continuation SOS (attempt 1 automatic; attempt 3+ requires `POST /dispatch/sos/continue`).
+The rider accepts or declines a mobile-shop tow offer. Clients must show the pickup and drop-off and require explicit confirmation even when `destinationShopId` was preset; destination changes are sent as `destinationShopId` or `destinationPoint`. Accepting a `DIRECT` offer creates a linked TOW ticket addressed to the same-vehicle TOW and accepts it directly. Accepting a `NETWORK` offer creates a linked pending TOW with `sourceTicketId`, no `providerId`, and `addressedTow: false`, then broadcasts it to nearby towers without auto-accepting one. Both copy the rider's note and photos and capture `destinationShopId` or `destinationPoint` when no shop was offered. Declining or expiry marks the offer declined/expired and creates a linked continuation SOS (attempt 1 automatic; attempt 3+ requires `POST /dispatch/sos/continue`).
 
 ### `POST /dispatch/sos/continue` **(Auth, rider / assigned mobile shop / admin)**
 
@@ -2493,7 +2525,7 @@ Create a linked continuation SOS after an unfixable visit. The previous mobile s
 
 ### `POST /dispatch/walk-in/return-tow` **(Auth, rider)**
 
-The rider accepts or declines the return-tow offer created when a WALK_IN reaches READY or UNFIXABLE. Accepting creates a linked TOW with `towKind: "RETURN"` from the shop to the rider's current location, using the supplied `destinationPoint` label when present. A CASH repair charge must be `CONFIRMED` first (`400` otherwise). Tickets that predate the offer are answered lazily: when `returnTowOffer` is missing, the endpoint records the pending offer from the rider's answer instead of refusing. Cancelling the return tow before tower arrival reopens the parent offer.
+The rider accepts or declines the return-tow offer created when a WALK_IN reaches READY or UNFIXABLE. The offer carries an `originSnapshot` (`id`, `name`, `lat`, `lng`) for the shop pickup, and the rider supersedes it with an explicit drop-off confirmation. Accepting creates a linked TOW with `towKind: "RETURN"` from the shop to the rider's current location, using the supplied `destinationPoint` label when present. A CASH repair charge must be `CONFIRMED` first (`400` otherwise). Tickets that predate the offer are answered lazily: when `returnTowOffer` is missing, the endpoint records the pending offer from the rider's answer instead of refusing. Cancelling the return tow before tower arrival reopens the parent offer.
 
 ### `POST /chat/open` **(Auth)**
 

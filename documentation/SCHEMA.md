@@ -232,10 +232,13 @@ Responds `{cached, routes}` — up to 5 options stop-less (`routes[0]` primary),
 
 ## Providers
 
-Provider records in the top-level `providers` collection. Kinds: `SHOP` (fixed premises,
-`PENDING` on create, admin approves) and `TOW` (comes to you, `PENDING` on create, admin approves). `TOW`
-doc id is the normalized plate (uppercased, non-alphanumerics stripped); plates are
-immutable. Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
+Provider records in the top-level `providers` collection. Kinds: `SHOP` (fixed premises),
+`TOW` (comes to you) and `MOBILE_SHOP` (comes to the rider); all start `PENDING` and
+need admin approval. `TOW` doc id is the normalized plate (uppercased, non-alphanumerics
+stripped); plates are immutable. TOW/MOBILE_SHOP store `vehicleLabel`, `vehicleWidth`,
+`vehicleHeight` and `vehicleProfileId`; the vehicle profile is created or linked at
+approval (or when an approved provider is edited), never on the pending application.
+Suspension fields: `suspended`, `suspendedAt`, `suspendedReason`, `suspendedBy`.
 Live tow positions live in `provider_locations` (doc id = provider id; 15-minute freshness).
 Legacy provider reports live in `provider_reports` (reasons: `FAKE_BUSINESS`,
 `WRONG_LOCATION`, `UNSAFE`, `HARASSMENT`, `SPAM`, `INFO_INACCURATE`, `OTHER`;
@@ -246,16 +249,18 @@ admin actions.
 ### `POST /providers` — `createProvider`
 | Field | Type | |
 |-------|------|---|
-| `kind` | enum: SHOP, TOW | req |
+| `kind` | enum: SHOP, TOW, MOBILE_SHOP | req |
 | `name` | string | req |
 | `lat` | lat | req |
 | `lng` | lng | req |
 | `label` | string | opt |
 | `openHours` | string (`DAY HH:MM-HH:MM,...`) | SHOP only |
 | `vehicleClasses` | array of `SOLO_BIKE`/`CAR` (1–2 unique) | SHOP only, opt (absent means both) |
-| `plate` | string | TOW only, req |
-| `vehicleType` | enum: CAR | TOW only, req |
-| `vehicleWidth` | number (0.3–3) | TOW only, opt |
+| `plate` | string | TOW/MOBILE_SHOP, req |
+| `vehicleType` | enum: CAR (TOW), BIKE/CAR (MOBILE_SHOP) | req |
+| `vehicleLabel` | string (max 120) | TOW/MOBILE_SHOP, opt |
+| `vehicleWidth` | number (0.3–3) | TOW/MOBILE_SHOP, opt |
+| `vehicleHeight` | number (0.5–3) | TOW/MOBILE_SHOP, opt |
 
 ### `PUT /providers` — `updateProvider`
 | Field | Type | |
@@ -267,6 +272,11 @@ admin actions.
 | `lng` | lng | opt (with `lat`) |
 | `openHours` | string (allows `""`/`null`) | opt |
 | `vehicleClasses` | array of `SOLO_BIKE`/`CAR` (1–2 unique) | opt |
+| `plate` | string | TOW/MOBILE_SHOP, opt |
+| `vehicleType` | string | TOW/MOBILE_SHOP, opt |
+| `vehicleLabel` | string (max 120, allows `""`/`null`) | TOW/MOBILE_SHOP, opt |
+| `vehicleWidth` | number (0.3–3) | TOW/MOBILE_SHOP, opt |
+| `vehicleHeight` | number (0.5–3) | TOW/MOBILE_SHOP, opt |
 | `accepting` | boolean | opt |
 
 ### `POST /providers/near` — `nearProviders`
@@ -317,6 +327,21 @@ No fields. Returns the live `providerPricing` bounds (`TOW` and `MOBILE_SHOP` mi
 
 ### `POST /providers/pending` — `listPending` (admin)
 No fields. Pending providers with applicant name, email, and `openReportCount`.
+
+### `POST /providers/admin/list` — `listProviders` (admin)
+| Field | Type | |
+|-------|------|---|
+| `status` | `PENDING`, `ACTIVE`, `DENIED` | opt |
+| `kind` | `SHOP`, `TOW`, `MOBILE_SHOP` | opt |
+| `startDate` | `YYYY-MM-DD` | opt |
+| `endDate` | `YYYY-MM-DD` | opt |
+| `limit` | integer (1–500) | opt |
+
+Returns `total`, status `counts` (including `ALL`), `kindCounts`, and `items`
+with applicant name/email/phone, `openReportCount`, `reviewNote`, and
+request/decision stamps. The admin panel pairs this with `POST
+/providers/reports`; application and report pushes include `providerId` so
+the panel preselects the row.
 
 ### `POST /providers/review` — `reviewProvider` (admin)
 | Field | Type | |
@@ -549,7 +574,7 @@ flows:
 | `loadedAt` | ISO timestamp — vehicle loaded at pickup; scopes the loaded leg for a genuine-breakdown partial | `POST /dispatch/tow/loaded` |
 | `loadedPhotos` / `receivedPhotos` | string[] — handover photos (Storage paths), shown to the rider in Notes and pictures | `POST /dispatch/tow/loaded` / `POST /dispatch/tow/received` |
 | `towKind` | `"NORMAL"` / `"RETURN"` — distinguishes a return tow from the usual tow | return-tow acceptance |
-| `returnTowOffer` | `{status, shopId, by, at}` — rider-facing return-tow offer | WALK_IN/MECHANIC `READY` or `UNFIXABLE` |
+| `returnTowOffer` | `{status, shopId, originSnapshot?: {id, name, lat, lng, label}, by, at}` — rider-facing return-tow offer with the shop pickup snapshot | WALK_IN/MECHANIC `READY` or `UNFIXABLE` |
 | `deliveredAt` / `deliveredBy` | ISO timestamp / uid — tower marked delivery and closed the tow | TOW resolve by the tower |
 | `receivedAt` | ISO timestamp — rider confirmed receipt | `POST /dispatch/tow/received` |
 | `jobTrack` | array of `{lat, lng, at, shopId}` — provider location trail used for precise traveled distance and GPS haul | provider location pings |
@@ -570,7 +595,7 @@ flows:
 | `continuationTicketId` | child SOS created from this ticket | continuation |
 | `excludedShopIds` / `excludedOperatorUids` | shops/operators that must not receive a continuation SOS | continuation |
 | `sourceTicketId` | SOS that spawned a TOW | mobile tow |
-| `mobileTowOffer` | `{status, shopId, destinationShopId, mode: DIRECT\|NETWORK, towProviderId, by, at, expiresAt}` — 15-minute offer; `DIRECT` assigns the same-vehicle TOW, `NETWORK` creates a pending broadcast TOW | mobile tow |
+| `mobileTowOffer` | `{status, shopId, destinationShopId, destinationSnapshot?: {id, name, lat, lng, label}, originPoint?: {lat, lng}, mode: DIRECT\|NETWORK, towProviderId, by, at, expiresAt}` — 15-minute offer; `DIRECT` assigns the same-vehicle TOW, `NETWORK` creates a pending broadcast TOW; snapshots drive the rider destination confirmation | mobile tow |
 | `chatVersion` | number — current assignment chat room version; tower cancel or a declined mobile fix increments it | tower cancel / mobile fix decline |
 | `chatHistory` | array of `{version, roomId, shopId, shopName, at}` — archived chat rooms; returned to the rider/former tower, stripped for the next tower | tower cancel |
 | `mobileTowAvailable` / `mobileTowMode` / `mobileTowState` | feed/read flags: `DIRECT` or `NETWORK` availability, with `TOW_OFF_DUTY`, `TOW_BUSY`, `NO_TOW`, or `NONE_NEARBY` | unfixable SOS feed |
@@ -1037,6 +1062,32 @@ snapshot `name`, `category`, `listPrice`, `warrantyDays`, `warrantyParts`.
 Empty body. Per-provider scorecards plus payout totals and outstanding
 commission.
 
+### `POST /analytics/me` — `myAnalytics` (auth)
+| Field | Type | |
+|-------|------|---|
+| `days` | integer (1–365) | opt |
+| `startDate` | `YYYY-MM-DD` | opt |
+| `endDate` | `YYYY-MM-DD` | opt |
+
+Defaults to the last 30 days and caps the range at 365 days. Returns both
+scopes with `generatedAt` and `comparison` (previous window, current/previous
+totals, percentage change): `rider` (`tickets`, `payments`, `bookings`,
+`services`, daily `series` of tickets/completed/spend/bookings) and
+`provider` (per-provider scorecards with taken/completed jobs, aggregate
+`tickets` including `taken`, `earnings` with `commissionOwed`, `payouts`,
+`bookings`, weighted `rating`, `services`, daily `series` of
+jobs/completed/earnings/bookings). `services` carries `total`, `byType`,
+`byCategory`, ranked `services`, and `topService`.
+
+### `POST /analytics/me/day` — `myDayDetail` (auth)
+| Field | Type | |
+|-------|------|---|
+| `date` | `YYYY-MM-DD` | req |
+| `mode` | `RIDER`, `PROVIDER` | opt |
+
+Returns daily `totals` plus compact scoped `tickets`, `bookings`, and
+`payments`. Powers the mobile activity-bar drill-down.
+
 ### `POST /admin/payouts/requests` — `requests` (admin)
 | Field | Type | |
 |-------|------|---|
@@ -1060,6 +1111,22 @@ commission.
 | Field | Type | |
 |-------|------|---|
 | `days` | integer (1–365) | opt |
+| `startDate` | `YYYY-MM-DD` | opt |
+| `endDate` | `YYYY-MM-DD` | opt |
+
+Defaults to the last 30 days and caps the range at 365 days. Adds `generatedAt`
+and `comparison` (previous window, current/previous totals, percentage change)
+for the dashboard KPI cards, plus `bookings`, `services` (with `topService`),
+and daily `bookings` buckets to the marketplace snapshot;
+`startDate`/`endDate`/`from`/`to` echo the resolved window.
+
+### `POST /admin/dashboard/day` — `dashboardDay` (admin)
+| Field | Type | |
+|-------|------|---|
+| `date` | `YYYY-MM-DD` | req |
+
+Returns `totals` plus compact `tickets`, `bookings`, and `payments` for that
+UTC day. Powers the clickable dashboard date charts.
 
 ### `POST /admin/providers/stats` — `providerStats` (admin)
 | Field | Type | |

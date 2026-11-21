@@ -1,4 +1,5 @@
 import {PAYMENT_RECEIVED_STATUSES} from "../constants/payments";
+import {dayKeysBetween} from "./analyticsRange";
 
 type Row = Record<string, unknown>;
 
@@ -10,15 +11,6 @@ const str = (value: unknown): string =>
 
 const dayOf = (value: unknown): string =>
   typeof value === "string" ? value.slice(0, 10) : "";
-
-const dayKeys = (window: number): string[] => {
-  const keys: string[] = [];
-  for (let i = window - 1; i >= 0; i -= 1) {
-    keys.push(new Date(Date.now() - i * 24 * 60 * 60 * 1000)
-      .toISOString().slice(0, 10));
-  }
-  return keys;
-};
 
 const acceptMinutes = (ticket: Row): number | null => {
   const created = Date.parse(str(ticket.createdAt));
@@ -38,14 +30,14 @@ const acceptMinutes = (ticket: Row): number | null => {
 };
 
 const buildDaily = (input: {
-  window: number;
+  keys: string[];
   payments: Row[];
   tickets: Row[];
+  bookings: Row[];
   users: Row[];
   providers: Row[];
 }) => {
-  const keys = dayKeys(input.window);
-  const map = new Map(keys.map((date) => [date, {
+  const map = new Map(input.keys.map((date) => [date, {
     date,
     gross: 0,
     commission: 0,
@@ -53,6 +45,7 @@ const buildDaily = (input: {
     refunds: 0,
     payments: 0,
     tickets: 0,
+    bookings: 0,
     users: 0,
     providers: 0,
     cases: 0,
@@ -79,6 +72,10 @@ const buildDaily = (input: {
     bucket.matchSamples += 1;
     bucket.acceptMinutes += minutes;
   }
+  for (const booking of input.bookings) {
+    const bucket = map.get(dayOf(booking.scheduledAt));
+    if (bucket) bucket.bookings += 1;
+  }
   for (const user of input.users) {
     const bucket = map.get(dayOf(user.createdAt));
     if (bucket) bucket.users += 1;
@@ -91,12 +88,12 @@ const buildDaily = (input: {
 };
 
 const buildCases = (input: {
-  window: number;
+  keys: string[];
   reports: Row[];
   disputes: Row[];
   appeals: Row[];
 }) => {
-  const rows = dayKeys(input.window).map((date) => ({
+  const rows = input.keys.map((date) => ({
     date,
     reports: 0,
     disputes: 0,
@@ -173,9 +170,11 @@ const buildTopProviders = (input: {
 };
 
 const buildDashboardSeries = (input: {
-  window: number;
+  startDate: string;
+  endDate: string;
   payments: Row[];
   tickets: Row[];
+  bookings: Row[];
   users: Row[];
   providers: Row[];
   flags: Row[];
@@ -188,8 +187,9 @@ const buildDashboardSeries = (input: {
   ticketsByType: Record<string, number>;
   flagsByStatus: Record<string, number>;
 }) => {
-  const dailyMap = buildDaily(input);
-  const cases = buildCases(input);
+  const keys = dayKeysBetween(input.startDate, input.endDate);
+  const dailyMap = buildDaily({...input, keys});
+  const cases = buildCases({...input, keys});
   for (const bucket of dailyMap.values()) {
     const day = cases.find((row) => row.date === bucket.date);
     bucket.cases = (day?.reports ?? 0) +
@@ -223,6 +223,7 @@ const buildDashboardSeries = (input: {
       refunds: row.refunds,
       payments: row.payments,
       tickets: row.tickets,
+      bookings: row.bookings,
       users: row.users,
       providers: row.providers,
       cases: row.cases,

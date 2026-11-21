@@ -25,6 +25,7 @@ import {createDispatch} from "../tickets";
 import {acceptDispatch} from "../accept";
 import {continueSos} from "../sos";
 import {mobileTowAvailabilityFor} from "../summary";
+import {providerOfferSnapshot} from "../helpers";
 
 import {chatService} from "../../chatService";
 
@@ -585,6 +586,7 @@ export const offerMobileShopTow = async ({
   const operatorUid = typeof shop.operatorUid === "string" ?
     shop.operatorUid :
     "";
+  let destinationSnapshot: Record<string, unknown> | null = null;
   if (destinationShopId !== undefined) {
     const dest = await providerRepository.findById(destinationShopId);
     if (!dest || dest.kind !== PROVIDER_KIND.SHOP ||
@@ -596,6 +598,7 @@ export const offerMobileShopTow = async ({
     if (operatorUid !== "" && dest.operatorUid !== operatorUid) {
       throw new ForbiddenError("Destination shop belongs to another operator");
     }
+    destinationSnapshot = providerOfferSnapshot(dest);
   }
   const availability = await mobileTowAvailabilityFor(ticket);
   if (!availability.available) {
@@ -610,6 +613,8 @@ export const offerMobileShopTow = async ({
       status: "PENDING",
       shopId,
       destinationShopId: destinationShopId ?? null,
+      destinationSnapshot,
+      originPoint: {lat: ticket.lat, lng: ticket.lng},
       mode: availability.mode,
       towProviderId: availability.towProviderId,
       by: userId,

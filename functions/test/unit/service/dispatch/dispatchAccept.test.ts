@@ -10,7 +10,9 @@ import {
   createDispatch,
   acceptDispatch,
 } from "../../../../service/dispatchService";
+import {mobileVisitNotice} from "../../../../service/dispatch/accept";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
+import {chatService} from "../../../../service/chatService";
 
 jest.mock("../../../../repository/dispatchRepository");
 jest.mock("../../../../repository/userRepository");
@@ -27,6 +29,9 @@ jest.mock("../../../../utils/valhalla", () => ({
   postRoute: jest.fn(),
 }));
 jest.mock("../../../../service/taskQueueService");
+jest.mock("../../../../service/chatService", () => ({
+  chatService: {addSystemEvent: jest.fn()},
+}));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -166,8 +171,19 @@ describe("dispatchService.acceptDispatch", () => {
       lat: 10.7,
       lng: 106.6,
     };
+    jest.mocked(dispatchRepository.findById).mockReset();
     jest.mocked(dispatchRepository.findById)
       .mockResolvedValueOnce(sos as never)
+      .mockResolvedValueOnce({
+        ...sos,
+        mobileCallOutFee: 50000,
+        mobileTravelFee: 12000,
+      } as never)
+      .mockResolvedValueOnce({
+        ...sos,
+        mobileCallOutFee: 50000,
+        mobileTravelFee: 12000,
+      } as never)
       .mockResolvedValueOnce({
         ...sos,
         mobileCallOutFee: 50000,
@@ -213,8 +229,13 @@ describe("dispatchService.acceptDispatch", () => {
       expect.objectContaining({
         audience: "rider",
         title: "Mobile shop accepted",
-        body: expect.stringContaining("Mobile shop accepted."),
+        body: expect.stringContaining("Visit estimate 62,000 VND"),
       }),
+    );
+    expect(chatService.addSystemEvent).toHaveBeenCalledWith(
+      "s1",
+      expect.stringContaining("Travel is not charged if the vehicle " +
+        "is marked unfixable."),
     );
   });
 
@@ -841,5 +862,48 @@ describe("dispatchService vehicle and capability", () => {
       shop(["CAR"]) as never,
     );
     await expect(tow()).resolves.toMatchObject({id: "t1"});
+  });
+});
+
+describe("mobileVisitNotice", () => {
+  it("summarizes call-out and travel with distance", () => {
+    const notice = mobileVisitNotice({
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 12000,
+      mobileTravelKm: 1.2,
+      mobileTravelRate: 10000,
+    });
+    expect(notice.body).toBe(
+      "Visit estimate 62,000 VND — call-out 50,000 VND + " +
+      "travel 12,000 VND. Repair is quoted separately.",
+    );
+    expect(notice.chat).toContain("1.2 km × 10,000 VND/km");
+    expect(notice.chat).toContain(
+      "Travel is not charged if the vehicle is marked unfixable.",
+    );
+  });
+
+  it("omits zero-value fees", () => {
+    expect(mobileVisitNotice({
+      mobileCallOutFee: 0,
+      mobileCallOutWaived: true,
+      mobileTravelFee: 8000,
+    }).body).toBe(
+      "Visit estimate 8,000 VND — call-out waived (shop within 1 km) + " +
+      "travel 8,000 VND. Repair is quoted separately.",
+    );
+    expect(mobileVisitNotice({
+      mobileCallOutFee: 50000,
+      mobileTravelFee: 0,
+    }).body).toBe(
+      "Visit estimate 50,000 VND — call-out 50,000 VND + " +
+      "no travel fee. Repair is quoted separately.",
+    );
+  });
+
+  it("states no visit fee when both are zero", () => {
+    expect(mobileVisitNotice({}).body).toBe(
+      "No call-out or travel fee. Repair is quoted separately.",
+    );
   });
 });

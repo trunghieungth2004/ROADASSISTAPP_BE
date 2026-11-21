@@ -8,6 +8,7 @@ import {STATUS_DISPATCH} from "../../../constants/status";
 import {PAYMENT_METHOD, PAYMENT_STATUS} from "../../../constants/payments";
 
 import {createDispatch} from "../tickets";
+import {returnTowPickupSnapshot} from "../helpers";
 
 import {
   ForbiddenError,
@@ -41,6 +42,9 @@ export const respondReturnTow = async ({
   if (existing && existing.status !== "PENDING") {
     throw new ValidationError("No return tow awaiting an answer");
   }
+  const originSnapshot = existing === null || existing === undefined ?
+    await returnTowPickupSnapshot(ticket) :
+    null;
   const offer = existing ?? {
     status: "PENDING",
     shopId: typeof ticket.assignedShopId === "string" &&
@@ -49,6 +53,7 @@ export const respondReturnTow = async ({
       typeof ticket.providerId === "string" ? ticket.providerId : "",
     by: userId,
     at: new Date().toISOString(),
+    ...(originSnapshot !== null ? {originSnapshot} : {}),
   };
   if (!accept) {
     await dispatchRepository.update(ticketId, {

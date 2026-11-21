@@ -310,6 +310,8 @@ const me = async (userId: string) => {
       type: v.type,
       baseWidth: v.baseWidth,
       baseHeight: v.baseHeight,
+      ...(typeof v.plate === "string" ? {plate: v.plate} : {}),
+      ...(typeof v.label === "string" ? {label: v.label} : {}),
       ...(linked.get(v.id) ? {providerLinks: linked.get(v.id)} : {}),
     })),
     activeVehicle: activeProfile ?

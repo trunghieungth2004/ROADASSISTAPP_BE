@@ -9,9 +9,9 @@ const createProvider = async (req: Request, res: Response) => {
   try {
     const {uid: userId} = req as AuthedRequest;
     const {kind, name, lat, lng, label, openHours, vehicleClasses,
-      services, serviceFee, plate, vehicleType, vehicleWidth, towBaseFee,
-      towPerKmFee, waitingRatePer15Min, callOutFee, travelPerKmFee,
-      licenseNumber, licensePhotoUrl} = req.body;
+      services, serviceFee, plate, vehicleType, vehicleLabel, vehicleWidth,
+      vehicleHeight, towBaseFee, towPerKmFee, waitingRatePer15Min,
+      callOutFee, travelPerKmFee, licenseNumber, licensePhotoUrl} = req.body;
     const result = kind === "TOW" ?
       await providerService.createTowProvider({
         userId,
@@ -21,7 +21,9 @@ const createProvider = async (req: Request, res: Response) => {
         label,
         plate,
         vehicleType,
+        vehicleLabel,
         vehicleWidth,
+        vehicleHeight,
         towBaseFee,
         towPerKmFee,
         waitingRatePer15Min,
@@ -35,6 +37,9 @@ const createProvider = async (req: Request, res: Response) => {
           label,
           plate,
           vehicleType,
+          vehicleLabel,
+          vehicleWidth,
+          vehicleHeight,
           licenseNumber,
           licensePhotoUrl,
           callOutFee,
@@ -63,8 +68,8 @@ const updateProvider = async (req: Request, res: Response) => {
     const {uid: userId} = req as AuthedRequest;
     const {providerId, name, label, openHours, vehicleClasses, services,
       serviceFee, licenseNumber, licensePhotoUrl, plate, vehicleType,
-      vehicleWidth, towBaseFee, towPerKmFee, waitingRatePer15Min,
-      callOutFee, travelPerKmFee, accepting, taxCode, lat,
+      vehicleLabel, vehicleWidth, vehicleHeight, towBaseFee, towPerKmFee,
+      waitingRatePer15Min, callOutFee, travelPerKmFee, accepting, taxCode, lat,
       lng, bookingEnabled, bookingSlotMinutes, bookingCapacity,
       bookingLeadMinutes, bookingHorizonDays, bookingHours,
       bookingAlwaysOpen, depositPolicy, depositAmount,
@@ -83,7 +88,9 @@ const updateProvider = async (req: Request, res: Response) => {
         licensePhotoUrl,
         plate,
         vehicleType,
+        vehicleLabel,
         vehicleWidth,
+        vehicleHeight,
         towBaseFee,
         towPerKmFee,
         waitingRatePer15Min,
@@ -169,6 +176,24 @@ const listPending = async (req: Request, res: Response) => {
   try {
     const {uid: adminUid} = req as AuthedRequest;
     const result = await providerService.listPending(adminUid);
+    sendSuccess(res, result);
+  } catch (error) {
+    handleServiceError(res, error as Error);
+  }
+};
+
+const adminListProviders = async (req: Request, res: Response) => {
+  try {
+    const {uid: adminUid} = req as AuthedRequest;
+    const {status, kind, startDate, endDate, limit} = req.body ?? {};
+    const result = await providerService.listProviders({
+      adminUid,
+      status,
+      kind,
+      startDate,
+      endDate,
+      limit,
+    });
     sendSuccess(res, result);
   } catch (error) {
     handleServiceError(res, error as Error);
@@ -327,5 +352,6 @@ const providerRatings = async (req: Request, res: Response) => {
 
 export {createProvider, updateProvider, myProviders, myStats,
   getPricingLimits, nearProviders, searchProviders, providerRatings,
-  listPending, reviewProvider, reportProvider, listReports, dismissReport,
+  listPending, adminListProviders, reviewProvider, reportProvider,
+  listReports, dismissReport,
   suspendProvider, restoreProvider, revokeProvider, updateProviderLocation};
