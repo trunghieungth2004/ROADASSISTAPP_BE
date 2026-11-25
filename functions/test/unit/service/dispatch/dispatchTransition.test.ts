@@ -455,6 +455,59 @@ describe("dispatchService.updateDispatchStatus", () => {
     );
   });
 
+  it("pays already-traveled loaded distance after a mid-tow retarget", async () => {
+    jest.mocked(dispatchRepository.findById).mockResolvedValue({
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      ticketType: "TOW",
+      assignedShopId: "tow1",
+      providerId: "tow1",
+      lat: 10.7,
+      lng: 106.6,
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      jobTrack: [
+        {lat: 10.7, lng: 106.6},
+        {lat: 10.79, lng: 106.6},
+        {lat: 10.75, lng: 106.6},
+      ],
+      towFare: {
+        estimate: 270000,
+        ceiling: 297000,
+        deadheadKm: 1,
+        loadedKm: 15,
+        night: false,
+        vehicleClass: "SOLO_BIKE",
+        baseFee: 150000,
+        perKmFee: 10000,
+        includedKm: 3,
+        billableKm: 12,
+      },
+    } as never);
+    jest.mocked(userRepository.findById).mockResolvedValue({
+      id: "op1",
+      role: "2",
+    } as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      kind: "TOW",
+      status: "ACTIVE",
+      operatorUid: "op1",
+    } as never);
+    await expect(
+      updateDispatchStatus({id: "t1", status: "4", userId: "op1"}),
+    ).resolves.toEqual({updated: 1});
+    const update = jest.mocked(dispatchRepository.update).mock.calls.find(
+      ([id, patch]) => id === "t1" &&
+        typeof (patch as {towFare?: {final?: unknown}}).towFare?.final ===
+          "number",
+    );
+    const final = (update?.[1] as {towFare?: {final?: number}})
+      .towFare?.final ?? 0;
+    expect(final).toBeGreaterThan(250000);
+    expect(final).toBeLessThan(270000);
+  });
+
   it("falls back to the routed distance for a sparse GPS track", async () => {
     jest.mocked(dispatchRepository.findById).mockResolvedValue({
       id: "t1",

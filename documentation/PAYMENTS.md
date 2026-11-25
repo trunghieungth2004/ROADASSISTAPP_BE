@@ -94,10 +94,10 @@ There is no separate TOW call-out fee. The fare base covers the approach; deadhe
 | Case | Ticket state | Payable amount | Notes |
 |---|---|---|---|
 | Pending / matched / arrived, not resolved | `1`–`3` | 0 now | A TOW charge is only creatable after `4` (resolved). The live estimate is display-only. |
-| Tower accepted, job resolved | `4` | `final + waitingFee` | `final = min(recomputed estimate, ceiling)`. Loaded km is GPS-measured, capped at quoted km × 1.15; without GPS it falls back to quoted km. |
+| Tower accepted, job resolved | `4` | `final + waitingFee` | `final = min(recomputed estimate, ceiling)`. Loaded km is GPS-measured, capped at quoted km × 1.15; without GPS it falls back to quoted km. A retarget while loaded adds the distance already traveled into the quoted km, so the allowance covers the whole haul rather than only the remaining route. |
 | Tower tries to resolve away from the drop-off | `3` | no change | The assigned tower's fresh fix must be within 200 m of the drop-off; a farther fix returns `400 "Too far from the drop-off point to mark delivered"` before any status or charge change. A stale or missing fix skips the guard. |
 | GPS haul overruns the quote | `4` | recomputed on capped km | Quoted 10 km, actual 13 km → bill 11.5 km. The current leg's ceiling still binds. |
-| Rider changes the drop-off, tower engaged | `2`/`3` | re-quoted | The new route is priced and the leg ceiling is rebased to the new quote (estimate × `ceilingMultiplier`); a farther drop-off is no longer clamped by the original ceiling. Pending retargets rebase when the next tower accepts. |
+| Rider changes the drop-off, tower engaged | `2`/`3` | re-quoted | The new route is priced and the leg ceiling is rebased to the new quote (estimate × `ceilingMultiplier`); a farther drop-off is no longer clamped by the original ceiling. If the vehicle is already loaded, the re-quote includes the loaded distance already traveled plus the route from the current position to the new drop-off. Pending retargets rebase when the next tower accepts. |
 | Bike, day, 8 loaded km | `4` | 200,000 | 150,000 + 10,000 × (8 − 3). Ceiling 220,000; final 200,000. |
 | Car, night, 12 loaded km | `4` | 825,000 | 1.5 × (500,000 + 25,000 × (12 − 10)). Ceiling 908,000; final 825,000. |
 | Waiting 15 min at 15,000/15 min, 10 min grace | `4` | fare + 5,000 | `ceil(5 min / 1 min) × 1,000`. Waiting only accrues while the tower is within 200 m of the rider pin. |

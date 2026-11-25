@@ -20,6 +20,7 @@ import * as providerLocationRepository from
 import * as providerRepository from
   "../../repository/providerRepository";
 import * as platformConfigService from "../platformConfigService";
+import {trackedLoadedKm} from "./helpers";
 
 const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -130,6 +131,57 @@ export const quoteTowFare = ({
 export const settleTowFare = (quote: TowFareQuote): number =>
   Math.min(quote.estimate, quote.ceiling);
 
+const latestLoadedPoint = (
+  ticket: {loadedAt?: unknown; jobTrack?: unknown},
+  shopId: string,
+): {lat: number; lng: number} | null => {
+  if (typeof ticket.loadedAt !== "string") return null;
+  const since = Date.parse(ticket.loadedAt);
+  const track = Array.isArray(ticket.jobTrack) ? ticket.jobTrack : [];
+  for (let index = track.length - 1; index >= 0; index -= 1) {
+    const raw = track[index];
+    if (typeof raw !== "object" || raw === null) continue;
+    const point = raw as {
+      lat?: unknown;
+      lng?: unknown;
+      at?: unknown;
+      shopId?: unknown;
+    };
+    if (typeof point.lat !== "number" || typeof point.lng !== "number") {
+      continue;
+    }
+    if (typeof point.shopId === "string" && point.shopId !== shopId) {
+      continue;
+    }
+    if (typeof point.at !== "string") continue;
+    const at = Date.parse(point.at);
+    if (Number.isNaN(at) || at < since - 5000) continue;
+    return {lat: point.lat, lng: point.lng};
+  }
+  return null;
+};
+
+const loadedRebaseFor = (
+  ticket: {loadedAt?: unknown; jobTrack?: unknown},
+  shopId: string,
+  rebase: boolean,
+): {point: {lat: number; lng: number}; baseKm: number} | null => {
+  if (!rebase) return null;
+  const baseKm = trackedLoadedKm(ticket, shopId) ?? 0;
+  if (baseKm <= 0) return null;
+  const point = latestLoadedPoint(ticket, shopId);
+  return point ? {point, baseKm} : null;
+};
+
+const historyAmountOf = (history: unknown): number => {
+  if (!Array.isArray(history)) return 0;
+  return history.reduce((sum, entry) => {
+    if (typeof entry !== "object" || entry === null) return sum;
+    const amount = (entry as {amount?: unknown}).amount;
+    return sum + (typeof amount === "number" ? amount : 0);
+  }, 0);
+};
+
 export const partialTowFare = ({
   vehicleClass,
   night,
@@ -162,6 +214,9 @@ export const quoteTowFareForRoute = async ({
   ticketLng,
   destLat,
   destLng,
+  loadedFromLat,
+  loadedFromLng,
+  loadedBaseKm = 0,
   now,
   rates = DEFAULT_TOW_RATES,
 }: {
@@ -172,10 +227,20 @@ export const quoteTowFareForRoute = async ({
   ticketLng: number;
   destLat?: number;
   destLng?: number;
+  loadedFromLat?: number;
+  loadedFromLng?: number;
+  loadedBaseKm?: number;
   now?: Date;
   rates?: TowRates;
 }): Promise<TowFareQuote | null> => {
   const costing = isCarVehicle(vehicleType) ? "auto" : "motor_scooter";
+  const loadedLat = typeof loadedFromLat === "number" ?
+    loadedFromLat :
+    ticketLat;
+  const loadedLng = typeof loadedFromLng === "number" ?
+    loadedFromLng :
+    ticketLng;
+  const baseKm = Math.max(0, loadedBaseKm);
   let deadheadKm = 0;
   let loadedKm = 0;
   try {
@@ -187,11 +252,11 @@ export const quoteTowFareForRoute = async ({
     deadheadKm = (deadhead.distanceMeters ?? 0) / 1000;
     if (typeof destLat === "number" && typeof destLng === "number") {
       const loaded = await postRoute(
-        [{lat: ticketLat, lng: ticketLng}, {lat: destLat, lng: destLng}],
+        [{lat: loadedLat, lng: loadedLng}, {lat: destLat, lng: destLng}],
         [],
         costing,
       );
-      loadedKm = (loaded.distanceMeters ?? 0) / 1000;
+      loadedKm = baseKm + (loaded.distanceMeters ?? 0) / 1000;
     }
   } catch (err) {
     logWarn("dispatch", "tow-fare-route-fallback", {
@@ -200,8 +265,8 @@ export const quoteTowFareForRoute = async ({
     deadheadKm = haversineMeters(towerLat, towerLng, ticketLat, ticketLng) /
       1000;
     if (typeof destLat === "number" && typeof destLng === "number") {
-      loadedKm = haversineMeters(ticketLat, ticketLng, destLat, destLng) /
-        1000;
+      loadedKm = baseKm +
+        haversineMeters(loadedLat, loadedLng, destLat, destLng) / 1000;
     }
   }
   return quoteTowFare({
@@ -252,6 +317,8 @@ export const stampTowFare = async (
     towFare?: {ceiling?: unknown} | null;
     towFeeCap?: unknown;
     towFeeHistory?: unknown;
+    loadedAt?: unknown;
+    jobTrack?: unknown;
   },
   shopId: string,
   options?: {rebase?: boolean},
@@ -293,6 +360,8 @@ export const stampTowFare = async (
     const tower = fresh ?
       {lat: fix.lat, lng: fix.lng} :
       {lat: ticket.lat, lng: ticket.lng};
+    const rebase = options?.rebase === true;
+    const loadedRebase = loadedRebaseFor(ticket, shopId, rebase);
     const quote = await quoteTowFareForRoute({
       ...(typeof ticket.vehicleType === "string" ?
         {vehicleType: ticket.vehicleType} :
@@ -304,17 +373,15 @@ export const stampTowFare = async (
       ...(destLat !== undefined && destLng !== undefined ?
         {destLat, destLng} :
         {}),
+      ...(loadedRebase ? {
+        loadedFromLat: loadedRebase.point.lat,
+        loadedFromLng: loadedRebase.point.lng,
+        loadedBaseKm: loadedRebase.baseKm,
+      } : {}),
       rates,
     });
     if (!quote) return;
-    const historyAmount = Array.isArray(ticket.towFeeHistory) ?
-      ticket.towFeeHistory.reduce((sum, entry) => {
-        if (typeof entry !== "object" || entry === null) return sum;
-        const amount = (entry as {amount?: unknown}).amount;
-        return sum + (typeof amount === "number" ? amount : 0);
-      }, 0) :
-      0;
-    const rebase = options?.rebase === true;
+    const historyAmount = historyAmountOf(ticket.towFeeHistory);
     const cap = rebase ?
       quote.ceiling :
       typeof ticket.towFeeCap === "number" ?

@@ -13,6 +13,7 @@ import {
   sweepLateTows,
   updateDispatchDestination,
 } from "../../../../service/dispatchService";
+import {trackedLoadedKm} from "../../../../service/dispatch/helpers";
 import {enqueueDispatchPush} from "../../../../service/taskQueueService";
 
 jest.mock("../../../../repository/dispatchRepository");
@@ -606,6 +607,79 @@ describe("dispatchService.updateDispatchDestination", () => {
     expect(fare?.towFare?.estimate).toBeGreaterThan(220000);
     expect(fare?.towFeeCap).toBe(50000 + (fare?.towFare?.ceiling ?? 0));
     expect(fare?.towFeeHistory).toBeUndefined();
+  });
+
+  it("includes traveled loaded distance on a loaded retarget", async () => {
+    const loadedAt = "2026-01-01T00:00:00.000Z";
+    const jobTrack = [
+      {
+        lat: 10.7,
+        lng: 106.6,
+        at: "2026-01-01T00:00:01.000Z",
+        shopId: "tow1",
+      },
+      {
+        lat: 10.79,
+        lng: 106.6,
+        at: "2026-01-01T00:10:00.000Z",
+        shopId: "tow1",
+      },
+    ];
+    const baseKm = trackedLoadedKm({loadedAt, jobTrack}, "tow1") ?? 0;
+    const stored = {
+      id: "t1",
+      userId: "rider1",
+      status: "3",
+      assignedShopId: "tow1",
+      destinationPoint: {lat: 10.75, lng: 106.6},
+      destinationSnapshot: null,
+    };
+    jest.mocked(dispatchRepository.findById)
+      .mockResolvedValueOnce({
+        ...ticket,
+        status: "3",
+        assignedShopId: "tow1",
+        lat: 10.7,
+        lng: 106.6,
+        vehicleType: "SCOOTER",
+        loadedAt,
+        jobTrack,
+        towFare: {estimate: 200000, ceiling: 220000, final: null},
+      } as never)
+      .mockResolvedValue(stored as never);
+    jest.mocked(providerRepository.findById).mockResolvedValue({
+      id: "tow1",
+      name: "Tow Co",
+      kind: "TOW",
+      lat: 10.79,
+      lng: 106.6,
+      status: "ACTIVE",
+    } as never);
+    jest.mocked(providerLocationRepository.findByIds).mockResolvedValue(
+      new Map(),
+    );
+    const {postRoute} = jest.requireMock("../../../../utils/valhalla") as {
+      postRoute: jest.Mock;
+    };
+    postRoute.mockReset();
+    postRoute
+      .mockResolvedValueOnce({distanceMeters: 0, durationSeconds: 60})
+      .mockResolvedValueOnce({distanceMeters: 5000, durationSeconds: 600});
+    await expect(
+      updateDispatchDestination({
+        userId: "rider1",
+        ticketId: "t1",
+        destinationPoint: {lat: 10.75, lng: 106.6, label: "New drop"},
+      }),
+    ).resolves.toEqual(stored);
+    const fare = jest.mocked(dispatchRepository.update).mock.calls
+      .map((call) => call[1] as {
+        towFare?: {estimate: number; ceiling: number; loadedKm: number};
+      })
+      .find((patch) => typeof patch.towFare?.loadedKm === "number");
+    expect(fare?.towFare?.loadedKm).toBeCloseTo(baseKm + 5, 2);
+    expect(fare?.towFare?.estimate).toBeGreaterThan(150000);
+    expect(fare?.towFare?.ceiling).toBeGreaterThan(220000);
   });
 
   it("skips the ETA restamp on pending retargets", async () => {
